@@ -2,6 +2,7 @@ use cpal::Stream;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rubato::{FftFixedIn, Resampler};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender};
 use std::time::{Duration, Instant};
 
@@ -170,6 +171,7 @@ pub fn run_vad_processor(
     final_tx: Sender<Arc<[f32]>>,
     preview_tx: SyncSender<Arc<[f32]>>,
     mut vad: Option<VadEngine>,
+    tts_playing: Arc<AtomicBool>,
 ) {
     let mut state = VadState::Idle;
     let mut speech_buf: Vec<f32> =
@@ -183,6 +185,14 @@ pub fn run_vad_processor(
             Ok(f) => f,
             Err(_) => break,
         };
+
+        // Skip VAD processing while TTS is playing
+        if tts_playing.load(Ordering::SeqCst) {
+            // Reset state to avoid partial utterances
+            state = VadState::Idle;
+            speech_buf.clear();
+            continue;
+        }
 
         if let Some(ref mut vad_engine) = vad {
             process_vad_frame(

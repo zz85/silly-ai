@@ -7,6 +7,7 @@ mod vad;
 use std::error::Error;
 use std::io::Write;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
 
@@ -23,6 +24,10 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    // Flag to mute VAD during TTS playback
+    let tts_playing = Arc::new(AtomicBool::new(false));
+    let tts_playing_vad = Arc::clone(&tts_playing);
+
     // Channel: audio -> VAD processor
     let (audio_tx, audio_rx) = mpsc::channel::<Vec<f32>>();
 
@@ -57,7 +62,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             Some(VadEngine::energy())
         };
 
-        audio::run_vad_processor(audio_rx, final_tx, preview_tx, vad);
+        audio::run_vad_processor(audio_rx, final_tx, preview_tx, vad, tts_playing_vad);
     });
 
     // Preview transcription thread
@@ -132,10 +137,12 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 // Send to ollama (streaming)
                 match ollama_chat.send_streaming(&text).await {
                     Ok(response) => {
-                        // Speak the response
+                        // Mute VAD during TTS
+                        tts_playing.store(true, Ordering::SeqCst);
                         if let Err(e) = tts_engine.speak(&response) {
                             eprintln!("TTS error: {}", e);
                         }
+                        tts_playing.store(false, Ordering::SeqCst);
                     }
                     Err(e) => {
                         eprintln!("Chat error: {}", e);

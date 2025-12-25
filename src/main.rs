@@ -110,13 +110,22 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Channel for chat responses
     let (chat_tx, chat_rx) = mpsc::channel::<String>();
 
-    // Display thread (main)
-    println!("Listening... Press Ctrl+C to stop.\n");
-
     // Initialize TTS
     let tts_engine = tts::Tts::new("models/kokoro-v1.0.onnx", "models/voices-v1.0.bin").await;
 
     let mut ollama_chat = chat::Chat::new();
+
+    // Initial greeting
+    tts_playing.store(true, Ordering::SeqCst);
+    if let Ok(greeting) = ollama_chat.greet().await {
+        if let Err(e) = tts_engine.speak(&greeting) {
+            eprintln!("TTS error: {}", e);
+        }
+    }
+    tts_playing.store(false, Ordering::SeqCst);
+
+    println!("Listening... Press Ctrl+C to stop.\n");
+
     let mut preview_text = String::new();
 
     loop {

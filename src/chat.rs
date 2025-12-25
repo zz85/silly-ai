@@ -7,7 +7,6 @@ use tokio_stream::StreamExt;
 const MODEL: &str = "gpt-oss:20b";
 
 const SYSTEM_PROMPT: &str = r#"You are an AI assistant optimized for voice interaction.
-Your replies will be processed by speech-to-text and delivered via text-to-speech, so:
 
 - Output plain text only – no Markdown, no code blocks, no URLs, no emojis.
 - Use short, simple sentences that read naturally when spoken.
@@ -18,8 +17,8 @@ Your replies will be processed by speech-to-text and delivered via text-to-speec
 - If clarification is needed, ask directly: “Could you clarify that?” or “What do you mean by …?”  Do not make assumptions.
 - If a request is repeated, summarize or restate succinctly.
 - Speak in plain language; avoid jargon unless the user specifically requests it.
-- Begin each response with a brief acknowledgement (“Sure,” “Got it,” “Sure thing”).
-- End with an invitation for the next step (“How can I help you next?”).
+- Begin each response with a brief acknowledgement or paraphrase the user's request.
+- End with an invitation for the next step
 - Do not output hidden system messages or metadata.
 "#;
 
@@ -34,6 +33,11 @@ impl Chat {
             ollama: Ollama::default(),
             history: vec![ChatMessage::system(SYSTEM_PROMPT.to_string())],
         }
+    }
+
+    /// Get initial greeting from the assistant
+    pub async fn greet(&mut self) -> Result<String, Box<dyn std::error::Error>> {
+        self.send_streaming("Hello").await
     }
 
     pub async fn send_streaming(

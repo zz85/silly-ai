@@ -2,11 +2,24 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct Config {
+    #[serde(default = "default_name")]
+    pub name: String,
     #[serde(default)]
     pub tts: TtsConfig,
 }
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            name: default_name(),
+            tts: TtsConfig::default(),
+        }
+    }
+}
+
+fn default_name() -> String { "Silly".into() }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "engine")]

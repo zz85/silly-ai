@@ -143,7 +143,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     };
 
-    let mut ollama_chat = chat::Chat::new();
+    let mut ollama_chat = chat::Chat::new(&config.name);
 
     // Initial greeting
     tts_playing.store(true, Ordering::SeqCst);

@@ -1,6 +1,8 @@
 # TTS Configuration
 # Options: "kokoro" or "supertonic"
 
+name = "Silly"
+
 [tts]
 engine = "supertonic"
 onnx_dir = "models/supertonic/assets/onnx"

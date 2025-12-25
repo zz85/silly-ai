@@ -3,6 +3,7 @@
 
 name = "Silly"
 wake_word = "Hey Silly"
+wake_timeout_secs = 30
 
 [tts]
 engine = "supertonic"

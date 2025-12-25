@@ -8,6 +8,8 @@ pub struct Config {
     pub name: String,
     #[serde(default = "default_wake_word")]
     pub wake_word: String,
+    #[serde(default = "default_wake_timeout")]
+    pub wake_timeout_secs: u64,
     #[serde(default)]
     pub tts: TtsConfig,
 }
@@ -17,6 +19,7 @@ impl Default for Config {
         Self {
             name: default_name(),
             wake_word: default_wake_word(),
+            wake_timeout_secs: default_wake_timeout(),
             tts: TtsConfig::default(),
         }
     }
@@ -24,6 +27,7 @@ impl Default for Config {
 
 fn default_name() -> String { "Silly".into() }
 fn default_wake_word() -> String { "Hey Silly".into() }
+fn default_wake_timeout() -> u64 { 30 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "engine")]

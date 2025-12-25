@@ -169,6 +169,8 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("Listening for \"{}\"... Press Ctrl+C to stop.\n", wake_word.phrase());
 
     let mut preview_text = String::new();
+    let mut last_interaction: Option<std::time::Instant> = None;
+    let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
 
     loop {
         // Check for display events (non-blocking)
@@ -185,12 +187,20 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 }
             }
             Ok(DisplayEvent::Final(text)) => {
-                // Check for wake word
-                let command = match wake_word.detect(&text) {
-                    Some(cmd) => cmd,
-                    None => {
-                        preview_text.clear();
-                        continue; // Ignore if no wake word
+                // Check if within wake word timeout or need wake word
+                let in_conversation = last_interaction
+                    .map(|t| t.elapsed() < wake_timeout)
+                    .unwrap_or(false);
+
+                let command = if in_conversation {
+                    text.clone()
+                } else {
+                    match wake_word.detect(&text) {
+                        Some(cmd) => cmd,
+                        None => {
+                            preview_text.clear();
+                            continue; // Ignore if no wake word
+                        }
                     }
                 };
 
@@ -241,13 +251,16 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         eprintln!("Audio output error: {}", e);
                         // Fallback: just stream text without TTS
                         if let Err(e) = ollama_chat
-                            .send_streaming_with_callback(&text, |_| {}, || {})
+                            .send_streaming_with_callback(&command, |_| {}, || {})
                             .await
                         {
                             eprintln!("Chat error: {}", e);
                         }
                     }
                 }
+
+                // Update last interaction time after response completes
+                last_interaction = Some(std::time::Instant::now());
 
                 tts_playing.store(false, Ordering::SeqCst);
             }

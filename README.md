@@ -1,10 +1,30 @@
 # silly-cli
 
-Real-time speech transcription CLI using [transcribe-rs](https://github.com/cjpais/transcribe-rs) with NVIDIA Parakeet.
+Voice-first AI chat CLI using real-time speech transcription and Ollama.
+
+## Features
+
+- Real-time speech-to-text using [transcribe-rs](https://github.com/cjpais/transcribe-rs) with NVIDIA Parakeet
+- Voice Activity Detection (VAD) with Silero for utterance segmentation
+- Live preview transcription (gray text) while speaking
+- Conversational AI via Ollama with voice-optimized system prompt
+- Multi-threaded architecture: separate threads for audio capture, VAD, preview transcription, and final transcription
+
+## Architecture
+
+```
+┌─────────┐    ┌─────┐    ┌─────────────────┐    ┌─────────┐
+│  Audio  │───▶│ VAD │───▶│ Final Transcr.  │───▶│         │
+│ Capture │    │     │    └─────────────────┘    │ Display │───▶ Ollama Chat
+└─────────┘    │     │    ┌─────────────────┐    │         │
+               │     │───▶│Preview Transcr. │───▶│         │
+               └─────┘    └─────────────────┘    └─────────┘
+                          (lossy channel)
+```
 
 ## Setup
 
-### Download the model
+### 1. Download the Parakeet model
 
 ```bash
 mkdir -p models && cd models
@@ -14,9 +34,7 @@ rm parakeet-v3-int8.tar.gz
 cd ..
 ```
 
-### (Optional) Download VAD model
-
-Voice Activity Detection filters out silence, saving CPU by only transcribing when speech is detected:
+### 2. Download VAD model (recommended)
 
 ```bash
 cd models
@@ -24,43 +42,40 @@ curl -L -o silero_vad_v4.onnx https://github.com/cjpais/Handy/raw/refs/heads/mai
 cd ..
 ```
 
-### Build and run
+### 3. Start Ollama
+
+```bash
+ollama serve
+```
+
+Make sure you have a model available (default: `gpt-oss:20b`). Edit `src/chat.rs` to change the model.
+
+### 4. Build and run
 
 ```bash
 cargo run --release
 ```
 
-## Features
+## Usage
 
-- Real-time microphone transcription
-- Preview text updates every 500ms (shown in gray)
-- Voice Activity Detection (VAD) for utterance-based transcription
-- Falls back to fixed 3s chunks if VAD model not found
-- Automatic resampling from device sample rate to 16kHz
-- Voice Activity Detection (VAD) to skip silence
+Just speak! The CLI will:
+1. Show preview text in gray while you're speaking
+2. Print final transcription with `>` prefix when you pause
+3. Send to Ollama and display the response in cyan
+
+Press `Ctrl+C` to stop.
+
+## Configuration
+
+- **Model**: Edit `MODEL` constant in `src/chat.rs`
+- **VAD thresholds**: Edit constants in `src/audio.rs` and `src/vad.rs`
+- **Preview interval**: `PREVIEW_INTERVAL` in `src/audio.rs` (default 500ms)
 
 ## Profiling with hotpath
 
-Install the TUI:
-
 ```bash
 cargo install hotpath --features="tui"
-```
-
-Run with profiling:
-
-```bash
 cargo run --release --features hotpath
-```
-
-Or with allocation tracking:
-
-```bash
-cargo run --release --features hotpath,hotpath-alloc
-```
-
-In a separate terminal, view live metrics:
-
-```bash
+# In another terminal:
 hotpath console
 ```

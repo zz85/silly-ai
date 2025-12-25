@@ -14,6 +14,16 @@ rm parakeet-v3-int8.tar.gz
 cd ..
 ```
 
+### (Optional) Download VAD model
+
+Voice Activity Detection filters out silence, saving CPU by only transcribing when speech is detected:
+
+```bash
+cd models
+curl -L -o silero_vad_v4.onnx https://github.com/cjpais/Handy/raw/refs/heads/main/src-tauri/resources/models/silero_vad_v4.onnx
+cd ..
+```
+
 ### Build and run
 
 ```bash
@@ -26,6 +36,7 @@ cargo run --release
 - Preview text updates every 500ms (shown in gray)
 - Final transcription every 3 seconds
 - Automatic resampling from device sample rate to 16kHz
+- Voice Activity Detection (VAD) to skip silence
 
 ## Profiling with hotpath
 
@@ -35,7 +46,13 @@ Install the TUI:
 cargo install hotpath --features="tui"
 ```
 
-Run with profiling (and allocation tracking):
+Run with profiling:
+
+```bash
+cargo run --release --features hotpath
+```
+
+Or with allocation tracking:
 
 ```bash
 cargo run --release --features hotpath,hotpath-alloc

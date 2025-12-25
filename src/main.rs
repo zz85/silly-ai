@@ -1,16 +1,37 @@
 mod audio;
 mod transcriber;
+mod vad;
 
 use std::error::Error;
 use std::io::Write;
 use std::sync::mpsc;
 
+use vad::VadEngine;
+
+const VAD_MODEL_PATH: &str = "models/silero_vad_v4.onnx";
+const TARGET_RATE: usize = 16000;
+
 #[hotpath::main]
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let (tx, rx) = hotpath::channel!(mpsc::channel());
+    let (tx, rx) = mpsc::channel();
 
     let mut transcriber = transcriber::Transcriber::new("models/parakeet-tdt-0.6b-v3-int8")?;
-    let _stream = audio::start_capture(tx)?;
+
+    // Try Silero VAD, fall back to energy-based
+    let vad = if std::path::Path::new(VAD_MODEL_PATH).exists() {
+        match VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!("Silero VAD failed ({}), using energy-based", e);
+                Some(VadEngine::energy())
+            }
+        }
+    } else {
+        eprintln!("VAD model not found, using energy-based");
+        Some(VadEngine::energy())
+    };
+
+    let _stream = audio::start_capture(tx, vad)?;
 
     println!("Listening... Press Ctrl+C to stop.\n");
 

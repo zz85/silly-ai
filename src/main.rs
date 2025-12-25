@@ -1,4 +1,5 @@
 mod audio;
+mod chat;
 mod transcriber;
 mod vad;
 
@@ -14,6 +15,13 @@ const VAD_MODEL_PATH: &str = "models/silero_vad_v4.onnx";
 const TARGET_RATE: usize = 16000;
 
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Channel: audio -> VAD processor
     let (audio_tx, audio_rx) = mpsc::channel::<Vec<f32>>();
 
@@ -93,23 +101,43 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     });
 
+    // Channel for chat responses
+    let (chat_tx, chat_rx) = mpsc::channel::<String>();
+
     // Display thread (main)
     println!("Listening... Press Ctrl+C to stop.\n");
 
+    let mut ollama_chat = chat::Chat::new();
     let mut preview_text = String::new();
-    for event in display_rx {
-        match event {
-            DisplayEvent::Preview(text) => {
+
+    loop {
+        // Check for display events (non-blocking)
+        match display_rx.try_recv() {
+            Ok(DisplayEvent::Preview(text)) => {
                 if text != preview_text {
                     preview_text = text.clone();
                     print!("\r\x1b[K\x1b[90m{}\x1b[0m", text);
                     std::io::stdout().flush().ok();
                 }
             }
-            DisplayEvent::Final(text) => {
-                print!("\r\x1b[K{}\n", text);
+            Ok(DisplayEvent::Final(text)) => {
+                print!("\r\x1b[K> {}\n", text);
                 std::io::stdout().flush().ok();
                 preview_text.clear();
+
+                // Send to ollama
+                match ollama_chat.send(&text).await {
+                    Ok(response) => {
+                        println!("\x1b[36m{}\x1b[0m\n", response);
+                    }
+                    Err(e) => {
+                        eprintln!("Chat error: {}", e);
+                    }
+                }
+            }
+            Err(mpsc::TryRecvError::Disconnected) => break,
+            Err(mpsc::TryRecvError::Empty) => {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         }
     }

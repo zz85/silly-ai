@@ -37,7 +37,7 @@ impl Chat {
 
     /// Get initial greeting from the assistant
     pub async fn greet(&mut self) -> Result<String, Box<dyn std::error::Error>> {
-        self.send_streaming("Hello").await
+        self.send_streaming("Hello. Tell me how you can be of help today").await
     }
 
     pub async fn send_streaming(

@@ -13,7 +13,7 @@ impl Tts {
     pub async fn new(model_path: &str, voices_path: &str) -> Self {
         Self {
             engine: TTSKoko::new(model_path, voices_path).await,
-            style: "af_sarah".to_string(),
+            style: "af_heart".to_string(), // Good choices: af_heart af_bella af_nova bf_emma am_adam am_michael am_liam
             speed: 1.0,
         }
     }

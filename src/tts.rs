@@ -1,5 +1,6 @@
 use kokoros::tts::koko::TTSKoko;
 use rodio::{OutputStreamBuilder, Sink};
+use std::sync::mpsc;
 
 const SAMPLE_RATE: u32 = 24000;
 
@@ -30,14 +31,32 @@ impl Tts {
             None,
         )?;
 
-        // Play audio
         let stream = OutputStreamBuilder::open_default_stream()?;
         let sink = Sink::connect_new(stream.mixer());
-
-        let source = rodio::buffer::SamplesBuffer::new(1, SAMPLE_RATE, audio);
-        sink.append(source);
+        sink.append(rodio::buffer::SamplesBuffer::new(1, SAMPLE_RATE, audio));
         sink.sleep_until_end();
-
         Ok(())
+    }
+
+    /// Queue text for synthesis - returns immediately, audio plays in order
+    pub fn queue(&self, text: &str, sink: &Sink) -> Result<(), Box<dyn std::error::Error>> {
+        let audio = self.engine.tts_raw_audio(
+            text,
+            "en-us",
+            &self.style,
+            self.speed,
+            None,
+            None,
+            None,
+            None,
+        )?;
+        sink.append(rodio::buffer::SamplesBuffer::new(1, SAMPLE_RATE, audio));
+        Ok(())
+    }
+
+    pub fn create_sink() -> Result<(rodio::OutputStream, Sink), Box<dyn std::error::Error>> {
+        let stream = OutputStreamBuilder::open_default_stream()?;
+        let sink = Sink::connect_new(stream.mixer());
+        Ok((stream, sink))
     }
 }

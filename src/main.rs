@@ -117,10 +117,13 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Initial greeting
     tts_playing.store(true, Ordering::SeqCst);
-    if let Ok(greeting) = ollama_chat.greet().await {
-        if let Err(e) = tts_engine.speak(&greeting) {
-            eprintln!("TTS error: {}", e);
-        }
+    if let Ok((_stream, sink)) = tts::Tts::create_sink() {
+        let _ = ollama_chat
+            .greet_with_callback(|sentence| {
+                let _ = tts_engine.queue(sentence, &sink);
+            })
+            .await;
+        sink.sleep_until_end();
     }
     tts_playing.store(false, Ordering::SeqCst);
 
@@ -143,20 +146,44 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 std::io::stdout().flush().ok();
                 preview_text.clear();
 
-                // Send to ollama (streaming)
-                match ollama_chat.send_streaming(&text).await {
-                    Ok(response) => {
-                        // Mute VAD during TTS
-                        tts_playing.store(true, Ordering::SeqCst);
-                        if let Err(e) = tts_engine.speak(&response) {
-                            eprintln!("TTS error: {}", e);
+                // Mute VAD during response
+                tts_playing.store(true, Ordering::SeqCst);
+
+                // Create sink for streaming TTS
+                let sink_result = tts::Tts::create_sink();
+
+                match sink_result {
+                    Ok((_stream, sink)) => {
+                        let tts = &tts_engine;
+                        let sink_ref = &sink;
+
+                        if let Err(e) = ollama_chat
+                            .send_streaming_with_callback(&text, |sentence| {
+                                if let Err(e) = tts.queue(sentence, sink_ref) {
+                                    eprintln!("TTS error: {}", e);
+                                }
+                            })
+                            .await
+                        {
+                            eprintln!("Chat error: {}", e);
                         }
-                        tts_playing.store(false, Ordering::SeqCst);
+
+                        // Wait for all queued audio to finish
+                        sink.sleep_until_end();
                     }
                     Err(e) => {
-                        eprintln!("Chat error: {}", e);
+                        eprintln!("Audio output error: {}", e);
+                        // Fallback: just stream text without TTS
+                        if let Err(e) = ollama_chat
+                            .send_streaming_with_callback(&text, |_| {})
+                            .await
+                        {
+                            eprintln!("Chat error: {}", e);
+                        }
                     }
                 }
+
+                tts_playing.store(false, Ordering::SeqCst);
             }
             Err(mpsc::TryRecvError::Disconnected) => break,
             Err(mpsc::TryRecvError::Empty) => {

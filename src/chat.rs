@@ -36,14 +36,29 @@ impl Chat {
     }
 
     /// Get initial greeting from the assistant
-    pub async fn greet(&mut self) -> Result<String, Box<dyn std::error::Error>> {
-        self.send_streaming("Hello. Tell me how you can be of help today").await
+    pub async fn greet_with_callback<F>(
+        &mut self,
+        on_sentence: F,
+    ) -> Result<String, Box<dyn std::error::Error>>
+    where
+        F: FnMut(&str),
+    {
+        self.send_streaming_with_callback(
+            "Hello. Tell me how you can be of help today",
+            on_sentence,
+        )
+        .await
     }
 
-    pub async fn send_streaming(
+    /// Stream response, calling `on_sentence` for each complete sentence
+    pub async fn send_streaming_with_callback<F>(
         &mut self,
         message: &str,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+        mut on_sentence: F,
+    ) -> Result<String, Box<dyn std::error::Error>>
+    where
+        F: FnMut(&str),
+    {
         self.history.push(ChatMessage::user(message.to_string()));
 
         let request = ChatMessageRequest::new(MODEL.to_string(), self.history.clone());
@@ -53,11 +68,29 @@ impl Chat {
         std::io::stdout().flush().ok();
 
         let mut full_response = String::new();
+        let mut buffer = String::new();
+
         while let Some(Ok(chunk)) = stream.next().await {
             let content = &chunk.message.content;
             print!("{}", content);
             std::io::stdout().flush().ok();
             full_response.push_str(content);
+            buffer.push_str(content);
+
+            // Yield complete sentences
+            while let Some(pos) = buffer.find(|c| c == '.' || c == '!' || c == '?') {
+                let sentence = buffer[..=pos].trim();
+                if !sentence.is_empty() {
+                    on_sentence(sentence);
+                }
+                buffer = buffer[pos + 1..].to_string();
+            }
+        }
+
+        // Yield any remaining text
+        let remaining = buffer.trim();
+        if !remaining.is_empty() {
+            on_sentence(remaining);
         }
 
         println!("\x1b[0m\n");

@@ -4,6 +4,7 @@ mod vad;
 
 use std::error::Error;
 use std::io::Write;
+use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 
@@ -17,10 +18,10 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let (audio_tx, audio_rx) = mpsc::channel::<Vec<f32>>();
 
     // Channel: VAD -> final transcriber (preserved)
-    let (final_tx, final_rx) = mpsc::channel::<Vec<f32>>();
+    let (final_tx, final_rx) = mpsc::channel::<Arc<[f32]>>();
 
     // Channel: VAD -> preview transcriber (lossy)
-    let (preview_tx, preview_rx) = mpsc::sync_channel::<Vec<f32>>(1);
+    let (preview_tx, preview_rx) = mpsc::sync_channel::<Arc<[f32]>>(1);
 
     // Channel: transcribers -> display
     let (display_tx, display_rx) = mpsc::channel::<DisplayEvent>();

@@ -1,6 +1,7 @@
 use cpal::Stream;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rubato::{FftFixedIn, Resampler};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, SyncSender};
 use std::time::{Duration, Instant};
 
@@ -25,6 +26,54 @@ enum VadState {
     Idle,
     Onset(usize),
     Speaking(usize),
+}
+
+/// Ring buffer for prefill frames - avoids per-frame allocations
+struct PrefillRing {
+    buf: Vec<f32>,
+    frame_size: usize,
+    write_pos: usize,
+    count: usize,
+    capacity: usize,
+}
+
+impl PrefillRing {
+    fn new(frame_size: usize, capacity: usize) -> Self {
+        Self {
+            buf: vec![0.0; frame_size * capacity],
+            frame_size,
+            write_pos: 0,
+            count: 0,
+            capacity,
+        }
+    }
+
+    fn push(&mut self, frame: &[f32]) {
+        let start = self.write_pos * self.frame_size;
+        self.buf[start..start + self.frame_size].copy_from_slice(frame);
+        self.write_pos = (self.write_pos + 1) % self.capacity;
+        if self.count < self.capacity {
+            self.count += 1;
+        }
+    }
+
+    fn drain_to(&mut self, out: &mut Vec<f32>) {
+        if self.count == 0 {
+            return;
+        }
+        let start_idx = if self.count < self.capacity {
+            0
+        } else {
+            self.write_pos
+        };
+        for i in 0..self.count {
+            let idx = (start_idx + i) % self.capacity;
+            let start = idx * self.frame_size;
+            out.extend_from_slice(&self.buf[start..start + self.frame_size]);
+        }
+        self.count = 0;
+        self.write_pos = 0;
+    }
 }
 
 struct FrameResampler {
@@ -118,15 +167,14 @@ pub fn start_capture(
 /// final_tx: preserves all events, preview_tx: lossy (capacity 1)
 pub fn run_vad_processor(
     rx: Receiver<Vec<f32>>,
-    final_tx: Sender<Vec<f32>>,
-    preview_tx: SyncSender<Vec<f32>>,
+    final_tx: Sender<Arc<[f32]>>,
+    preview_tx: SyncSender<Arc<[f32]>>,
     mut vad: Option<VadEngine>,
 ) {
     let mut state = VadState::Idle;
     let mut speech_buf: Vec<f32> =
         Vec::with_capacity((TARGET_RATE as f32 * VAD_MAX_SPEECH_SECONDS) as usize);
-    let mut prefill_buf: std::collections::VecDeque<Vec<f32>> =
-        std::collections::VecDeque::with_capacity(VAD_PREFILL_FRAMES + 1);
+    let mut prefill = PrefillRing::new(VAD_FRAME_SAMPLES, VAD_PREFILL_FRAMES);
     let mut last_preview = Instant::now();
     let chunk_size = (TARGET_RATE as f32 * CHUNK_SECONDS) as usize;
 
@@ -142,7 +190,7 @@ pub fn run_vad_processor(
                 vad_engine,
                 &mut state,
                 &mut speech_buf,
-                &mut prefill_buf,
+                &mut prefill,
                 &mut last_preview,
                 &final_tx,
                 &preview_tx,
@@ -153,14 +201,13 @@ pub fn run_vad_processor(
 
             let now = Instant::now();
             if speech_buf.len() >= chunk_size {
-                let samples: Vec<f32> = speech_buf.drain(..chunk_size).collect();
+                let samples: Arc<[f32]> = speech_buf.drain(..chunk_size).collect();
                 let _ = final_tx.send(samples);
                 last_preview = now;
             } else if now.duration_since(last_preview) >= PREVIEW_INTERVAL
                 && speech_buf.len() > MIN_PREVIEW_SAMPLES
             {
-                // Lossy: try_send drops if full
-                let _ = preview_tx.try_send(speech_buf.clone());
+                let _ = preview_tx.try_send(Arc::from(speech_buf.as_slice()));
                 last_preview = now;
             }
         }
@@ -172,49 +219,35 @@ fn process_vad_frame(
     vad: &mut VadEngine,
     state: &mut VadState,
     speech_buf: &mut Vec<f32>,
-    prefill_buf: &mut std::collections::VecDeque<Vec<f32>>,
+    prefill: &mut PrefillRing,
     last_preview: &mut Instant,
-    final_tx: &Sender<Vec<f32>>,
-    preview_tx: &SyncSender<Vec<f32>>,
+    final_tx: &Sender<Arc<[f32]>>,
+    preview_tx: &SyncSender<Arc<[f32]>>,
 ) {
     let is_speaking = matches!(state, VadState::Speaking(_));
     let is_speech = vad.is_speech(frame, is_speaking);
 
     match state {
         VadState::Idle => {
+            prefill.push(frame);
             if is_speech {
                 *state = VadState::Onset(1);
             }
-            prefill_buf.push_back(frame.to_vec());
-            if prefill_buf.len() > VAD_PREFILL_FRAMES {
-                prefill_buf.pop_front();
-            }
         }
         VadState::Onset(count) => {
+            prefill.push(frame);
             if is_speech {
                 *count += 1;
-                prefill_buf.push_back(frame.to_vec());
-                if prefill_buf.len() > VAD_PREFILL_FRAMES {
-                    prefill_buf.pop_front();
-                }
-
                 if *count >= VAD_ONSET_FRAMES {
-                    for pf in prefill_buf.drain(..) {
-                        speech_buf.extend_from_slice(&pf);
-                    }
+                    prefill.drain_to(speech_buf);
                     *state = VadState::Speaking(0);
                 }
             } else {
                 *state = VadState::Idle;
-                prefill_buf.push_back(frame.to_vec());
-                if prefill_buf.len() > VAD_PREFILL_FRAMES {
-                    prefill_buf.pop_front();
-                }
             }
         }
         VadState::Speaking(silence_count) => {
             speech_buf.extend_from_slice(frame);
-
             if is_speech {
                 *silence_count = 0;
             } else {
@@ -234,7 +267,7 @@ fn process_vad_frame(
 
     if should_emit {
         if speech_buf.len() >= VAD_MIN_SPEECH_SAMPLES {
-            let samples = std::mem::take(speech_buf);
+            let samples: Arc<[f32]> = std::mem::take(speech_buf).into();
             let _ = final_tx.send(samples);
         } else {
             speech_buf.clear();
@@ -244,13 +277,13 @@ fn process_vad_frame(
         return;
     }
 
-    // Preview - lossy via try_send
+    // Preview - lossy via try_send, share via Arc
     if matches!(state, VadState::Speaking(_)) {
         let now = Instant::now();
         if speech_buf.len() > VAD_MIN_SPEECH_SAMPLES
             && now.duration_since(*last_preview) >= PREVIEW_INTERVAL
         {
-            let _ = preview_tx.try_send(speech_buf.clone());
+            let _ = preview_tx.try_send(Arc::from(speech_buf.as_slice()));
             *last_preview = now;
         }
     }

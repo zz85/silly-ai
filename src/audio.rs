@@ -16,13 +16,20 @@ const MIN_PREVIEW_SAMPLES: usize = TARGET_RATE / 2;
 const VAD_FRAME_SAMPLES: usize = 480;
 const VAD_MIN_SPEECH_SAMPLES: usize = TARGET_RATE / 2;
 const VAD_MAX_SPEECH_SECONDS: f32 = 10.0;
-const VAD_SILENCE_FRAMES_TO_END: usize = 15; // ~450ms of silence ends utterance
-const VAD_PREFILL_FRAMES: usize = 10; // ~300ms of audio before speech detection
-const VAD_ONSET_FRAMES: usize = 0; // ~90ms consecutive speech to trigger
+const VAD_SILENCE_FRAMES_TO_END: usize = 10;
+const VAD_PREFILL_FRAMES: usize = 10;
+const VAD_ONSET_FRAMES: usize = 3;
 
 pub enum AudioEvent {
     Preview(Vec<f32>),
     Final(Vec<f32>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum VadState {
+    Idle,
+    Onset(usize),    // count of consecutive speech frames
+    Speaking(usize), // count of consecutive silence frames
 }
 
 struct FrameResampler {
@@ -73,14 +80,12 @@ impl FrameResampler {
 struct AudioProcessor {
     resampler: FrameResampler,
     vad: Option<VadEngine>,
+    state: VadState,
     speech_buf: Vec<f32>,
     prefill_buf: std::collections::VecDeque<Vec<f32>>,
     last_preview: Instant,
     chunk_size: usize,
     channels: usize,
-    silence_frames: usize,
-    onset_frames: usize,
-    is_speaking: bool,
 }
 
 impl AudioProcessor {
@@ -90,20 +95,17 @@ impl AudioProcessor {
         Self {
             resampler: FrameResampler::new(input_rate, TARGET_RATE, VAD_FRAME_SAMPLES),
             vad,
+            state: VadState::Idle,
             speech_buf: Vec::with_capacity(max_speech),
             prefill_buf: std::collections::VecDeque::with_capacity(VAD_PREFILL_FRAMES + 1),
             last_preview: Instant::now(),
             chunk_size,
             channels,
-            silence_frames: 0,
-            onset_frames: 0,
-            is_speaking: false,
         }
     }
 
     #[hotpath::measure]
     fn process(&mut self, data: &[f32], tx: &Sender<AudioEvent>) {
-        // Convert to mono
         let mono: Vec<f32> = if self.channels == 1 {
             data.to_vec()
         } else {
@@ -121,72 +123,96 @@ impl AudioProcessor {
 
     fn process_with_vad(&mut self, mono: &[f32], tx: &Sender<AudioEvent>) {
         let vad = self.vad.as_mut().unwrap();
+        let state = &mut self.state;
         let speech_buf = &mut self.speech_buf;
         let prefill_buf = &mut self.prefill_buf;
-        let is_speaking = &mut self.is_speaking;
-        let silence_frames = &mut self.silence_frames;
-        let onset_frames = &mut self.onset_frames;
 
         self.resampler.push(mono, |frame| {
-            let is_speech = vad.is_speech(frame, *is_speaking);
+            let is_speaking = matches!(state, VadState::Speaking(_));
+            let is_speech = vad.is_speech(frame, is_speaking);
 
-            eprint!("\ronset:{} speaking:{} silence:{} buf:{}    ", 
-                *onset_frames, *is_speaking, *silence_frames, speech_buf.len());
-
-            if is_speech {
-                *onset_frames += 1;
-                *silence_frames = 0;
-
-                if *is_speaking {
-                    // Already speaking - just add frame
-                    speech_buf.extend_from_slice(frame);
-                } else if *onset_frames >= VAD_ONSET_FRAMES {
-                    // Onset threshold reached - start speaking
-                    *is_speaking = true;
-                    // Add prefill frames
-                    for prefill_frame in prefill_buf.iter() {
-                        speech_buf.extend_from_slice(prefill_frame);
+            match state {
+                VadState::Idle => {
+                    if is_speech {
+                        *state = VadState::Onset(1);
                     }
-                    prefill_buf.clear();
-                    speech_buf.extend_from_slice(frame);
-                } else {
-                    // Building up onset - keep in prefill
+                    // Always maintain prefill
                     prefill_buf.push_back(frame.to_vec());
                     if prefill_buf.len() > VAD_PREFILL_FRAMES {
                         prefill_buf.pop_front();
                     }
                 }
-            } else if *is_speaking {
-                speech_buf.extend_from_slice(frame);
-                *silence_frames += 1;
-                *onset_frames = 0;
-            } else {
-                // Not speaking - maintain prefill buffer
-                *onset_frames = 0;
-                prefill_buf.push_back(frame.to_vec());
-                if prefill_buf.len() > VAD_PREFILL_FRAMES {
-                    prefill_buf.pop_front();
+                VadState::Onset(count) => {
+                    if is_speech {
+                        *count += 1;
+                        prefill_buf.push_back(frame.to_vec());
+                        if prefill_buf.len() > VAD_PREFILL_FRAMES {
+                            prefill_buf.pop_front();
+                        }
+
+                        if *count >= VAD_ONSET_FRAMES {
+                            // Transition to speaking - flush prefill
+                            for pf in prefill_buf.drain(..) {
+                                speech_buf.extend_from_slice(&pf);
+                            }
+                            *state = VadState::Speaking(0);
+                        }
+                    } else {
+                        // False alarm - back to idle
+                        *state = VadState::Idle;
+                        prefill_buf.push_back(frame.to_vec());
+                        if prefill_buf.len() > VAD_PREFILL_FRAMES {
+                            prefill_buf.pop_front();
+                        }
+                    }
+                }
+                VadState::Speaking(silence_count) => {
+                    speech_buf.extend_from_slice(frame);
+
+                    if is_speech {
+                        *silence_count = 0;
+                    } else {
+                        *silence_count += 1;
+                    }
                 }
             }
         });
 
-        // Check if we should emit
-        let max_samples = (TARGET_RATE as f32 * VAD_MAX_SPEECH_SECONDS) as usize;
-        if (self.silence_frames >= VAD_SILENCE_FRAMES_TO_END && self.is_speaking)
-            || self.speech_buf.len() >= max_samples
-        {
+        // Check for emit conditions
+        let should_emit = match self.state {
+            VadState::Speaking(silence) => {
+                silence >= VAD_SILENCE_FRAMES_TO_END
+                    || self.speech_buf.len()
+                        >= (TARGET_RATE as f32 * VAD_MAX_SPEECH_SECONDS) as usize
+            }
+            _ => false,
+        };
+
+        if should_emit {
             self.emit_speech(tx);
         }
 
         // Preview
-        let now = Instant::now();
-        if self.is_speaking
-            && self.speech_buf.len() > VAD_MIN_SPEECH_SAMPLES
-            && now.duration_since(self.last_preview) >= PREVIEW_INTERVAL
-        {
-            let _ = tx.send(AudioEvent::Preview(self.speech_buf.clone()));
-            self.last_preview = now;
+        if matches!(self.state, VadState::Speaking(_)) {
+            let now = Instant::now();
+            if self.speech_buf.len() > VAD_MIN_SPEECH_SAMPLES
+                && now.duration_since(self.last_preview) >= PREVIEW_INTERVAL
+            {
+                let _ = tx.send(AudioEvent::Preview(self.speech_buf.clone()));
+                self.last_preview = now;
+            }
         }
+    }
+
+    fn emit_speech(&mut self, tx: &Sender<AudioEvent>) {
+        if self.speech_buf.len() >= VAD_MIN_SPEECH_SAMPLES {
+            let samples = std::mem::take(&mut self.speech_buf);
+            let _ = tx.send(AudioEvent::Final(samples));
+        } else {
+            self.speech_buf.clear();
+        }
+        self.state = VadState::Idle;
+        self.last_preview = Instant::now();
     }
 
     fn process_fixed_chunks(&mut self, mono: &[f32], tx: &Sender<AudioEvent>) {
@@ -204,23 +230,6 @@ impl AudioProcessor {
         {
             let _ = tx.send(AudioEvent::Preview(self.speech_buf.clone()));
             self.last_preview = now;
-        }
-    }
-
-    fn emit_speech(&mut self, tx: &Sender<AudioEvent>) {
-        if self.speech_buf.len() >= VAD_MIN_SPEECH_SAMPLES {
-            let samples = std::mem::take(&mut self.speech_buf);
-            let _ = tx.send(AudioEvent::Final(samples));
-        } else {
-            self.speech_buf.clear();
-        }
-        self.is_speaking = false;
-        self.silence_frames = 0;
-        self.last_preview = Instant::now();
-
-        // Reset VAD state after utterance
-        if let Some(ref mut vad) = self.vad {
-            vad.reset();
         }
     }
 }

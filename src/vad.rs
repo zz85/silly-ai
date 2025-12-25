@@ -1,7 +1,7 @@
 use vad_rs::Vad;
 
-const VAD_THRESHOLD: f32 = 0.5;
-const VAD_THRESHOLD_END: f32 = 0.15;
+const VAD_THRESHOLD: f32 = 0.3;
+const VAD_THRESHOLD_END: f32 = 0.25;
 const ENERGY_THRESHOLD: f32 = 0.01;
 const ENERGY_THRESHOLD_END: f32 = 0.006;
 

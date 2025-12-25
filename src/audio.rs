@@ -172,12 +172,14 @@ pub fn run_vad_processor(
     preview_tx: SyncSender<Arc<[f32]>>,
     mut vad: Option<VadEngine>,
     tts_playing: Arc<AtomicBool>,
+    level_tx: Sender<crate::DisplayEvent>,
 ) {
     let mut state = VadState::Idle;
     let mut speech_buf: Vec<f32> =
         Vec::with_capacity((TARGET_RATE as f32 * VAD_MAX_SPEECH_SECONDS) as usize);
     let mut prefill = PrefillRing::new(VAD_FRAME_SAMPLES, VAD_PREFILL_FRAMES);
     let mut last_preview = Instant::now();
+    let mut last_level = Instant::now();
     let chunk_size = (TARGET_RATE as f32 * CHUNK_SECONDS) as usize;
 
     loop {
@@ -185,6 +187,14 @@ pub fn run_vad_processor(
             Ok(f) => f,
             Err(_) => break,
         };
+
+        // Send audio level every 50ms
+        let now = Instant::now();
+        if now.duration_since(last_level) >= Duration::from_millis(50) {
+            let rms = (frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32).sqrt();
+            let _ = level_tx.send(crate::DisplayEvent::AudioLevel(rms));
+            last_level = now;
+        }
 
         // Skip VAD processing while TTS is playing
         if tts_playing.load(Ordering::SeqCst) {

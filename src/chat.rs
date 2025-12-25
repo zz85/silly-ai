@@ -1,8 +1,10 @@
 use ollama_rs::Ollama;
 use ollama_rs::generation::chat::ChatMessage;
 use ollama_rs::generation::chat::request::ChatMessageRequest;
-use std::io::Write;
 use tokio_stream::StreamExt;
+use std::io::Write;
+
+use crate::ui;
 
 const MODEL: &str = "gpt-oss:20b";
 
@@ -36,36 +38,43 @@ impl Chat {
     }
 
     /// Get initial greeting from the assistant
-    pub async fn greet_with_callback<F>(
+    pub async fn greet_with_callback<F, W>(
         &mut self,
         on_sentence: F,
+        on_waiting: W,
     ) -> Result<String, Box<dyn std::error::Error>>
     where
         F: FnMut(&str),
+        W: FnMut(),
     {
         self.send_streaming_with_callback(
-            "Hello. Tell me how you can be of help today",
+            "Hello. Greet me then tell me how you can be of help today",
             on_sentence,
+            on_waiting,
         )
         .await
     }
 
     /// Stream response, calling `on_sentence` for each complete sentence
-    pub async fn send_streaming_with_callback<F>(
+    /// `on_waiting` is called once before waiting for stream
+    pub async fn send_streaming_with_callback<F, W>(
         &mut self,
         message: &str,
         mut on_sentence: F,
+        mut on_waiting: W,
     ) -> Result<String, Box<dyn std::error::Error>>
     where
         F: FnMut(&str),
+        W: FnMut(),
     {
         self.history.push(ChatMessage::user(message.to_string()));
 
         let request = ChatMessageRequest::new(MODEL.to_string(), self.history.clone());
+        
+        on_waiting(); // Show spinner before waiting
         let mut stream = self.ollama.send_chat_messages_stream(request).await?;
 
-        print!("\x1b[36m");
-        std::io::stdout().flush().ok();
+        ui::start_response();
 
         let mut full_response = String::new();
         let mut buffer = String::new();
@@ -93,8 +102,7 @@ impl Chat {
             on_sentence(remaining);
         }
 
-        println!("\x1b[0m\n");
-        std::io::stdout().flush().ok();
+        ui::end_response();
 
         self.history
             .push(ChatMessage::assistant(full_response.clone()));

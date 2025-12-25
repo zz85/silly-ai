@@ -5,6 +5,7 @@ mod config;
 mod supertonic;
 mod transcriber;
 mod tts;
+mod ui;
 mod vad;
 
 use config::{Config, TtsConfig};
@@ -45,6 +46,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Channel: transcribers -> display
     let (display_tx, display_rx) = mpsc::channel::<DisplayEvent>();
     let display_tx2 = display_tx.clone();
+    let display_tx_audio = display_tx.clone();
 
     // Start audio capture thread
     let _stream = audio::start_capture(audio_tx)?;
@@ -67,7 +69,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             Some(VadEngine::energy())
         };
 
-        audio::run_vad_processor(audio_rx, final_tx, preview_tx, vad, tts_playing_vad);
+        audio::run_vad_processor(audio_rx, final_tx, preview_tx, vad, tts_playing_vad, display_tx_audio);
     });
 
     // Preview transcription thread
@@ -142,11 +144,18 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     tts_playing.store(true, Ordering::SeqCst);
     if let Ok((_stream, sink)) = tts::Tts::create_sink() {
         let _ = ollama_chat
-            .greet_with_callback(|sentence| {
-                let _ = tts_engine.queue(sentence, &sink);
-            })
+            .greet_with_callback(
+                |sentence| { let _ = tts_engine.queue(sentence, &sink); },
+                ui::thinking,
+            )
             .await;
-        sink.sleep_until_end();
+        let mut frame = 0;
+        while !sink.empty() {
+            ui::speaking(frame);
+            frame += 1;
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+        ui::clear_line();
     }
     tts_playing.store(false, Ordering::SeqCst);
 
@@ -157,16 +166,19 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     loop {
         // Check for display events (non-blocking)
         match display_rx.try_recv() {
+            Ok(DisplayEvent::AudioLevel(level)) => {
+                if preview_text.is_empty() {
+                    ui::show_level(level);
+                }
+            }
             Ok(DisplayEvent::Preview(text)) => {
                 if text != preview_text {
                     preview_text = text.clone();
-                    print!("\r\x1b[K\x1b[90m{}\x1b[0m", text);
-                    std::io::stdout().flush().ok();
+                    ui::show_preview(&text);
                 }
             }
             Ok(DisplayEvent::Final(text)) => {
-                print!("\r\x1b[K> {}\n", text);
-                std::io::stdout().flush().ok();
+                ui::show_final(&text);
                 preview_text.clear();
 
                 // Mute VAD during response
@@ -181,24 +193,34 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         let sink_ref = &sink;
 
                         if let Err(e) = ollama_chat
-                            .send_streaming_with_callback(&text, |sentence| {
-                                if let Err(e) = tts.queue(sentence, sink_ref) {
-                                    eprintln!("TTS error: {}", e);
-                                }
-                            })
+                            .send_streaming_with_callback(
+                                &text,
+                                |sentence| {
+                                    if let Err(e) = tts.queue(sentence, sink_ref) {
+                                        eprintln!("TTS error: {}", e);
+                                    }
+                                },
+                                || ui::thinking(),
+                            )
                             .await
                         {
                             eprintln!("Chat error: {}", e);
                         }
 
-                        // Wait for all queued audio to finish
-                        sink.sleep_until_end();
+                        // Wait for all queued audio to finish with animation
+                        let mut frame = 0;
+                        while !sink.empty() {
+                            ui::speaking(frame);
+                            frame += 1;
+                            std::thread::sleep(std::time::Duration::from_millis(150));
+                        }
+                        ui::clear_line();
                     }
                     Err(e) => {
                         eprintln!("Audio output error: {}", e);
                         // Fallback: just stream text without TTS
                         if let Err(e) = ollama_chat
-                            .send_streaming_with_callback(&text, |_| {})
+                            .send_streaming_with_callback(&text, |_| {}, || {})
                             .await
                         {
                             eprintln!("Chat error: {}", e);
@@ -225,4 +247,5 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 enum DisplayEvent {
     Preview(String),
     Final(String),
+    AudioLevel(f32),
 }

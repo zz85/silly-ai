@@ -12,16 +12,19 @@ use vad::VadEngine;
 const VAD_MODEL_PATH: &str = "models/silero_vad_v4.onnx";
 const TARGET_RATE: usize = 16000;
 
-#[hotpath::main]
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Channel: audio -> VAD processor
-    let (audio_tx, audio_rx) = hotpath::channel!(mpsc::channel::<Vec<f32>>());
+    let (audio_tx, audio_rx) = mpsc::channel::<Vec<f32>>();
 
-    // Channel: VAD -> transcriber (finals only, preserved)
-    let (final_tx, final_rx) = hotpath::channel!(mpsc::channel::<Vec<f32>>());
+    // Channel: VAD -> final transcriber (preserved)
+    let (final_tx, final_rx) = mpsc::channel::<Vec<f32>>();
 
-    // Channel: VAD -> transcriber (preview, lossy - sync_channel with capacity 1)
+    // Channel: VAD -> preview transcriber (lossy)
     let (preview_tx, preview_rx) = mpsc::sync_channel::<Vec<f32>>(1);
+
+    // Channel: transcribers -> display
+    let (display_tx, display_rx) = mpsc::channel::<DisplayEvent>();
+    let display_tx2 = display_tx.clone();
 
     // Start audio capture thread
     let _stream = audio::start_capture(audio_tx)?;
@@ -47,69 +50,77 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         audio::run_vad_processor(audio_rx, final_tx, preview_tx, vad);
     });
 
-    // Start transcription thread
-    let transcribe_handle = thread::spawn(move || {
+    // Preview transcription thread
+    let preview_handle = thread::spawn(move || {
         let mut transcriber =
             match transcriber::Transcriber::new("models/parakeet-tdt-0.6b-v3-int8") {
                 Ok(t) => t,
                 Err(e) => {
-                    eprintln!("Failed to load transcriber: {}", e);
+                    eprintln!("Preview transcriber failed: {}", e);
                     return;
                 }
             };
 
-        let mut preview_text = String::new();
-
-        loop {
-            // Check for final (priority) or preview
-            // Use try_recv for preview to make it non-blocking
-            if let Ok(samples) = final_rx.try_recv() {
-                while preview_rx.try_recv().is_ok() {}
+        while let Ok(samples) = preview_rx.recv() {
+            if samples.len() >= 8000 {
                 if let Ok(text) = transcriber.transcribe(&samples) {
                     if !text.is_empty() {
-                        print!("\r\x1b[K{}\n", text);
-                        std::io::stdout().flush().ok();
+                        let _ = display_tx.send(DisplayEvent::Preview(text));
                     }
                 }
-                preview_text.clear();
-                continue;
-            }
-
-            // Try preview (non-blocking)
-            if let Ok(samples) = preview_rx.try_recv() {
-                if samples.len() >= 8000 {
-                    if let Ok(text) = transcriber.transcribe(&samples) {
-                        if !text.is_empty() && text != preview_text {
-                            preview_text = text.clone();
-                            print!("\r\x1b[K\x1b[90m{}\x1b[0m", text);
-                            std::io::stdout().flush().ok();
-                        }
-                    }
-                }
-                continue;
-            }
-
-            // Block on final if nothing available
-            match final_rx.recv_timeout(std::time::Duration::from_millis(50)) {
-                Ok(samples) => {
-                    if let Ok(text) = transcriber.transcribe(&samples) {
-                        if !text.is_empty() {
-                            print!("\r\x1b[K{}\n", text);
-                            std::io::stdout().flush().ok();
-                        }
-                    }
-                    preview_text.clear();
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
         }
     });
 
+    // Final transcription thread
+    let final_handle = thread::spawn(move || {
+        let mut transcriber =
+            match transcriber::Transcriber::new("models/parakeet-tdt-0.6b-v3-int8") {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Final transcriber failed: {}", e);
+                    return;
+                }
+            };
+
+        while let Ok(samples) = final_rx.recv() {
+            if let Ok(text) = transcriber.transcribe(&samples) {
+                if !text.is_empty() {
+                    let _ = display_tx2.send(DisplayEvent::Final(text));
+                }
+            }
+        }
+    });
+
+    // Display thread (main)
     println!("Listening... Press Ctrl+C to stop.\n");
 
+    let mut preview_text = String::new();
+    for event in display_rx {
+        match event {
+            DisplayEvent::Preview(text) => {
+                if text != preview_text {
+                    preview_text = text.clone();
+                    print!("\r\x1b[K\x1b[90m{}\x1b[0m", text);
+                    std::io::stdout().flush().ok();
+                }
+            }
+            DisplayEvent::Final(text) => {
+                print!("\r\x1b[K{}\n", text);
+                std::io::stdout().flush().ok();
+                preview_text.clear();
+            }
+        }
+    }
+
     let _ = vad_handle.join();
-    let _ = transcribe_handle.join();
+    let _ = preview_handle.join();
+    let _ = final_handle.join();
 
     Ok(())
+}
+
+enum DisplayEvent {
+    Preview(String),
+    Final(String),
 }

@@ -1,8 +1,13 @@
 mod audio;
 mod chat;
+mod config;
+#[cfg(feature = "supertonic")]
+mod supertonic;
 mod transcriber;
 mod tts;
 mod vad;
+
+use config::{Config, TtsConfig};
 
 use std::error::Error;
 use std::io::Write;
@@ -110,8 +115,26 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Channel for chat responses
     let (chat_tx, chat_rx) = mpsc::channel::<String>();
 
-    // Initialize TTS
-    let tts_engine = tts::Tts::new("models/kokoro-v1.0.onnx", "models/voices-v1.0.bin").await;
+    // Load config and initialize TTS
+    let config = Config::load();
+    let tts_engine: tts::Tts = match config.tts {
+        TtsConfig::Kokoro { model, voices } => {
+            eprintln!("TTS: Kokoro");
+            let engine = tts::KokoroEngine::new(&model, &voices).await;
+            tts::Tts::new(Box::new(engine))
+        }
+        #[cfg(feature = "supertonic")]
+        TtsConfig::Supertonic { onnx_dir, voice_style } => {
+            eprintln!("TTS: Supertonic");
+            let engine = tts::SupertonicEngine::new(&onnx_dir, &voice_style)
+                .expect("Failed to load Supertonic");
+            tts::Tts::new(Box::new(engine))
+        }
+        #[cfg(not(feature = "supertonic"))]
+        TtsConfig::Supertonic { .. } => {
+            panic!("Supertonic not enabled. Build with --features supertonic");
+        }
+    };
 
     let mut ollama_chat = chat::Chat::new();
 

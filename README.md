@@ -1,6 +1,6 @@
 # silly-cli
 
-Voice-first AI chat CLI using real-time speech transcription, Ollama, and Kokoro TTS.
+Voice-first AI chat CLI using real-time speech transcription, Ollama, and TTS.
 
 ## Features
 
@@ -8,7 +8,8 @@ Voice-first AI chat CLI using real-time speech transcription, Ollama, and Kokoro
 - Voice Activity Detection (VAD) with Silero for utterance segmentation
 - Live preview transcription (gray text) while speaking
 - Conversational AI via Ollama with voice-optimized system prompt
-- Text-to-speech responses using [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M)
+- Text-to-speech with [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M) or [Supertonic](https://github.com/supertone-inc/supertonic)
+- Streaming TTS: speech starts as soon as the first sentence is generated
 - Multi-threaded architecture: separate threads for audio capture, VAD, preview transcription, and final transcription
 
 ## Architecture
@@ -58,6 +59,15 @@ curl -L "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-fil
 cd ..
 ```
 
+### 4b. (Optional) Download Supertonic TTS models
+
+```bash
+brew install git-lfs && git lfs install
+cd models && mkdir -p supertonic && cd supertonic
+git clone --depth 1 https://huggingface.co/Supertone/supertonic assets
+cd assets && git lfs pull && cd ../..
+```
+
 ### 5. Start Ollama
 
 ```bash
@@ -79,14 +89,27 @@ Just speak! The CLI will:
 1. Show preview text in gray while you're speaking
 2. Print final transcription with `>` prefix when you pause
 3. Send to Ollama and stream the response in cyan
-4. Speak the response using Kokoro TTS
+4. Speak the response using TTS (streaming sentence-by-sentence)
 
 Press `Ctrl+C` to stop.
 
 ## Configuration
 
 - **LLM Model**: Edit `MODEL` constant in `src/chat.rs`
-- **TTS Voice**: Edit `style` in `src/tts.rs` (default: `af_sarah`)
+- **TTS Engine**: Create `config.toml` (see `config.example.toml`):
+  ```toml
+  [tts]
+  engine = "kokoro"  # or "supertonic"
+  model = "models/kokoro-v1.0.onnx"
+  voices = "models/voices-v1.0.bin"
+  ```
+or
+```toml
+[tts]
+engine = "supertonic"
+onnx_dir = "models/supertonic/assets/onnx"
+voice_style = "models/supertonic/assets/voice_styles/F2.json"
+```
 - **VAD thresholds**: Edit constants in `src/audio.rs` and `src/vad.rs`
 - **Preview interval**: `PREVIEW_INTERVAL` in `src/audio.rs` (default 500ms)
 

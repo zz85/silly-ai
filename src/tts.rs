@@ -1,56 +1,99 @@
-use kokoros::tts::koko::TTSKoko;
 use rodio::{OutputStreamBuilder, Sink};
-use std::sync::mpsc;
 
-const SAMPLE_RATE: u32 = 24000;
+pub trait TtsEngine: Send + Sync {
+    fn synthesize(&self, text: &str) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error>>;
+}
 
-pub struct Tts {
-    engine: TTSKoko,
-    style: String,
+// ============================================================================
+// Kokoro TTS Engine
+// ============================================================================
+
+pub struct KokoroEngine {
+    engine: kokoros::tts::koko::TTSKoko,
+    style: String, // Good choices: af_heart af_bella af_nova bf_emma am_adam am_michael am_liam
     speed: f32,
 }
 
-impl Tts {
+impl KokoroEngine {
     pub async fn new(model_path: &str, voices_path: &str) -> Self {
         Self {
-            engine: TTSKoko::new(model_path, voices_path).await,
-            style: "af_heart".to_string(), // Good choices: af_heart af_bella af_nova bf_emma am_adam am_michael am_liam
+            engine: kokoros::tts::koko::TTSKoko::new(model_path, voices_path).await,
+            style: "af_heart".to_string(),
             speed: 1.0,
         }
     }
+}
+
+impl TtsEngine for KokoroEngine {
+    fn synthesize(&self, text: &str) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error>> {
+        let audio = self.engine.tts_raw_audio(
+            text, "en-us", &self.style, self.speed, None, None, None, None,
+        )?;
+        Ok((audio, 24000))
+    }
+}
+
+// ============================================================================
+// Supertonic TTS Engine
+// ============================================================================
+
+#[cfg(feature = "supertonic")]
+use crate::supertonic;
+#[cfg(feature = "supertonic")]
+use std::sync::Mutex;
+
+#[cfg(feature = "supertonic")]
+pub struct SupertonicEngine {
+    tts: Mutex<supertonic::TextToSpeech>,
+    style: supertonic::Style,
+    total_step: usize,
+    speed: f32,
+}
+
+#[cfg(feature = "supertonic")]
+impl SupertonicEngine {
+    pub fn new(onnx_dir: &str, voice_style_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let tts = supertonic::load_text_to_speech(onnx_dir, false)?;
+        let style = supertonic::load_voice_style(&[voice_style_path.to_string()], false)?;
+        Ok(Self { tts: Mutex::new(tts), style, total_step: 5, speed: 1.05 })
+    }
+}
+
+#[cfg(feature = "supertonic")]
+impl TtsEngine for SupertonicEngine {
+    fn synthesize(&self, text: &str) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error>> {
+        let mut tts = self.tts.lock().unwrap();
+        let sample_rate = tts.sample_rate;
+        let (wav, _) = tts.call(text, &self.style, self.total_step, self.speed, 0.3)?;
+        Ok((wav, sample_rate as u32))
+    }
+}
+
+// ============================================================================
+// Unified TTS wrapper
+// ============================================================================
+
+pub struct Tts {
+    engine: Box<dyn TtsEngine>,
+}
+
+impl Tts {
+    pub fn new(engine: Box<dyn TtsEngine>) -> Self {
+        Self { engine }
+    }
 
     pub fn speak(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let audio = self.engine.tts_raw_audio(
-            text,
-            "en-us",
-            &self.style,
-            self.speed,
-            None,
-            None,
-            None,
-            None,
-        )?;
-
+        let (audio, sample_rate) = self.engine.synthesize(text)?;
         let stream = OutputStreamBuilder::open_default_stream()?;
         let sink = Sink::connect_new(stream.mixer());
-        sink.append(rodio::buffer::SamplesBuffer::new(1, SAMPLE_RATE, audio));
+        sink.append(rodio::buffer::SamplesBuffer::new(1, sample_rate, audio));
         sink.sleep_until_end();
         Ok(())
     }
 
-    /// Queue text for synthesis - returns immediately, audio plays in order
     pub fn queue(&self, text: &str, sink: &Sink) -> Result<(), Box<dyn std::error::Error>> {
-        let audio = self.engine.tts_raw_audio(
-            text,
-            "en-us",
-            &self.style,
-            self.speed,
-            None,
-            None,
-            None,
-            None,
-        )?;
-        sink.append(rodio::buffer::SamplesBuffer::new(1, SAMPLE_RATE, audio));
+        let (audio, sample_rate) = self.engine.synthesize(text)?;
+        sink.append(rodio::buffer::SamplesBuffer::new(1, sample_rate, audio));
         Ok(())
     }
 

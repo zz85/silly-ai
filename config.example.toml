@@ -2,12 +2,12 @@
 # Options: "kokoro" or "supertonic"
 
 [tts]
-engine = "kokoro"
-model = "models/kokoro-v1.0.onnx"
-voices = "models/voices-v1.0.bin"
+engine = "supertonic"
+onnx_dir = "models/supertonic/assets/onnx"
+voice_style = "models/supertonic/assets/voice_styles/M1.json"
 
-# Uncomment below to use Supertonic instead (requires --features supertonic)
+# Uncomment below to use Kokoro instead (requires --features kokoro)
 # [tts]
-# engine = "supertonic"
-# onnx_dir = "models/supertonic/assets/onnx"
-# voice_style = "models/supertonic/assets/voice_styles/M1.json"
+# engine = "kokoro"
+# model = "models/kokoro-v1.0.onnx"
+# voices = "models/voices-v1.0.bin"

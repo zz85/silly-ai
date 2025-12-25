@@ -29,9 +29,23 @@ pub enum TtsConfig {
 
 impl Default for TtsConfig {
     fn default() -> Self {
-        TtsConfig::Kokoro {
-            model: default_kokoro_model(),
-            voices: default_kokoro_voices(),
+        #[cfg(feature = "supertonic")]
+        {
+            TtsConfig::Supertonic {
+                onnx_dir: default_supertonic_onnx_dir(),
+                voice_style: default_supertonic_voice_style(),
+            }
+        }
+        #[cfg(all(feature = "kokoro", not(feature = "supertonic")))]
+        {
+            TtsConfig::Kokoro {
+                model: default_kokoro_model(),
+                voices: default_kokoro_voices(),
+            }
+        }
+        #[cfg(not(any(feature = "kokoro", feature = "supertonic")))]
+        {
+            panic!("No TTS engine enabled. Build with --features kokoro or --features supertonic");
         }
     }
 }

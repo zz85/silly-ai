@@ -7,7 +7,6 @@ edition = "2024"
 anyhow = "1.0.100"
 cpal = "0.17.0"
 hotpath = "0.9.2"
-kokoros = { git = "https://github.com/lucasjinreal/Kokoros", version = "0.1.0" }
 ollama-rs = { version = "0.3.3", features = ["stream"] }
 rodio = "0.21.1"
 rubato = "0.16.2"
@@ -19,6 +18,9 @@ tokio-stream = "0.1.17"
 transcribe-rs = { version = "0.2.1", features = ["parakeet"] }
 vad-rs = { git = "https://github.com/cjpais/vad-rs", version = "0.1.5", default-features = false }
 
+# Kokoro dependencies (optional)
+kokoros = { git = "https://github.com/lucasjinreal/Kokoros", version = "0.1.0", optional = true }
+
 # Supertonic dependencies (optional)
 ndarray = { version = "0.16", features = ["rayon"], optional = true }
 ort = { version = "2.0.0-rc.7", optional = true }
@@ -28,6 +30,8 @@ regex = { version = "1.10", optional = true }
 unicode-normalization = { version = "0.1", optional = true }
 
 [features]
+default = ["supertonic"]
 hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
+kokoro = ["kokoros"]
 supertonic = ["ndarray", "ort", "rand", "rand_distr", "regex", "unicode-normalization", "serde_json"]

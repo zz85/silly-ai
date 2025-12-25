@@ -36,7 +36,7 @@ pub fn show_level(level: f32) {
     let frame = FRAME.fetch_add(1, Ordering::Relaxed);
     let spinner = SPINNER[frame % SPINNER.len()];
     let bars = audio_level(level);
-    print!("\r\x1b[K\x1b[90m{} {}\x1b[0m", spinner, bars);
+    print!("\r\x1b[K\x1b[90m{} {} Waiting... \x1b[0m", spinner, bars);
     std::io::stdout().flush().ok();
 }
 

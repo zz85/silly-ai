@@ -120,10 +120,15 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Load config and initialize TTS
     let config = Config::load();
     let tts_engine: tts::Tts = match config.tts {
+        #[cfg(feature = "kokoro")]
         TtsConfig::Kokoro { model, voices } => {
             eprintln!("TTS: Kokoro");
             let engine = tts::KokoroEngine::new(&model, &voices).await;
             tts::Tts::new(Box::new(engine))
+        }
+        #[cfg(not(feature = "kokoro"))]
+        TtsConfig::Kokoro { .. } => {
+            panic!("Kokoro not enabled. Build with --features kokoro");
         }
         #[cfg(feature = "supertonic")]
         TtsConfig::Supertonic { onnx_dir, voice_style } => {

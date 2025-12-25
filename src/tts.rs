@@ -8,12 +8,14 @@ pub trait TtsEngine: Send + Sync {
 // Kokoro TTS Engine
 // ============================================================================
 
+#[cfg(feature = "kokoro")]
 pub struct KokoroEngine {
     engine: kokoros::tts::koko::TTSKoko,
     style: String, // Good choices: af_heart af_bella af_nova bf_emma am_adam am_michael am_liam
     speed: f32,
 }
 
+#[cfg(feature = "kokoro")]
 impl KokoroEngine {
     pub async fn new(model_path: &str, voices_path: &str) -> Self {
         Self {
@@ -24,6 +26,7 @@ impl KokoroEngine {
     }
 }
 
+#[cfg(feature = "kokoro")]
 impl TtsEngine for KokoroEngine {
     fn synthesize(&self, text: &str) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error>> {
         let audio = self.engine.tts_raw_audio(

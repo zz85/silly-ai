@@ -50,22 +50,22 @@ curl -L -o silero_vad_v4.onnx https://github.com/cjpais/Handy/raw/refs/heads/mai
 cd ..
 ```
 
-### 4. Download Kokoro TTS model and voices
-
-```bash
-cd models
-curl -L "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx" -o kokoro-v1.0.onnx
-curl -L "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin" -o voices-v1.0.bin
-cd ..
-```
-
-### 4b. (Optional) Download Supertonic TTS models
+### 4. Download Supertonic TTS models (default)
 
 ```bash
 brew install git-lfs && git lfs install
 cd models && mkdir -p supertonic && cd supertonic
 git clone --depth 1 https://huggingface.co/Supertone/supertonic assets
 cd assets && git lfs pull && cd ../..
+```
+
+### 4b. (Optional) Download Kokoro TTS model and voices
+
+```bash
+cd models
+curl -L "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx" -o kokoro-v1.0.onnx
+curl -L "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin" -o voices-v1.0.bin
+cd ..
 ```
 
 ### 5. Start Ollama
@@ -79,8 +79,15 @@ Make sure you have a model available (default: `gpt-oss:20b`). Edit `src/chat.rs
 ### 6. Build and run
 
 ```bash
+# Default (Supertonic TTS)
 AUDIOPUS_SYS_USE_PKG_CONFIG=1 cargo build --release
 ./target/release/silly
+
+# With Kokoro TTS instead
+AUDIOPUS_SYS_USE_PKG_CONFIG=1 cargo build --release --no-default-features --features kokoro
+
+# With both TTS engines
+AUDIOPUS_SYS_USE_PKG_CONFIG=1 cargo build --release --features kokoro
 ```
 
 ## Usage

@@ -6,6 +6,8 @@ use std::path::Path;
 pub struct Config {
     #[serde(default = "default_name")]
     pub name: String,
+    #[serde(default = "default_wake_word")]
+    pub wake_word: String,
     #[serde(default)]
     pub tts: TtsConfig,
 }
@@ -14,12 +16,14 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             name: default_name(),
+            wake_word: default_wake_word(),
             tts: TtsConfig::default(),
         }
     }
 }
 
 fn default_name() -> String { "Silly".into() }
+fn default_wake_word() -> String { "Hey Silly".into() }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "engine")]

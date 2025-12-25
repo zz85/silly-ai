@@ -2,6 +2,7 @@
 # Options: "kokoro" or "supertonic"
 
 name = "Silly"
+wake_word = "Hey Silly"
 
 [tts]
 engine = "supertonic"

@@ -7,6 +7,7 @@ mod transcriber;
 mod tts;
 mod ui;
 mod vad;
+mod wake;
 
 use config::{Config, TtsConfig};
 
@@ -144,6 +145,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     };
 
     let mut ollama_chat = chat::Chat::new(&config.name);
+    let wake_word = wake::WakeWord::new(&config.wake_word);
 
     // Initial greeting
     tts_playing.store(true, Ordering::SeqCst);
@@ -164,7 +166,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
     tts_playing.store(false, Ordering::SeqCst);
 
-    println!("Listening... Press Ctrl+C to stop.\n");
+    println!("Listening for \"{}\"... Press Ctrl+C to stop.\n", wake_word.phrase());
 
     let mut preview_text = String::new();
 
@@ -183,7 +185,21 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 }
             }
             Ok(DisplayEvent::Final(text)) => {
-                ui::show_final(&text);
+                // Check for wake word
+                let command = match wake_word.detect(&text) {
+                    Some(cmd) => cmd,
+                    None => {
+                        preview_text.clear();
+                        continue; // Ignore if no wake word
+                    }
+                };
+
+                if command.is_empty() {
+                    preview_text.clear();
+                    continue; // Wake word only, no command
+                }
+
+                ui::show_final(&command);
                 preview_text.clear();
 
                 // Mute VAD during response
@@ -199,7 +215,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
                         if let Err(e) = ollama_chat
                             .send_streaming_with_callback(
-                                &text,
+                                &command,
                                 |sentence| {
                                     if let Err(e) = tts.queue(sentence, sink_ref) {
                                         eprintln!("TTS error: {}", e);

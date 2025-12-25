@@ -16,8 +16,9 @@ const MIN_PREVIEW_SAMPLES: usize = TARGET_RATE / 2;
 const VAD_FRAME_SAMPLES: usize = 480;
 const VAD_MIN_SPEECH_SAMPLES: usize = TARGET_RATE / 2;
 const VAD_MAX_SPEECH_SECONDS: f32 = 10.0;
-const VAD_SILENCE_FRAMES_TO_END: usize = 10; // ~300ms of silence ends utterance
-const VAD_PREFILL_FRAMES: usize = 5; // ~150ms of audio before speech detection
+const VAD_SILENCE_FRAMES_TO_END: usize = 15; // ~450ms of silence ends utterance
+const VAD_PREFILL_FRAMES: usize = 10; // ~300ms of audio before speech detection
+const VAD_ONSET_FRAMES: usize = 0; // ~90ms consecutive speech to trigger
 
 pub enum AudioEvent {
     Preview(Vec<f32>),
@@ -78,6 +79,7 @@ struct AudioProcessor {
     chunk_size: usize,
     channels: usize,
     silence_frames: usize,
+    onset_frames: usize,
     is_speaking: bool,
 }
 
@@ -94,6 +96,7 @@ impl AudioProcessor {
             chunk_size,
             channels,
             silence_frames: 0,
+            onset_frames: 0,
             is_speaking: false,
         }
     }
@@ -122,26 +125,44 @@ impl AudioProcessor {
         let prefill_buf = &mut self.prefill_buf;
         let is_speaking = &mut self.is_speaking;
         let silence_frames = &mut self.silence_frames;
+        let onset_frames = &mut self.onset_frames;
 
         self.resampler.push(mono, |frame| {
             let is_speech = vad.is_speech(frame, *is_speaking);
 
+            eprint!("\ronset:{} speaking:{} silence:{} buf:{}    ", 
+                *onset_frames, *is_speaking, *silence_frames, speech_buf.len());
+
             if is_speech {
-                if !*is_speaking {
-                    // Speech just started - add prefill frames
+                *onset_frames += 1;
+                *silence_frames = 0;
+
+                if *is_speaking {
+                    // Already speaking - just add frame
+                    speech_buf.extend_from_slice(frame);
+                } else if *onset_frames >= VAD_ONSET_FRAMES {
+                    // Onset threshold reached - start speaking
+                    *is_speaking = true;
+                    // Add prefill frames
                     for prefill_frame in prefill_buf.iter() {
                         speech_buf.extend_from_slice(prefill_frame);
                     }
                     prefill_buf.clear();
+                    speech_buf.extend_from_slice(frame);
+                } else {
+                    // Building up onset - keep in prefill
+                    prefill_buf.push_back(frame.to_vec());
+                    if prefill_buf.len() > VAD_PREFILL_FRAMES {
+                        prefill_buf.pop_front();
+                    }
                 }
-                *is_speaking = true;
-                *silence_frames = 0;
-                speech_buf.extend_from_slice(frame);
             } else if *is_speaking {
                 speech_buf.extend_from_slice(frame);
                 *silence_frames += 1;
+                *onset_frames = 0;
             } else {
                 // Not speaking - maintain prefill buffer
+                *onset_frames = 0;
                 prefill_buf.push_back(frame.to_vec());
                 if prefill_buf.len() > VAD_PREFILL_FRAMES {
                     prefill_buf.pop_front();

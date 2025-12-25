@@ -34,7 +34,8 @@ cargo run --release
 
 - Real-time microphone transcription
 - Preview text updates every 500ms (shown in gray)
-- Final transcription every 3 seconds
+- Voice Activity Detection (VAD) for utterance-based transcription
+- Falls back to fixed 3s chunks if VAD model not found
 - Automatic resampling from device sample rate to 16kHz
 - Voice Activity Detection (VAD) to skip silence
 

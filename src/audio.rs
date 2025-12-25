@@ -1,7 +1,7 @@
 use cpal::Stream;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rubato::{FftFixedIn, Resampler};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender, SyncSender};
 use std::time::{Duration, Instant};
 
 use crate::vad::VadEngine;
@@ -16,20 +16,15 @@ const MIN_PREVIEW_SAMPLES: usize = TARGET_RATE / 2;
 const VAD_FRAME_SAMPLES: usize = 480;
 const VAD_MIN_SPEECH_SAMPLES: usize = TARGET_RATE / 2;
 const VAD_MAX_SPEECH_SECONDS: f32 = 10.0;
-const VAD_SILENCE_FRAMES_TO_END: usize = 10;
+const VAD_SILENCE_FRAMES_TO_END: usize = 15;
 const VAD_PREFILL_FRAMES: usize = 10;
 const VAD_ONSET_FRAMES: usize = 3;
-
-pub enum AudioEvent {
-    Preview(Vec<f32>),
-    Final(Vec<f32>),
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum VadState {
     Idle,
-    Onset(usize),    // count of consecutive speech frames
-    Speaking(usize), // count of consecutive silence frames
+    Onset(usize),
+    Speaking(usize),
 }
 
 struct FrameResampler {
@@ -77,166 +72,9 @@ impl FrameResampler {
     }
 }
 
-struct AudioProcessor {
-    resampler: FrameResampler,
-    vad: Option<VadEngine>,
-    state: VadState,
-    speech_buf: Vec<f32>,
-    prefill_buf: std::collections::VecDeque<Vec<f32>>,
-    last_preview: Instant,
-    chunk_size: usize,
-    channels: usize,
-}
-
-impl AudioProcessor {
-    fn new(input_rate: usize, channels: usize, vad: Option<VadEngine>) -> Self {
-        let chunk_size = (TARGET_RATE as f32 * CHUNK_SECONDS) as usize;
-        let max_speech = (TARGET_RATE as f32 * VAD_MAX_SPEECH_SECONDS) as usize;
-        Self {
-            resampler: FrameResampler::new(input_rate, TARGET_RATE, VAD_FRAME_SAMPLES),
-            vad,
-            state: VadState::Idle,
-            speech_buf: Vec::with_capacity(max_speech),
-            prefill_buf: std::collections::VecDeque::with_capacity(VAD_PREFILL_FRAMES + 1),
-            last_preview: Instant::now(),
-            chunk_size,
-            channels,
-        }
-    }
-
-    #[hotpath::measure]
-    fn process(&mut self, data: &[f32], tx: &Sender<AudioEvent>) {
-        let mono: Vec<f32> = if self.channels == 1 {
-            data.to_vec()
-        } else {
-            data.chunks(self.channels)
-                .map(|c| c.iter().sum::<f32>() / self.channels as f32)
-                .collect()
-        };
-
-        if self.vad.is_some() {
-            self.process_with_vad(&mono, tx);
-        } else {
-            self.process_fixed_chunks(&mono, tx);
-        }
-    }
-
-    fn process_with_vad(&mut self, mono: &[f32], tx: &Sender<AudioEvent>) {
-        let vad = self.vad.as_mut().unwrap();
-        let state = &mut self.state;
-        let speech_buf = &mut self.speech_buf;
-        let prefill_buf = &mut self.prefill_buf;
-
-        self.resampler.push(mono, |frame| {
-            let is_speaking = matches!(state, VadState::Speaking(_));
-            let is_speech = vad.is_speech(frame, is_speaking);
-
-            match state {
-                VadState::Idle => {
-                    if is_speech {
-                        *state = VadState::Onset(1);
-                    }
-                    // Always maintain prefill
-                    prefill_buf.push_back(frame.to_vec());
-                    if prefill_buf.len() > VAD_PREFILL_FRAMES {
-                        prefill_buf.pop_front();
-                    }
-                }
-                VadState::Onset(count) => {
-                    if is_speech {
-                        *count += 1;
-                        prefill_buf.push_back(frame.to_vec());
-                        if prefill_buf.len() > VAD_PREFILL_FRAMES {
-                            prefill_buf.pop_front();
-                        }
-
-                        if *count >= VAD_ONSET_FRAMES {
-                            // Transition to speaking - flush prefill
-                            for pf in prefill_buf.drain(..) {
-                                speech_buf.extend_from_slice(&pf);
-                            }
-                            *state = VadState::Speaking(0);
-                        }
-                    } else {
-                        // False alarm - back to idle
-                        *state = VadState::Idle;
-                        prefill_buf.push_back(frame.to_vec());
-                        if prefill_buf.len() > VAD_PREFILL_FRAMES {
-                            prefill_buf.pop_front();
-                        }
-                    }
-                }
-                VadState::Speaking(silence_count) => {
-                    speech_buf.extend_from_slice(frame);
-
-                    if is_speech {
-                        *silence_count = 0;
-                    } else {
-                        *silence_count += 1;
-                    }
-                }
-            }
-        });
-
-        // Check for emit conditions
-        let should_emit = match self.state {
-            VadState::Speaking(silence) => {
-                silence >= VAD_SILENCE_FRAMES_TO_END
-                    || self.speech_buf.len()
-                        >= (TARGET_RATE as f32 * VAD_MAX_SPEECH_SECONDS) as usize
-            }
-            _ => false,
-        };
-
-        if should_emit {
-            self.emit_speech(tx);
-        }
-
-        // Preview
-        if matches!(self.state, VadState::Speaking(_)) {
-            let now = Instant::now();
-            if self.speech_buf.len() > VAD_MIN_SPEECH_SAMPLES
-                && now.duration_since(self.last_preview) >= PREVIEW_INTERVAL
-            {
-                let _ = tx.send(AudioEvent::Preview(self.speech_buf.clone()));
-                self.last_preview = now;
-            }
-        }
-    }
-
-    fn emit_speech(&mut self, tx: &Sender<AudioEvent>) {
-        if self.speech_buf.len() >= VAD_MIN_SPEECH_SAMPLES {
-            let samples = std::mem::take(&mut self.speech_buf);
-            let _ = tx.send(AudioEvent::Final(samples));
-        } else {
-            self.speech_buf.clear();
-        }
-        self.state = VadState::Idle;
-        self.last_preview = Instant::now();
-    }
-
-    fn process_fixed_chunks(&mut self, mono: &[f32], tx: &Sender<AudioEvent>) {
-        self.resampler.push(mono, |frame| {
-            self.speech_buf.extend_from_slice(frame);
-        });
-
-        let now = Instant::now();
-        if self.speech_buf.len() >= self.chunk_size {
-            let samples: Vec<f32> = self.speech_buf.drain(..self.chunk_size).collect();
-            let _ = tx.send(AudioEvent::Final(samples));
-            self.last_preview = now;
-        } else if now.duration_since(self.last_preview) >= PREVIEW_INTERVAL
-            && self.speech_buf.len() > MIN_PREVIEW_SAMPLES
-        {
-            let _ = tx.send(AudioEvent::Preview(self.speech_buf.clone()));
-            self.last_preview = now;
-        }
-    }
-}
-
+/// Start audio capture - sends raw mono samples to channel
 pub fn start_capture(
-    tx: Sender<AudioEvent>,
-    vad: Option<VadEngine>,
+    tx: Sender<Vec<f32>>,
 ) -> Result<Stream, Box<dyn std::error::Error + Send + Sync>> {
     let host = cpal::default_host();
     let device = host.default_input_device().ok_or("No input device")?;
@@ -249,21 +87,171 @@ pub fn start_capture(
         input_rate, channels, TARGET_RATE
     );
 
-    if let Some(ref v) = vad {
-        println!("VAD: {} enabled", v.name());
-    } else {
-        println!("VAD: disabled (fixed {}s chunks)", CHUNK_SECONDS);
-    }
-
-    let mut processor = AudioProcessor::new(input_rate, channels, vad);
+    let mut resampler = FrameResampler::new(input_rate, TARGET_RATE, VAD_FRAME_SAMPLES);
 
     let stream = device.build_input_stream(
         &supported.config(),
-        move |data: &[f32], _| processor.process(data, &tx),
+        move |data: &[f32], _| {
+            // Convert to mono
+            let mono: Vec<f32> = if channels == 1 {
+                data.to_vec()
+            } else {
+                data.chunks(channels)
+                    .map(|c| c.iter().sum::<f32>() / channels as f32)
+                    .collect()
+            };
+
+            // Resample and send frames
+            resampler.push(&mono, |frame| {
+                let _ = tx.send(frame.to_vec());
+            });
+        },
         |err| eprintln!("Stream error: {}", err),
         None,
     )?;
 
     stream.play()?;
     Ok(stream)
+}
+
+/// VAD processor - runs on separate thread
+/// final_tx: preserves all events, preview_tx: lossy (capacity 1)
+pub fn run_vad_processor(
+    rx: Receiver<Vec<f32>>,
+    final_tx: Sender<Vec<f32>>,
+    preview_tx: SyncSender<Vec<f32>>,
+    mut vad: Option<VadEngine>,
+) {
+    let mut state = VadState::Idle;
+    let mut speech_buf: Vec<f32> =
+        Vec::with_capacity((TARGET_RATE as f32 * VAD_MAX_SPEECH_SECONDS) as usize);
+    let mut prefill_buf: std::collections::VecDeque<Vec<f32>> =
+        std::collections::VecDeque::with_capacity(VAD_PREFILL_FRAMES + 1);
+    let mut last_preview = Instant::now();
+    let chunk_size = (TARGET_RATE as f32 * CHUNK_SECONDS) as usize;
+
+    loop {
+        let frame = match rx.recv() {
+            Ok(f) => f,
+            Err(_) => break,
+        };
+
+        if let Some(ref mut vad_engine) = vad {
+            process_vad_frame(
+                &frame,
+                vad_engine,
+                &mut state,
+                &mut speech_buf,
+                &mut prefill_buf,
+                &mut last_preview,
+                &final_tx,
+                &preview_tx,
+            );
+        } else {
+            // No VAD - fixed chunks
+            speech_buf.extend_from_slice(&frame);
+
+            let now = Instant::now();
+            if speech_buf.len() >= chunk_size {
+                let samples: Vec<f32> = speech_buf.drain(..chunk_size).collect();
+                let _ = final_tx.send(samples);
+                last_preview = now;
+            } else if now.duration_since(last_preview) >= PREVIEW_INTERVAL
+                && speech_buf.len() > MIN_PREVIEW_SAMPLES
+            {
+                // Lossy: try_send drops if full
+                let _ = preview_tx.try_send(speech_buf.clone());
+                last_preview = now;
+            }
+        }
+    }
+}
+
+fn process_vad_frame(
+    frame: &[f32],
+    vad: &mut VadEngine,
+    state: &mut VadState,
+    speech_buf: &mut Vec<f32>,
+    prefill_buf: &mut std::collections::VecDeque<Vec<f32>>,
+    last_preview: &mut Instant,
+    final_tx: &Sender<Vec<f32>>,
+    preview_tx: &SyncSender<Vec<f32>>,
+) {
+    let is_speaking = matches!(state, VadState::Speaking(_));
+    let is_speech = vad.is_speech(frame, is_speaking);
+
+    match state {
+        VadState::Idle => {
+            if is_speech {
+                *state = VadState::Onset(1);
+            }
+            prefill_buf.push_back(frame.to_vec());
+            if prefill_buf.len() > VAD_PREFILL_FRAMES {
+                prefill_buf.pop_front();
+            }
+        }
+        VadState::Onset(count) => {
+            if is_speech {
+                *count += 1;
+                prefill_buf.push_back(frame.to_vec());
+                if prefill_buf.len() > VAD_PREFILL_FRAMES {
+                    prefill_buf.pop_front();
+                }
+
+                if *count >= VAD_ONSET_FRAMES {
+                    for pf in prefill_buf.drain(..) {
+                        speech_buf.extend_from_slice(&pf);
+                    }
+                    *state = VadState::Speaking(0);
+                }
+            } else {
+                *state = VadState::Idle;
+                prefill_buf.push_back(frame.to_vec());
+                if prefill_buf.len() > VAD_PREFILL_FRAMES {
+                    prefill_buf.pop_front();
+                }
+            }
+        }
+        VadState::Speaking(silence_count) => {
+            speech_buf.extend_from_slice(frame);
+
+            if is_speech {
+                *silence_count = 0;
+            } else {
+                *silence_count += 1;
+            }
+        }
+    }
+
+    // Check emit
+    let should_emit = match state {
+        VadState::Speaking(silence) => {
+            *silence >= VAD_SILENCE_FRAMES_TO_END
+                || speech_buf.len() >= (TARGET_RATE as f32 * VAD_MAX_SPEECH_SECONDS) as usize
+        }
+        _ => false,
+    };
+
+    if should_emit {
+        if speech_buf.len() >= VAD_MIN_SPEECH_SAMPLES {
+            let samples = std::mem::take(speech_buf);
+            let _ = final_tx.send(samples);
+        } else {
+            speech_buf.clear();
+        }
+        *state = VadState::Idle;
+        *last_preview = Instant::now();
+        return;
+    }
+
+    // Preview - lossy via try_send
+    if matches!(state, VadState::Speaking(_)) {
+        let now = Instant::now();
+        if speech_buf.len() > VAD_MIN_SPEECH_SAMPLES
+            && now.duration_since(*last_preview) >= PREVIEW_INTERVAL
+        {
+            let _ = preview_tx.try_send(speech_buf.clone());
+            *last_preview = now;
+        }
+    }
 }

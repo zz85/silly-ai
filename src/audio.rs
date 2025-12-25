@@ -19,6 +19,7 @@ struct AudioProcessor {
     resampler: Option<FftFixedIn<f32>>,
     raw_buf: Vec<f32>,
     audio_buf: Vec<f32>,
+    resample_out: Vec<f32>,
     last_preview: Instant,
     chunk_size: usize,
     channels: usize,
@@ -28,12 +29,14 @@ impl AudioProcessor {
     fn new(input_rate: usize, channels: usize) -> Self {
         let resampler = (input_rate != TARGET_RATE)
             .then(|| FftFixedIn::new(input_rate, TARGET_RATE, RESAMPLE_CHUNK, 1, 1).unwrap());
+        let chunk_size = (TARGET_RATE as f32 * CHUNK_SECONDS) as usize;
         Self {
             resampler,
             raw_buf: Vec::with_capacity(RESAMPLE_CHUNK * 2),
-            audio_buf: Vec::with_capacity((TARGET_RATE as f32 * CHUNK_SECONDS) as usize * 2),
+            audio_buf: Vec::with_capacity(chunk_size * 2),
+            resample_out: Vec::with_capacity(RESAMPLE_CHUNK),
             last_preview: Instant::now(),
-            chunk_size: (TARGET_RATE as f32 * CHUNK_SECONDS) as usize,
+            chunk_size,
             channels,
         }
     }
@@ -58,13 +61,22 @@ impl AudioProcessor {
 
     fn resample(&mut self) {
         while self.raw_buf.len() >= RESAMPLE_CHUNK {
-            let chunk: Vec<f32> = self.raw_buf.drain(..RESAMPLE_CHUNK).collect();
-            let resampled = match &mut self.resampler {
-                Some(r) => r.process(&[chunk], None).ok().and_then(|mut r| r.pop()),
-                None => Some(chunk),
-            };
-            if let Some(samples) = resampled {
-                self.audio_buf.extend_from_slice(&samples);
+            // Reuse resample_out buffer
+            self.resample_out.clear();
+            self.resample_out
+                .extend(self.raw_buf.drain(..RESAMPLE_CHUNK));
+
+            match &mut self.resampler {
+                Some(r) => {
+                    if let Ok(out) = r.process(&[&self.resample_out], None) {
+                        if let Some(samples) = out.into_iter().next() {
+                            self.audio_buf.extend_from_slice(&samples);
+                        }
+                    }
+                }
+                None => {
+                    self.audio_buf.extend_from_slice(&self.resample_out);
+                }
             }
         }
     }
@@ -72,12 +84,14 @@ impl AudioProcessor {
     fn emit_events(&mut self, tx: &Sender<AudioEvent>) {
         let now = Instant::now();
         if self.audio_buf.len() >= self.chunk_size {
+            // Take ownership - no way around this allocation
             let samples: Vec<f32> = self.audio_buf.drain(..self.chunk_size).collect();
             let _ = tx.send(AudioEvent::Final(samples));
             self.last_preview = now;
         } else if now.duration_since(self.last_preview) >= PREVIEW_INTERVAL
             && self.audio_buf.len() > MIN_PREVIEW_SAMPLES
         {
+            // Preview still needs clone since we keep the buffer
             let _ = tx.send(AudioEvent::Preview(self.audio_buf.clone()));
             self.last_preview = now;
         }

@@ -13,4 +13,3 @@ transcribe-rs = { version = "0.2.1", features = ["parakeet"] }
 [features]
 hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
-hotpath-alloc = ["hotpath/hotpath-alloc"]

@@ -38,8 +38,14 @@ impl AudioProcessor {
         }
     }
 
+    #[hotpath::measure]
     fn process(&mut self, data: &[f32], tx: &Sender<AudioEvent>) {
-        // Convert to mono
+        self.convert_to_mono(data);
+        self.resample();
+        self.emit_events(tx);
+    }
+
+    fn convert_to_mono(&mut self, data: &[f32]) {
         if self.channels == 1 {
             self.raw_buf.extend_from_slice(data);
         } else {
@@ -48,8 +54,9 @@ impl AudioProcessor {
                     .map(|c| c.iter().sum::<f32>() / self.channels as f32),
             );
         }
+    }
 
-        // Resample in chunks
+    fn resample(&mut self) {
         while self.raw_buf.len() >= RESAMPLE_CHUNK {
             let chunk: Vec<f32> = self.raw_buf.drain(..RESAMPLE_CHUNK).collect();
             let resampled = match &mut self.resampler {
@@ -60,8 +67,9 @@ impl AudioProcessor {
                 self.audio_buf.extend_from_slice(&samples);
             }
         }
+    }
 
-        // Emit events
+    fn emit_events(&mut self, tx: &Sender<AudioEvent>) {
         let now = Instant::now();
         if self.audio_buf.len() >= self.chunk_size {
             let samples: Vec<f32> = self.audio_buf.drain(..self.chunk_size).collect();

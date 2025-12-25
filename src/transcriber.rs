@@ -21,6 +21,7 @@ impl Transcriber {
         Ok(Self { engine })
     }
 
+    #[hotpath::measure]
     pub fn transcribe(
         &mut self,
         samples: &[f32],

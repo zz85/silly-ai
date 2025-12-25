@@ -5,8 +5,9 @@ use std::error::Error;
 use std::io::Write;
 use std::sync::mpsc;
 
+#[hotpath::main]
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = hotpath::channel!(mpsc::channel());
 
     let mut transcriber = transcriber::Transcriber::new("models/parakeet-tdt-0.6b-v3-int8")?;
     let _stream = audio::start_capture(tx)?;

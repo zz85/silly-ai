@@ -1,6 +1,6 @@
 # silly-cli
 
-Voice-first AI chat CLI using real-time speech transcription and Ollama.
+Voice-first AI chat CLI using real-time speech transcription, Ollama, and Kokoro TTS.
 
 ## Features
 
@@ -8,15 +8,16 @@ Voice-first AI chat CLI using real-time speech transcription and Ollama.
 - Voice Activity Detection (VAD) with Silero for utterance segmentation
 - Live preview transcription (gray text) while speaking
 - Conversational AI via Ollama with voice-optimized system prompt
+- Text-to-speech responses using [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M)
 - Multi-threaded architecture: separate threads for audio capture, VAD, preview transcription, and final transcription
 
 ## Architecture
 
 ```
-┌─────────┐    ┌─────┐    ┌─────────────────┐    ┌─────────┐
-│  Audio  │───▶│ VAD │───▶│ Final Transcr.  │───▶│         │
-│ Capture │    │     │    └─────────────────┘    │ Display │───▶ Ollama Chat
-└─────────┘    │     │    ┌─────────────────┐    │         │
+┌─────────┐    ┌─────┐    ┌─────────────────┐    ┌─────────┐    ┌────────┐    ┌─────┐
+│  Audio  │───▶│ VAD │───▶│ Final Transcr.  │───▶│         │───▶│ Ollama │───▶│ TTS │
+│ Capture │    │     │    └─────────────────┘    │ Display │    │  Chat  │    │     │
+└─────────┘    │     │    ┌─────────────────┐    │         │    └────────┘    └─────┘
                │     │───▶│Preview Transcr. │───▶│         │
                └─────┘    └─────────────────┘    └─────────┘
                           (lossy channel)
@@ -24,7 +25,13 @@ Voice-first AI chat CLI using real-time speech transcription and Ollama.
 
 ## Setup
 
-### 1. Download the Parakeet model
+### 1. Install system dependencies (macOS)
+
+```bash
+brew install cmake  # Required for espeak-rs-sys
+```
+
+### 2. Download the Parakeet model
 
 ```bash
 mkdir -p models && cd models
@@ -34,7 +41,7 @@ rm parakeet-v3-int8.tar.gz
 cd ..
 ```
 
-### 2. Download VAD model (recommended)
+### 3. Download VAD model
 
 ```bash
 cd models
@@ -42,7 +49,16 @@ curl -L -o silero_vad_v4.onnx https://github.com/cjpais/Handy/raw/refs/heads/mai
 cd ..
 ```
 
-### 3. Start Ollama
+### 4. Download Kokoro TTS model and voices
+
+```bash
+cd models
+curl -L "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx" -o kokoro-v1.0.onnx
+curl -L "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin" -o voices-v1.0.bin
+cd ..
+```
+
+### 5. Start Ollama
 
 ```bash
 ollama serve
@@ -50,10 +66,11 @@ ollama serve
 
 Make sure you have a model available (default: `gpt-oss:20b`). Edit `src/chat.rs` to change the model.
 
-### 4. Build and run
+### 6. Build and run
 
 ```bash
-cargo run --release
+AUDIOPUS_SYS_USE_PKG_CONFIG=1 cargo build --release
+./target/release/silly
 ```
 
 ## Usage
@@ -61,13 +78,15 @@ cargo run --release
 Just speak! The CLI will:
 1. Show preview text in gray while you're speaking
 2. Print final transcription with `>` prefix when you pause
-3. Send to Ollama and display the response in cyan
+3. Send to Ollama and stream the response in cyan
+4. Speak the response using Kokoro TTS
 
 Press `Ctrl+C` to stop.
 
 ## Configuration
 
-- **Model**: Edit `MODEL` constant in `src/chat.rs`
+- **LLM Model**: Edit `MODEL` constant in `src/chat.rs`
+- **TTS Voice**: Edit `style` in `src/tts.rs` (default: `af_sarah`)
 - **VAD thresholds**: Edit constants in `src/audio.rs` and `src/vad.rs`
 - **Preview interval**: `PREVIEW_INTERVAL` in `src/audio.rs` (default 500ms)
 
@@ -75,7 +94,7 @@ Press `Ctrl+C` to stop.
 
 ```bash
 cargo install hotpath --features="tui"
-cargo run --release --features hotpath
+AUDIOPUS_SYS_USE_PKG_CONFIG=1 cargo run --release --features hotpath
 # In another terminal:
 hotpath console
 ```

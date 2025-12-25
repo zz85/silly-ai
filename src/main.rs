@@ -1,6 +1,7 @@
 mod audio;
 mod chat;
 mod transcriber;
+mod tts;
 mod vad;
 
 use std::error::Error;
@@ -107,6 +108,9 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Display thread (main)
     println!("Listening... Press Ctrl+C to stop.\n");
 
+    // Initialize TTS
+    let tts_engine = tts::Tts::new("models/kokoro-v1.0.onnx", "models/voices-v1.0.bin").await;
+
     let mut ollama_chat = chat::Chat::new();
     let mut preview_text = String::new();
 
@@ -125,10 +129,13 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 std::io::stdout().flush().ok();
                 preview_text.clear();
 
-                // Send to ollama
-                match ollama_chat.send(&text).await {
+                // Send to ollama (streaming)
+                match ollama_chat.send_streaming(&text).await {
                     Ok(response) => {
-                        println!("\x1b[36m{}\x1b[0m\n", response);
+                        // Speak the response
+                        if let Err(e) = tts_engine.speak(&response) {
+                            eprintln!("TTS error: {}", e);
+                        }
                     }
                     Err(e) => {
                         eprintln!("Chat error: {}", e);

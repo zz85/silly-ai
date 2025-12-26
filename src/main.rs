@@ -399,6 +399,7 @@ async fn process_command(
                 eprintln!("Chat error: {}", e);
             }
 
+            ui.set_context_words(ollama_chat.context_words());
             ui.set_speaking();
             let mut paused = false;
             while !sink.empty() {
@@ -432,6 +433,7 @@ async fn process_command(
             let _ = ollama_chat
                 .send_streaming_with_callback(command, |_| {}, || {})
                 .await;
+            ui.set_context_words(ollama_chat.context_words());
         }
     }
 

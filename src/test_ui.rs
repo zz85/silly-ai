@@ -85,9 +85,12 @@ pub async fn run(scene: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
 async fn run_interactive(ui: &Ui) {
     println!("Interactive UI test. Keys:");
     println!("  p = preview, t = thinking, s = speaking");
-    println!("  r = response, f = final, i = idle, q = quit\n");
+    println!("  r = response, f = final, i = idle");
+    println!("  +/- = adjust context words, q = quit\n");
 
     crossterm::terminal::enable_raw_mode().ok();
+    let mut words = 100usize;
+    ui.set_context_words(words);
 
     loop {
         if event::poll(Duration::from_millis(50)).unwrap_or(false) {
@@ -108,6 +111,14 @@ async fn run_interactive(ui: &Ui) {
                     }
                     KeyCode::Char('f') => ui.show_final("Final transcription"),
                     KeyCode::Char('i') => ui.set_idle(),
+                    KeyCode::Char('+') | KeyCode::Char('=') => {
+                        words = words.saturating_add(50);
+                        ui.set_context_words(words);
+                    }
+                    KeyCode::Char('-') => {
+                        words = words.saturating_sub(50);
+                        ui.set_context_words(words);
+                    }
                     KeyCode::Char('q') | KeyCode::Esc => break,
                     _ => {}
                 }

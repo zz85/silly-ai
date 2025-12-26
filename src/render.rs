@@ -12,7 +12,8 @@ pub enum UiEvent {
     ResponseChunk(String),
     ResponseEnd,
     Idle,
-    Tick, // For animations
+    Tick,
+    ContextWords(usize),
 }
 
 #[derive(Clone)]
@@ -57,6 +58,10 @@ impl Ui {
     pub fn tick(&self) {
         let _ = self.tx.send(UiEvent::Tick);
     }
+
+    pub fn set_context_words(&self, count: usize) {
+        let _ = self.tx.send(UiEvent::ContextWords(count));
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -71,6 +76,7 @@ enum RenderState {
 pub struct Renderer {
     state: RenderState,
     frame: usize,
+    context_words: usize,
 }
 
 impl Renderer {
@@ -78,6 +84,7 @@ impl Renderer {
         Self {
             state: RenderState::Idle,
             frame: 0,
+            context_words: 0,
         }
     }
 
@@ -121,10 +128,19 @@ impl Renderer {
                 match self.state {
                     RenderState::Thinking => self.render_spinner(),
                     RenderState::Speaking => self.render_speaking(),
-                    _ => return, // No flush needed
+                    _ => {
+                        self.render_status();
+                        return;
+                    }
                 }
             }
+            UiEvent::ContextWords(count) => {
+                self.context_words = count;
+                self.render_status();
+                return;
+            }
         }
+        self.render_status();
         std::io::stdout().flush().ok();
     }
 
@@ -136,5 +152,21 @@ impl Renderer {
     fn render_speaking(&self) {
         let icon = SPEAKING[self.frame % SPEAKING.len()];
         print!("\r\x1b[K\x1b[35m{} Speaking...\x1b[0m", icon);
+    }
+
+    fn render_status(&self) {
+        let state_str = match &self.state {
+            RenderState::Idle => "⏸ Idle",
+            RenderState::Preview(_) => "🎤 Listening",
+            RenderState::Thinking => "💭 Thinking",
+            RenderState::Speaking => "🔊 Speaking",
+            RenderState::Response => "📝 Responding",
+        };
+        // Save cursor, move to bottom row, clear line, print inverted status, restore cursor
+        print!(
+            "\x1b7\x1b[999;1H\x1b[K\x1b[7m {} | ~{} words \x1b[0m\x1b8",
+            state_str, self.context_words
+        );
+        std::io::stdout().flush().ok();
     }
 }

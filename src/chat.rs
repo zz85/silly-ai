@@ -44,6 +44,11 @@ impl Chat {
         }
     }
 
+    /// Estimate total words in conversation history
+    pub fn context_words(&self) -> usize {
+        self.history.iter().map(|m| m.content.split_whitespace().count()).sum()
+    }
+
     /// Get initial greeting from the assistant
     pub async fn greet_with_callback<F, W>(
         &mut self,

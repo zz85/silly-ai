@@ -27,38 +27,47 @@ impl Ui {
         (Self { tx }, rx)
     }
 
+    /// Show gray preview text while user is speaking
     pub fn set_preview(&self, text: String) {
         let _ = self.tx.send(UiEvent::Preview(text));
     }
 
+    /// Show spinner while waiting for LLM response
     pub fn set_thinking(&self) {
         let _ = self.tx.send(UiEvent::Thinking);
     }
 
+    /// Show animation while TTS is playing audio
     pub fn set_speaking(&self) {
         let _ = self.tx.send(UiEvent::Speaking);
     }
 
+    /// Clear status, return to idle state
     pub fn set_idle(&self) {
         let _ = self.tx.send(UiEvent::Idle);
     }
 
+    /// Display finalized user transcription with ">" prefix
     pub fn show_final(&self, text: &str) {
         let _ = self.tx.send(UiEvent::Final(text.to_string()));
     }
 
+    /// Append streamed LLM text (cyan colored)
     pub fn append_response(&self, text: &str) {
         let _ = self.tx.send(UiEvent::ResponseChunk(text.to_string()));
     }
 
+    /// End LLM text stream, reset color and newline
     pub fn end_response(&self) {
         let _ = self.tx.send(UiEvent::ResponseEnd);
     }
 
+    /// Advance animation frame (call periodically)
     pub fn tick(&self) {
         let _ = self.tx.send(UiEvent::Tick);
     }
 
+    /// Update context word count shown in status
     pub fn set_context_words(&self, count: usize) {
         let _ = self.tx.send(UiEvent::ContextWords(count));
     }

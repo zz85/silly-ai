@@ -206,14 +206,12 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Initialize TUI
     let mut tui = tui::Tui::new()?;
-    tui.draw()?; // Initial draw
 
-    // Initial greeting - draw TUI during greeting
+    // Initial greeting
     tts_playing.store(true, Ordering::Relaxed);
     if let Ok((stream, sink)) = tts::Tts::create_sink() {
         ui.set_thinking();
 
-        // Process UI events during greeting
         let ui_greet = ui.clone();
         let greeting_result = ollama_chat
             .greet_with_callback(
@@ -224,9 +222,9 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             )
             .await;
 
-        // Drain UI events after greeting
+        // Process UI events
         while let Ok(event) = ui_rx.try_recv() {
-            tui.handle_ui_event(event);
+            tui.handle_ui_event(event)?;
         }
         tui.draw()?;
 
@@ -234,9 +232,8 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             ui.end_response();
             ui.set_speaking();
             while !sink.empty() {
-                // Keep UI responsive during TTS
                 while let Ok(event) = ui_rx.try_recv() {
-                    tui.handle_ui_event(event);
+                    tui.handle_ui_event(event)?;
                 }
                 tui.draw()?;
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -254,19 +251,15 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut pending_deadline: Option<tokio::time::Instant> = None;
 
     loop {
-        // Process all pending UI events
-        let mut had_events = false;
+        // Process UI events
         while let Ok(event) = ui_rx.try_recv() {
-            tui.handle_ui_event(event);
-            had_events = true;
+            tui.handle_ui_event(event)?;
         }
 
-        // Only draw if there were events or input
-        if had_events {
-            tui.draw()?;
-        }
+        // Draw
+        tui.draw()?;
 
-        // Poll keyboard input (non-blocking, 1ms timeout)
+        // Poll keyboard input
         if let Some(line) = tui.poll_input()? {
             if line == "\x03" {
                 break; // Ctrl+C
@@ -322,7 +315,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     }
 
-    drop(tui); // Restore terminal
+    drop(tui);
 
     let _ = vad_handle.join();
     let _ = preview_handle.join();

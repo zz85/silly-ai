@@ -1,46 +1,91 @@
-//! Terminal UI with ratatui - split screen for preview, response, and input
+//! Terminal UI with ratatui - status bar and input at bottom, chat in scrollback
 
 use crate::render::UiEvent;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::ExecutableCommand;
+use crossterm::terminal::{self, Clear, ClearType};
+use crossterm::{cursor, ExecutableCommand};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use std::io::{self, stdout};
+use ratatui::widgets::{Block, Borders, Paragraph};
+use std::io::{self, stdout, Write};
 use tui_textarea::{Input, TextArea};
+
+const STATUS_HEIGHT: u16 = 1;
+const INPUT_HEIGHT: u16 = 3;
+const RESERVED_LINES: u16 = STATUS_HEIGHT + INPUT_HEIGHT;
 
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     textarea: TextArea<'static>,
     preview: String,
     status: String,
-    response: String,
     context_words: usize,
+    needs_redraw: bool,
 }
 
 impl Tui {
     pub fn new() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
-        stdout().execute(EnterAlternateScreen)?;
         let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
         let mut textarea = TextArea::default();
         textarea.set_block(Block::default().borders(Borders::ALL).title(" Input "));
         textarea.set_cursor_line_style(Style::default());
 
-        Ok(Self {
+        let mut tui = Self {
             terminal,
             textarea,
             preview: String::new(),
             status: "⏸ Idle".to_string(),
-            response: String::new(),
             context_words: 0,
-        })
+            needs_redraw: true,
+        };
+
+        // Reserve space at bottom for status + input
+        tui.reserve_bottom_space()?;
+
+        Ok(tui)
+    }
+
+    fn reserve_bottom_space(&mut self) -> io::Result<()> {
+        let size = self.terminal.size()?;
+        // Move cursor to leave room at bottom
+        stdout().execute(cursor::MoveTo(0, size.height.saturating_sub(RESERVED_LINES)))?;
+        // Add newlines to push content up and create space
+        for _ in 0..RESERVED_LINES {
+            println!();
+        }
+        stdout().flush()?;
+        Ok(())
     }
 
     pub fn restore(&mut self) -> io::Result<()> {
         terminal::disable_raw_mode()?;
-        stdout().execute(LeaveAlternateScreen)?;
+        // Move cursor below our UI area
+        let size = self.terminal.size()?;
+        stdout().execute(cursor::MoveTo(0, size.height))?;
+        println!();
+        Ok(())
+    }
+
+    /// Print text to scrollback (chat area above status bar)
+    pub fn print_to_scrollback(&mut self, text: &str) -> io::Result<()> {
+        let size = self.terminal.size()?;
+        let chat_bottom = size.height.saturating_sub(RESERVED_LINES);
+
+        // Save cursor, move to chat area, print, restore
+        stdout().execute(cursor::SavePosition)?;
+        stdout().execute(cursor::MoveTo(0, chat_bottom))?;
+
+        // Scroll up to make room
+        stdout().execute(terminal::ScrollUp(1))?;
+        stdout().execute(cursor::MoveTo(0, chat_bottom.saturating_sub(1)))?;
+
+        // Print without newline (we scrolled already)
+        print!("{}", text);
+        stdout().flush()?;
+
+        stdout().execute(cursor::RestorePosition)?;
+        self.needs_redraw = true;
         Ok(())
     }
 
@@ -49,36 +94,42 @@ impl Tui {
             UiEvent::Preview(text) => {
                 self.preview = text;
                 self.status = "🎤 Listening".to_string();
+                self.needs_redraw = true;
             }
             UiEvent::Final(text) => {
-                self.response.push_str(&format!("> {}\n", text));
+                let _ = self.print_to_scrollback(&format!("> {}", text));
                 self.preview.clear();
                 self.status = "⏸ Idle".to_string();
             }
             UiEvent::Thinking => {
                 self.status = "💭 Thinking".to_string();
+                self.needs_redraw = true;
             }
             UiEvent::Speaking => {
                 self.status = "🔊 Speaking".to_string();
+                self.needs_redraw = true;
             }
             UiEvent::SpeakingDone => {
                 self.status = "⏸ Idle".to_string();
+                self.needs_redraw = true;
             }
             UiEvent::ResponseChunk(text) => {
-                self.response.push_str(&text);
+                let _ = self.print_to_scrollback(&text);
                 self.status = "📝 Responding".to_string();
             }
             UiEvent::ResponseEnd => {
-                self.response.push_str("\n\n");
+                let _ = self.print_to_scrollback("\n");
                 self.status = "⏸ Idle".to_string();
             }
             UiEvent::Idle => {
                 self.status = "⏸ Idle".to_string();
                 self.preview.clear();
+                self.needs_redraw = true;
             }
             UiEvent::Tick => {}
             UiEvent::ContextWords(count) => {
                 self.context_words = count;
+                self.needs_redraw = true;
             }
         }
     }
@@ -87,9 +138,11 @@ impl Tui {
     pub fn poll_input(&mut self) -> io::Result<Option<String>> {
         if event::poll(std::time::Duration::from_millis(16))? {
             if let Event::Key(key) = event::read()? {
+                self.needs_redraw = true;
+
                 // Ctrl+C to quit
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    return Ok(Some("\x03".to_string())); // Signal quit
+                    return Ok(Some("\x03".to_string()));
                 }
 
                 // Enter to submit
@@ -130,53 +183,54 @@ impl Tui {
         self.textarea.set_block(Block::default().borders(Borders::ALL).title(" Input "));
         self.textarea.set_cursor_line_style(Style::default());
         self.textarea.move_cursor(tui_textarea::CursorMove::End);
+        self.needs_redraw = true;
     }
 
     pub fn draw(&mut self) -> io::Result<()> {
+        if !self.needs_redraw {
+            return Ok(());
+        }
+        self.needs_redraw = false;
+
         let preview = self.preview.clone();
-        let status = self.status.clone();
-        let response = self.response.clone();
-        let context_words = self.context_words;
+        let status = format!(" {} | ~{} words ", self.status, self.context_words);
+        let preview_display = if preview.is_empty() {
+            " ".to_string()
+        } else {
+            format!(" 🎤 {}", preview)
+        };
 
         self.terminal.draw(|frame| {
-            let area = frame.area();
+            let size = frame.area();
 
-            // Layout: response area (flex), preview (1 line), status bar (1 line), input (3 lines)
+            // Only draw at the bottom of the screen
+            let bottom_area = Rect {
+                x: 0,
+                y: size.height.saturating_sub(RESERVED_LINES),
+                width: size.width,
+                height: RESERVED_LINES,
+            };
+
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Min(5),      // Response
-                    Constraint::Length(3),   // Preview
-                    Constraint::Length(1),   // Status
-                    Constraint::Length(3),   // Input
+                    Constraint::Length(STATUS_HEIGHT),
+                    Constraint::Length(INPUT_HEIGHT),
                 ])
-                .split(area);
+                .split(bottom_area);
 
-            // Response area with scroll to bottom
-            let response_lines: Vec<&str> = response.lines().collect();
-            let visible_height = chunks[0].height.saturating_sub(2) as usize;
-            let scroll = response_lines.len().saturating_sub(visible_height);
-            let response_widget = Paragraph::new(response.as_str())
-                .block(Block::default().borders(Borders::ALL).title(" Chat "))
-                .wrap(Wrap { trim: false })
-                .scroll((scroll as u16, 0))
-                .style(Style::default().fg(Color::Cyan));
-            frame.render_widget(response_widget, chunks[0]);
-
-            // Preview area
-            let preview_widget = Paragraph::new(preview.as_str())
-                .block(Block::default().borders(Borders::ALL).title(" Preview "))
-                .style(Style::default().fg(Color::DarkGray));
-            frame.render_widget(preview_widget, chunks[1]);
-
-            // Status bar
-            let status_text = format!(" {} | ~{} words ", status, context_words);
-            let status_widget = Paragraph::new(status_text)
+            // Status bar with preview
+            let status_with_preview = if preview.is_empty() {
+                status
+            } else {
+                format!("{}  {}", status, preview_display)
+            };
+            let status_widget = Paragraph::new(status_with_preview)
                 .style(Style::default().bg(Color::DarkGray).fg(Color::White));
-            frame.render_widget(status_widget, chunks[2]);
+            frame.render_widget(status_widget, chunks[0]);
 
             // Input area
-            frame.render_widget(&self.textarea, chunks[3]);
+            frame.render_widget(&self.textarea, chunks[1]);
         })?;
 
         Ok(())

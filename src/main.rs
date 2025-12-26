@@ -200,37 +200,8 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut ollama_chat = chat::Chat::new(&config.name);
     let wake_word = wake::WakeWord::new(&config.wake_word);
 
-    // Initial greeting
-    tts_playing.store(true, Ordering::Relaxed);
-    if let Ok((stream, sink)) = tts::Tts::create_sink() {
-        let _ = ollama_chat
-            .greet_with_callback(
-                |sentence| {
-                    let _ = tts_engine.queue(sentence, &sink);
-                },
-                ui::thinking,
-            )
-            .await;
-        let mut frame = 0;
-        while !sink.empty() {
-            ui::speaking(frame);
-            frame += 1;
-            std::thread::sleep(std::time::Duration::from_millis(150));
-        }
-        ui::clear_line();
-        tts::Tts::finish(stream, sink);
-    }
-    tts_playing.store(false, Ordering::Relaxed);
-
-    println!(
-        "Listening for \"{}\"... (or type your message)\n",
-        wake_word.phrase()
-    );
-
     let (ui, ui_rx) = Ui::new();
     let mut renderer = Renderer::new();
-    let mut last_interaction: Option<std::time::Instant> = None;
-    let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
 
     // Animation tick for spinners
     let ui_tick = ui.clone();
@@ -241,6 +212,44 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             ui_tick.tick();
         }
     });
+
+    // Spawn render loop
+    let (render_done_tx, mut render_done_rx) = tokio::sync::oneshot::channel::<()>();
+    let render_handle = std::thread::spawn(move || {
+        while let Ok(event) = ui_rx.recv() {
+            renderer.handle(event);
+        }
+        let _ = render_done_tx.send(());
+    });
+
+    // Initial greeting
+    tts_playing.store(true, Ordering::Relaxed);
+    if let Ok((stream, sink)) = tts::Tts::create_sink() {
+        ui.set_thinking();
+        let _ = ollama_chat
+            .greet_with_callback(
+                |sentence| {
+                    let _ = tts_engine.queue(sentence, &sink);
+                },
+                || {},
+            )
+            .await;
+        ui.set_speaking();
+        while !sink.empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        ui.set_idle();
+        tts::Tts::finish(stream, sink);
+    }
+    tts_playing.store(false, Ordering::Relaxed);
+
+    println!(
+        "Listening for \"{}\"... (or type your message)\n",
+        wake_word.phrase()
+    );
+
+    let mut last_interaction: Option<std::time::Instant> = None;
+    let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
 
     // Channel for readline input and pre-fill requests
     let (input_tx, input_rx) = flume::unbounded::<String>();
@@ -356,10 +365,6 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     }
                     None => break,
                 }
-            }
-
-            Ok(ui_event) = ui_rx.recv_async() => {
-                renderer.handle(ui_event);
             }
         }
     }

@@ -128,45 +128,30 @@ impl Renderer {
                 match self.state {
                     RenderState::Thinking => self.render_spinner(),
                     RenderState::Speaking => self.render_speaking(),
-                    _ => {
-                        self.render_status();
-                        return;
-                    }
+                    _ => return,
                 }
             }
             UiEvent::ContextWords(count) => {
                 self.context_words = count;
-                self.render_status();
                 return;
             }
         }
-        self.render_status();
         std::io::stdout().flush().ok();
     }
 
     fn render_spinner(&self) {
         let spinner = SPINNER[self.frame % SPINNER.len()];
-        print!("\r\x1b[K\x1b[33m{} Thinking...\x1b[0m", spinner);
+        print!(
+            "\r\x1b[K\x1b[33m{} Thinking...\x1b[0m  \x1b[90m(~{} words)\x1b[0m",
+            spinner, self.context_words
+        );
     }
 
     fn render_speaking(&self) {
         let icon = SPEAKING[self.frame % SPEAKING.len()];
-        print!("\r\x1b[K\x1b[35m{} Speaking...\x1b[0m", icon);
-    }
-
-    fn render_status(&self) {
-        let state_str = match &self.state {
-            RenderState::Idle => "⏸ Idle",
-            RenderState::Preview(_) => "🎤 Listening",
-            RenderState::Thinking => "💭 Thinking",
-            RenderState::Speaking => "🔊 Speaking",
-            RenderState::Response => "📝 Responding",
-        };
-        // Save cursor, move to bottom row, clear line, print inverted status, restore cursor
         print!(
-            "\x1b7\x1b[999;1H\x1b[K\x1b[7m {} | ~{} words \x1b[0m\x1b8",
-            state_str, self.context_words
+            "\r\x1b[K\x1b[35m{} Speaking...\x1b[0m  \x1b[90m(~{} words)\x1b[0m",
+            icon, self.context_words
         );
-        std::io::stdout().flush().ok();
     }
 }

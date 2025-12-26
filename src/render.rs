@@ -9,6 +9,7 @@ pub enum UiEvent {
     Final(String),
     Thinking,
     Speaking,
+    SpeakingDone,
     ResponseChunk(String),
     ResponseEnd,
     Idle,
@@ -60,6 +61,11 @@ impl Ui {
     /// End LLM text stream, reset color and newline
     pub fn end_response(&self) {
         let _ = self.tx.send(UiEvent::ResponseEnd);
+    }
+
+    /// TTS audio playback finished
+    pub fn speaking_done(&self) {
+        let _ = self.tx.send(UiEvent::SpeakingDone);
     }
 
     /// Advance animation frame (call periodically)
@@ -114,6 +120,10 @@ impl Renderer {
             UiEvent::Speaking => {
                 self.state = RenderState::Speaking;
                 self.render_speaking();
+            }
+            UiEvent::SpeakingDone => {
+                self.state = RenderState::Idle;
+                print!("\r\x1b[K");
             }
             UiEvent::ResponseChunk(text) => {
                 if self.state != RenderState::Response {

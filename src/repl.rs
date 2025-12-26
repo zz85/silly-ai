@@ -83,6 +83,7 @@ pub async fn process_command(
             ui.set_speaking();
             wait_for_playback(&sink);
             Tts::finish(stream, sink);
+            ui.speaking_done();
         }
         Err(e) => {
             eprintln!("Audio error: {}", e);
@@ -96,7 +97,6 @@ pub async fn process_command(
     }
 
     tts_playing.store(false, Ordering::SeqCst);
-    ui.set_idle();
     Some(Instant::now())
 }
 

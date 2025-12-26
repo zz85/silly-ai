@@ -241,8 +241,8 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         while !sink.empty() {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
-        ui.set_idle();
         tts::Tts::finish(stream, sink);
+        ui.speaking_done();
     }
     tts_playing.store(false, Ordering::Relaxed);
 

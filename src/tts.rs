@@ -105,4 +105,10 @@ impl Tts {
         let sink = Sink::connect_new(stream.mixer());
         Ok((stream, sink))
     }
+
+    /// Wait for sink to finish and suppress drop warning
+    pub fn finish(stream: rodio::OutputStream, sink: Sink) {
+        sink.sleep_until_end();
+        std::mem::forget(stream); // Suppress "Dropping OutputStream" warning
+    }
 }

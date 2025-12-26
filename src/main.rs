@@ -149,7 +149,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Initial greeting
     tts_playing.store(true, Ordering::SeqCst);
-    if let Ok((_stream, sink)) = tts::Tts::create_sink() {
+    if let Ok((stream, sink)) = tts::Tts::create_sink() {
         let _ = ollama_chat
             .greet_with_callback(
                 |sentence| { let _ = tts_engine.queue(sentence, &sink); },
@@ -163,6 +163,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             std::thread::sleep(std::time::Duration::from_millis(150));
         }
         ui::clear_line();
+        tts::Tts::finish(stream, sink);
     }
     tts_playing.store(false, Ordering::SeqCst);
 
@@ -219,7 +220,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 let sink_result = tts::Tts::create_sink();
 
                 match sink_result {
-                    Ok((_stream, sink)) => {
+                    Ok((stream, sink)) => {
                         let tts = &tts_engine;
                         let sink_ref = &sink;
 
@@ -246,6 +247,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             std::thread::sleep(std::time::Duration::from_millis(150));
                         }
                         ui::clear_line();
+                        tts::Tts::finish(stream, sink);
                     }
                     Err(e) => {
                         eprintln!("Audio output error: {}", e);

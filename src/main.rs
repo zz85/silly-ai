@@ -7,7 +7,6 @@ mod supertonic;
 mod test_ui;
 mod transcriber;
 mod tts;
-mod ui;
 mod vad;
 mod wake;
 
@@ -226,14 +225,16 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     tts_playing.store(true, Ordering::Relaxed);
     if let Ok((stream, sink)) = tts::Tts::create_sink() {
         ui.set_thinking();
+        let ui_greet = ui.clone();
         let _ = ollama_chat
             .greet_with_callback(
                 |sentence| {
                     let _ = tts_engine.queue(sentence, &sink);
                 },
-                || {},
+                |chunk| ui_greet.append_response(chunk),
             )
             .await;
+        ui.end_response();
         ui.set_speaking();
         while !sink.empty() {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -391,18 +392,20 @@ async fn process_command(
     let sink_result = tts::Tts::create_sink();
     match sink_result {
         Ok((stream, sink)) => {
+            let ui_resp = ui.clone();
             if let Err(e) = ollama_chat
                 .send_streaming_with_callback(
                     command,
                     |sentence| {
                         let _ = tts_engine.queue(sentence, &sink);
                     },
-                    || {},
+                    |chunk| ui_resp.append_response(chunk),
                 )
                 .await
             {
                 eprintln!("Chat error: {}", e);
             }
+            ui.end_response();
 
             ui.set_context_words(ollama_chat.context_words());
             ui.set_speaking();
@@ -435,9 +438,11 @@ async fn process_command(
         }
         Err(e) => {
             eprintln!("Audio error: {}", e);
+            let ui_resp = ui.clone();
             let _ = ollama_chat
-                .send_streaming_with_callback(command, |_| {}, || {})
+                .send_streaming_with_callback(command, |_| {}, |chunk| ui_resp.append_response(chunk))
                 .await;
+            ui.end_response();
             ui.set_context_words(ollama_chat.context_words());
         }
     }

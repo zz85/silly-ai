@@ -1,10 +1,7 @@
 use ollama_rs::Ollama;
 use ollama_rs::generation::chat::ChatMessage;
 use ollama_rs::generation::chat::request::ChatMessageRequest;
-use std::io::Write;
 use tokio_stream::StreamExt;
-
-use crate::ui;
 
 const MODEL: &str = "gpt-oss:20b";
 
@@ -50,48 +47,44 @@ impl Chat {
     }
 
     /// Get initial greeting from the assistant
-    pub async fn greet_with_callback<F, W>(
+    pub async fn greet_with_callback<F, C>(
         &mut self,
         on_sentence: F,
-        on_waiting: W,
+        on_chunk: C,
     ) -> Result<String, Box<dyn std::error::Error>>
     where
         F: FnMut(&str),
-        W: FnMut(),
+        C: FnMut(&str),
     {
         let prompt = format!("Hello.");
-        self.send_streaming_with_callback(&prompt, on_sentence, on_waiting)
+        self.send_streaming_with_callback(&prompt, on_sentence, on_chunk)
             .await
     }
 
     /// Stream response, calling `on_sentence` for each complete sentence
-    /// `on_waiting` is called once before waiting for stream
-    pub async fn send_streaming_with_callback<F, W>(
+    /// `on_chunk` is called for each streamed token
+    pub async fn send_streaming_with_callback<F, C>(
         &mut self,
         message: &str,
         mut on_sentence: F,
-        mut on_waiting: W,
+        mut on_chunk: C,
     ) -> Result<String, Box<dyn std::error::Error>>
     where
         F: FnMut(&str),
-        W: FnMut(),
+        C: FnMut(&str),
     {
         self.history.push(ChatMessage::user(message.to_string()));
 
         let request = ChatMessageRequest::new(MODEL.to_string(), self.history.clone());
 
-        on_waiting(); // Show spinner before waiting
         let mut stream = self.ollama.send_chat_messages_stream(request).await?;
-
-        ui::start_response();
 
         let mut full_response = String::new();
         let mut buffer = String::new();
 
         while let Some(Ok(chunk)) = stream.next().await {
             let content = &chunk.message.content;
-            print!("{}", content);
-            std::io::stdout().flush().ok();
+            on_chunk(content);
             full_response.push_str(content);
             buffer.push_str(content);
 
@@ -110,8 +103,6 @@ impl Chat {
         if !remaining.is_empty() {
             on_sentence(remaining);
         }
-
-        ui::end_response();
 
         self.history
             .push(ChatMessage::assistant(full_response.clone()));

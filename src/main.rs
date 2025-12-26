@@ -1,6 +1,7 @@
 mod audio;
 mod chat;
 mod config;
+mod render;
 #[cfg(feature = "supertonic")]
 mod supertonic;
 mod transcriber;
@@ -10,12 +11,12 @@ mod vad;
 mod wake;
 
 use config::{Config, TtsConfig};
+use render::{Renderer, Ui};
 
 use clap::{Parser, Subcommand};
 use futures_util::FutureExt;
 use rustyline_async::{Readline, ReadlineEvent};
 use std::error::Error;
-use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -216,9 +217,20 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let (mut rl, _stdout) = Readline::new("> ".into())?;
 
-    let mut preview_text = String::new();
+    let (ui, ui_rx) = Ui::new();
+    let mut renderer = Renderer::new();
     let mut last_interaction: Option<std::time::Instant> = None;
     let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
+
+    // Animation tick for spinners
+    let ui_tick = ui.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
+        loop {
+            interval.tick().await;
+            ui_tick.tick();
+        }
+    });
 
     loop {
         tokio::select! {
@@ -226,10 +238,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 match event {
                     Some(DisplayEvent::AudioLevel(_)) => {}
                     Some(DisplayEvent::Preview(text)) => {
-                        if text != preview_text {
-                            preview_text = text.clone();
-                            ui::show_preview(&text);
-                        }
+                        ui.set_preview(text);
                     }
                     Some(DisplayEvent::Final(text)) => {
                         let in_conversation = last_interaction
@@ -242,22 +251,21 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             match wake_word.detect(&text) {
                                 Some(cmd) => cmd,
                                 None => {
-                                    preview_text.clear();
+                                    ui.set_idle();
                                     continue;
                                 }
                             }
                         };
 
                         if command.is_empty() {
-                            preview_text.clear();
+                            ui.set_idle();
                             continue;
                         }
 
-                        ui::show_final(&command);
-                        preview_text.clear();
+                        ui.show_final(&command);
 
                         last_interaction = process_command(
-                            &command, &tts_playing, &tts_engine, &mut ollama_chat
+                            &command, &tts_playing, &tts_engine, &mut ollama_chat, &ui
                         ).await;
                     }
                     None => break,
@@ -273,20 +281,23 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         rl.add_history_entry(text.to_owned());
 
                         last_interaction = process_command(
-                            text, &tts_playing, &tts_engine, &mut ollama_chat
+                            text, &tts_playing, &tts_engine, &mut ollama_chat, &ui
                         ).await;
                     }
                     Ok(ReadlineEvent::Eof) | Ok(ReadlineEvent::Interrupted) => {
-                        println!(); // newline before exit
+                        println!();
                         break;
                     }
                     Err(_) => break,
                 }
             }
+            Ok(ui_event) = ui_rx.recv_async() => {
+                renderer.handle(ui_event);
+            }
         }
     }
 
-    drop(rl); // drop readline to restore terminal
+    drop(rl);
     let _ = vad_handle.join();
     let _ = preview_handle.join();
     let _ = final_handle.join();
@@ -299,8 +310,10 @@ async fn process_command(
     tts_playing: &Arc<AtomicBool>,
     tts_engine: &tts::Tts,
     ollama_chat: &mut chat::Chat,
+    ui: &Ui,
 ) -> Option<std::time::Instant> {
     tts_playing.store(true, Ordering::SeqCst);
+    ui.set_thinking();
 
     let sink_result = tts::Tts::create_sink();
     match sink_result {
@@ -318,6 +331,7 @@ async fn process_command(
                 eprintln!("Chat error: {}", e);
             }
 
+            ui.set_speaking();
             while !sink.empty() {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
@@ -332,6 +346,7 @@ async fn process_command(
     }
 
     tts_playing.store(false, Ordering::SeqCst);
+    ui.set_idle();
     Some(std::time::Instant::now())
 }
 

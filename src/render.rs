@@ -106,30 +106,14 @@ impl Renderer {
     pub fn handle(&mut self, event: UiEvent) {
         match event {
             UiEvent::Preview(text) => {
-                let was_preview = matches!(self.state, RenderState::Preview(_));
                 self.state = RenderState::Preview(text.clone());
-                // Save cursor, move up (if already showing preview), clear line, print, restore
-                if was_preview {
-                    // Already have a preview line, just update it
-                    print!("\x1b7\x1b[A\r\x1b[K\x1b[90m{}\x1b[0m\x1b8", text);
-                } else {
-                    // Insert new preview line above prompt
-                    print!("\x1b7\x1b[A\r\x1b[K\x1b[90m{}\x1b[0m\n\x1b8", text);
-                }
+                // Preview disabled - interferes with readline
             }
             UiEvent::Final(text) => {
-                // Clear preview line if present, then show final
-                if matches!(self.state, RenderState::Preview(_)) {
-                    print!("\x1b[A\r\x1b[K");
-                }
                 self.state = RenderState::Idle;
                 print!("\r\x1b[K> {}\n", text);
             }
             UiEvent::Thinking => {
-                // Clear preview line if present
-                if matches!(self.state, RenderState::Preview(_)) {
-                    print!("\x1b[A\r\x1b[K");
-                }
                 self.state = RenderState::Thinking;
                 self.render_spinner();
             }

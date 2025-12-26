@@ -12,13 +12,14 @@ mod wake;
 use config::{Config, TtsConfig};
 
 use clap::{Parser, Subcommand};
+use futures_util::FutureExt;
+use rustyline_async::{Readline, ReadlineEvent};
 use std::error::Error;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
-
 use vad::VadEngine;
 
 #[derive(Parser)]
@@ -69,6 +70,17 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let (display_tx, display_rx) = mpsc::channel::<DisplayEvent>();
     let display_tx2 = display_tx.clone();
     let display_tx_audio = display_tx.clone();
+
+    // Bridge std channel to tokio for async select
+    let (async_display_tx, mut async_display_rx) =
+        tokio::sync::mpsc::unbounded_channel::<DisplayEvent>();
+    std::thread::spawn(move || {
+        while let Ok(event) = display_rx.recv() {
+            if async_display_tx.send(event).is_err() {
+                break;
+            }
+        }
+    });
 
     // Start audio capture thread
     let _stream = audio::start_capture(audio_tx)?;
@@ -143,9 +155,6 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     });
 
-    // Channel for chat responses
-    let (chat_tx, chat_rx) = mpsc::channel::<String>();
-
     // Load config and initialize TTS
     let config = Config::load();
     let tts_engine: tts::Tts = match config.tts {
@@ -201,119 +210,129 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     tts_playing.store(false, Ordering::SeqCst);
 
     println!(
-        "Listening for \"{}\"... Press Ctrl+C to stop.\n",
+        "Listening for \"{}\"... (or type your message)\n",
         wake_word.phrase()
     );
+
+    let (mut rl, _stdout) = Readline::new("> ".into())?;
 
     let mut preview_text = String::new();
     let mut last_interaction: Option<std::time::Instant> = None;
     let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
 
     loop {
-        // Check for display events (non-blocking)
-        match display_rx.try_recv() {
-            Ok(DisplayEvent::AudioLevel(level)) => {
-                if preview_text.is_empty() {
-                    ui::show_level(level);
-                }
-            }
-            Ok(DisplayEvent::Preview(text)) => {
-                if text != preview_text {
-                    preview_text = text.clone();
-                    ui::show_preview(&text);
-                }
-            }
-            Ok(DisplayEvent::Final(text)) => {
-                // Check if within wake word timeout or need wake word
-                let in_conversation = last_interaction
-                    .map(|t| t.elapsed() < wake_timeout)
-                    .unwrap_or(false);
+        tokio::select! {
+            event = async_display_rx.recv() => {
+                match event {
+                    Some(DisplayEvent::AudioLevel(_)) => {}
+                    Some(DisplayEvent::Preview(text)) => {
+                        if text != preview_text {
+                            preview_text = text.clone();
+                            ui::show_preview(&text);
+                        }
+                    }
+                    Some(DisplayEvent::Final(text)) => {
+                        let in_conversation = last_interaction
+                            .map(|t| t.elapsed() < wake_timeout)
+                            .unwrap_or(false);
 
-                let command = if in_conversation {
-                    text.clone()
-                } else {
-                    match wake_word.detect(&text) {
-                        Some(cmd) => cmd,
-                        None => {
+                        let command = if in_conversation {
+                            text.clone()
+                        } else {
+                            match wake_word.detect(&text) {
+                                Some(cmd) => cmd,
+                                None => {
+                                    preview_text.clear();
+                                    continue;
+                                }
+                            }
+                        };
+
+                        if command.is_empty() {
                             preview_text.clear();
-                            continue; // Ignore if no wake word
+                            continue;
                         }
-                    }
-                };
 
-                if command.is_empty() {
-                    preview_text.clear();
-                    continue; // Wake word only, no command
+                        ui::show_final(&command);
+                        preview_text.clear();
+
+                        last_interaction = process_command(
+                            &command, &tts_playing, &tts_engine, &mut ollama_chat
+                        ).await;
+                    }
+                    None => break,
                 }
-
-                ui::show_final(&command);
-                preview_text.clear();
-
-                // Mute VAD during response
-                tts_playing.store(true, Ordering::SeqCst);
-
-                // Create sink for streaming TTS
-                let sink_result = tts::Tts::create_sink();
-
-                match sink_result {
-                    Ok((stream, sink)) => {
-                        let tts = &tts_engine;
-                        let sink_ref = &sink;
-
-                        if let Err(e) = ollama_chat
-                            .send_streaming_with_callback(
-                                &command,
-                                |sentence| {
-                                    if let Err(e) = tts.queue(sentence, sink_ref) {
-                                        eprintln!("TTS error: {}", e);
-                                    }
-                                },
-                                || ui::thinking(),
-                            )
-                            .await
-                        {
-                            eprintln!("Chat error: {}", e);
-                        }
-
-                        // Wait for all queued audio to finish with animation
-                        let mut frame = 0;
-                        while !sink.empty() {
-                            ui::speaking(frame);
-                            frame += 1;
-                            std::thread::sleep(std::time::Duration::from_millis(150));
-                        }
-                        ui::clear_line();
-                        tts::Tts::finish(stream, sink);
-                    }
-                    Err(e) => {
-                        eprintln!("Audio output error: {}", e);
-                        // Fallback: just stream text without TTS
-                        if let Err(e) = ollama_chat
-                            .send_streaming_with_callback(&command, |_| {}, || {})
-                            .await
-                        {
-                            eprintln!("Chat error: {}", e);
-                        }
-                    }
-                }
-
-                // Update last interaction time after response completes
-                last_interaction = Some(std::time::Instant::now());
-
-                tts_playing.store(false, Ordering::SeqCst);
             }
-            Err(mpsc::TryRecvError::Disconnected) => break,
-            Err(mpsc::TryRecvError::Empty) => {
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            line = rl.readline().fuse() => {
+                match line {
+                    Ok(ReadlineEvent::Line(text)) => {
+                        let text = text.trim();
+                        if text.is_empty() {
+                            continue;
+                        }
+                        rl.add_history_entry(text.to_owned());
+
+                        last_interaction = process_command(
+                            text, &tts_playing, &tts_engine, &mut ollama_chat
+                        ).await;
+                    }
+                    Ok(ReadlineEvent::Eof) | Ok(ReadlineEvent::Interrupted) => {
+                        println!(); // newline before exit
+                        break;
+                    }
+                    Err(_) => break,
+                }
             }
         }
     }
 
+    drop(rl); // drop readline to restore terminal
     let _ = vad_handle.join();
     let _ = preview_handle.join();
     let _ = final_handle.join();
 
     Ok(())
+}
+
+async fn process_command(
+    command: &str,
+    tts_playing: &Arc<AtomicBool>,
+    tts_engine: &tts::Tts,
+    ollama_chat: &mut chat::Chat,
+) -> Option<std::time::Instant> {
+    tts_playing.store(true, Ordering::SeqCst);
+
+    let sink_result = tts::Tts::create_sink();
+    match sink_result {
+        Ok((stream, sink)) => {
+            if let Err(e) = ollama_chat
+                .send_streaming_with_callback(
+                    command,
+                    |sentence| {
+                        let _ = tts_engine.queue(sentence, &sink);
+                    },
+                    || {},
+                )
+                .await
+            {
+                eprintln!("Chat error: {}", e);
+            }
+
+            while !sink.empty() {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            tts::Tts::finish(stream, sink);
+        }
+        Err(e) => {
+            eprintln!("Audio error: {}", e);
+            let _ = ollama_chat
+                .send_streaming_with_callback(command, |_| {}, || {})
+                .await;
+        }
+    }
+
+    tts_playing.store(false, Ordering::SeqCst);
+    Some(std::time::Instant::now())
 }
 
 enum DisplayEvent {
@@ -360,7 +379,7 @@ async fn run_transcribe_mode() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     loop {
         match display_rx.recv() {
-            Ok(_) => {} // ignore display events, just keep loop alive
+            Ok(_) => {}
             Err(_) => break,
         }
     }

@@ -23,6 +23,7 @@ use vad::VadEngine;
 const VAD_MODEL_PATH: &str = "models/silero_vad_v4.onnx";
 const TARGET_RATE: usize = 16000;
 
+#[hotpath::main]
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -70,7 +71,14 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             Some(VadEngine::energy())
         };
 
-        audio::run_vad_processor(audio_rx, final_tx, preview_tx, vad, tts_playing_vad, display_tx_audio);
+        audio::run_vad_processor(
+            audio_rx,
+            final_tx,
+            preview_tx,
+            vad,
+            tts_playing_vad,
+            display_tx_audio,
+        );
     });
 
     // Preview transcription thread
@@ -132,7 +140,10 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             panic!("Kokoro not enabled. Build with --features kokoro");
         }
         #[cfg(feature = "supertonic")]
-        TtsConfig::Supertonic { onnx_dir, voice_style } => {
+        TtsConfig::Supertonic {
+            onnx_dir,
+            voice_style,
+        } => {
             eprintln!("TTS: Supertonic");
             let engine = tts::SupertonicEngine::new(&onnx_dir, &voice_style)
                 .expect("Failed to load Supertonic");
@@ -152,7 +163,9 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     if let Ok((stream, sink)) = tts::Tts::create_sink() {
         let _ = ollama_chat
             .greet_with_callback(
-                |sentence| { let _ = tts_engine.queue(sentence, &sink); },
+                |sentence| {
+                    let _ = tts_engine.queue(sentence, &sink);
+                },
                 ui::thinking,
             )
             .await;
@@ -167,7 +180,10 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
     tts_playing.store(false, Ordering::SeqCst);
 
-    println!("Listening for \"{}\"... Press Ctrl+C to stop.\n", wake_word.phrase());
+    println!(
+        "Listening for \"{}\"... Press Ctrl+C to stop.\n",
+        wake_word.phrase()
+    );
 
     let mut preview_text = String::new();
     let mut last_interaction: Option<std::time::Instant> = None;

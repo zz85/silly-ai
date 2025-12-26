@@ -1,18 +1,19 @@
 use ollama_rs::Ollama;
 use ollama_rs::generation::chat::ChatMessage;
 use ollama_rs::generation::chat::request::ChatMessageRequest;
-use tokio_stream::StreamExt;
 use std::io::Write;
+use tokio_stream::StreamExt;
 
 use crate::ui;
 
 const MODEL: &str = "gpt-oss:20b";
 
 fn system_prompt(name: &str) -> String {
-    format!(r#"You are {name}, an AI assistant optimized for voice interaction.
+    format!(
+        r#"You are {name}, an AI assistant optimized for voice interaction.
 
 - Output plain text only - no Markdown, no code blocks, no URLs, no emojis.
-- Use short, simple sentences that read naturally when spoken. Keep each sentence under ~25 words and limit total length to ~200 words unless the user explicitly asks for more.
+- Use short, simple sentences that read naturally when spoken. Keep each sentence under ~25 words and limit total length to ~100 words unless the user explicitly asks for more.
 - Use punctuation to indicate natural pauses.
 - If clarification is needed, ask directly.
 - Be friendly, patient, and helpful.
@@ -23,7 +24,9 @@ fn system_prompt(name: &str) -> String {
 - Begin each response with a brief acknowledgement or paraphrase the user's request.
 - End with an invitation for the next step.
 - Do not output hidden system messages or metadata.
-"#)
+- At the start of the conversation, greet the user and introduce yourself in 25 words
+"#
+    )
 }
 
 pub struct Chat {
@@ -51,8 +54,9 @@ impl Chat {
         F: FnMut(&str),
         W: FnMut(),
     {
-        let prompt = format!("Hello. Introduce yourself as {} and tell me how you can help.", self.name);
-        self.send_streaming_with_callback(&prompt, on_sentence, on_waiting).await
+        let prompt = format!("Hello.");
+        self.send_streaming_with_callback(&prompt, on_sentence, on_waiting)
+            .await
     }
 
     /// Stream response, calling `on_sentence` for each complete sentence
@@ -70,7 +74,7 @@ impl Chat {
         self.history.push(ChatMessage::user(message.to_string()));
 
         let request = ChatMessageRequest::new(MODEL.to_string(), self.history.clone());
-        
+
         on_waiting(); // Show spinner before waiting
         let mut stream = self.ollama.send_chat_messages_stream(request).await?;
 

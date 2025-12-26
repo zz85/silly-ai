@@ -25,9 +25,15 @@ impl Default for Config {
     }
 }
 
-fn default_name() -> String { "Silly".into() }
-fn default_wake_word() -> String { "Hey Silly".into() }
-fn default_wake_timeout() -> u64 { 30 }
+fn default_name() -> String {
+    "Silly".into()
+}
+fn default_wake_word() -> String {
+    "Hey Silly".into()
+}
+fn default_wake_timeout() -> u64 {
+    30
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "engine")]
@@ -71,10 +77,18 @@ impl Default for TtsConfig {
     }
 }
 
-fn default_kokoro_model() -> String { "models/kokoro-v1.0.onnx".into() }
-fn default_kokoro_voices() -> String { "models/voices-v1.0.bin".into() }
-fn default_supertonic_onnx_dir() -> String { "models/supertonic/onnx".into() }
-fn default_supertonic_voice_style() -> String { "models/supertonic/voice_styles/M1.json".into() }
+fn default_kokoro_model() -> String {
+    "models/kokoro-v1.0.onnx".into()
+}
+fn default_kokoro_voices() -> String {
+    "models/voices-v1.0.bin".into()
+}
+fn default_supertonic_onnx_dir() -> String {
+    "models/supertonic/onnx".into()
+}
+fn default_supertonic_voice_style() -> String {
+    "models/supertonic/voice_styles/M1.json".into()
+}
 
 impl Config {
     pub fn load() -> Self {

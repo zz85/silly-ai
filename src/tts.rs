@@ -30,7 +30,14 @@ impl KokoroEngine {
 impl TtsEngine for KokoroEngine {
     fn synthesize(&self, text: &str) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error>> {
         let audio = self.engine.tts_raw_audio(
-            text, "en-us", &self.style, self.speed, None, None, None, None,
+            text,
+            "en-us",
+            &self.style,
+            self.speed,
+            None,
+            None,
+            None,
+            None,
         )?;
         Ok((audio, 24000))
     }
@@ -58,7 +65,12 @@ impl SupertonicEngine {
     pub fn new(onnx_dir: &str, voice_style_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let tts = supertonic::load_text_to_speech(onnx_dir, false)?;
         let style = supertonic::load_voice_style(&[voice_style_path.to_string()], false)?;
-        Ok(Self { tts: Mutex::new(tts), style, total_step: 5, speed: 1.05 })
+        Ok(Self {
+            tts: Mutex::new(tts),
+            style,
+            total_step: 5,
+            speed: 1.05,
+        })
     }
 }
 

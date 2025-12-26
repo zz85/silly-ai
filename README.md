@@ -1,6 +1,6 @@
-# silly-cli
+# silly-ai
 
-Voice-first AI chat CLI using real-time speech transcription, Ollama, and TTS.
+"Hey Silly" is a voice-first AI chat CLI using real-time speech transcription, Ollama, and TTS. It allows answering questions from LLM while completely offline, making this a good replacement for cloud based personal assistants like Siri, Alexa, Google, ChatGPT if you are ever concerned about sending anything over the internet.
 
 ## Features
 
@@ -26,13 +26,7 @@ Voice-first AI chat CLI using real-time speech transcription, Ollama, and TTS.
 
 ## Setup
 
-### 1. Install system dependencies (macOS)
-
-```bash
-brew install cmake  # Required for espeak-rs-sys
-```
-
-### 2. Download the Parakeet model
+### 1. Download the Parakeet model
 
 ```bash
 mkdir -p models && cd models
@@ -42,7 +36,7 @@ rm parakeet-v3-int8.tar.gz
 cd ..
 ```
 
-### 3. Download VAD model
+### 2. Download VAD model
 
 ```bash
 cd models
@@ -50,7 +44,7 @@ curl -L -o silero_vad_v4.onnx https://github.com/cjpais/Handy/raw/refs/heads/mai
 cd ..
 ```
 
-### 4. Download Supertonic TTS models (default)
+### 3. Download Supertonic TTS models (default)
 
 ```bash
 brew install git-lfs && git lfs install
@@ -60,6 +54,12 @@ cd assets && git lfs pull && cd ../..
 ```
 
 ### 4b. (Optional) Download Kokoro TTS model and voices
+
+#### system dependencies (macOS)
+
+```bash
+brew install cmake  # Required for espeak-rs-sys
+```
 
 ```bash
 cd models
@@ -80,43 +80,53 @@ Make sure you have a model available (default: `gpt-oss:20b`). Edit `src/chat.rs
 
 ```bash
 # Default (Supertonic TTS)
-AUDIOPUS_SYS_USE_PKG_CONFIG=1 cargo build --release
+cargo build --release
 ./target/release/silly
 
 # With Kokoro TTS instead
 AUDIOPUS_SYS_USE_PKG_CONFIG=1 cargo build --release --no-default-features --features kokoro
 
 # With both TTS engines
-AUDIOPUS_SYS_USE_PKG_CONFIG=1 cargo build --release --features kokoro
+cargo build --release --features kokoro
 ```
 
 ## Usage
 
-Just speak! The CLI will:
+Say the wake word ("Hey Silly" by default) to activate, then speak your question. The CLI will:
 1. Show preview text in gray while you're speaking
 2. Print final transcription with `>` prefix when you pause
 3. Send to Ollama and stream the response in cyan
 4. Speak the response using TTS (streaming sentence-by-sentence)
 
+After responding, the assistant listens for follow-up questions for 30 seconds (configurable) before requiring the wake word again.
+
 Press `Ctrl+C` to stop.
 
 ## Configuration
 
-- **LLM Model**: Edit `MODEL` constant in `src/chat.rs`
-- **TTS Engine**: Create `config.toml` (see `config.example.toml`):
-  ```toml
-  [tts]
-  engine = "kokoro"  # or "supertonic"
-  model = "models/kokoro-v1.0.onnx"
-  voices = "models/voices-v1.0.bin"
-  ```
-or
+Create `config.toml` to customize (see [`config.example.toml`](config.example.toml)):
+
 ```toml
+name = "Silly"
+wake_word = "Hey Silly"
+wake_timeout_secs = 30
+
 [tts]
 engine = "supertonic"
 onnx_dir = "models/supertonic/assets/onnx"
 voice_style = "models/supertonic/assets/voice_styles/F2.json"
 ```
+
+Or for Kokoro TTS:
+```toml
+[tts]
+engine = "kokoro"
+model = "models/kokoro-v1.0.onnx"
+voices = "models/voices-v1.0.bin"
+```
+
+Other settings:
+- **LLM Model**: Edit `MODEL` constant in `src/chat.rs` (default: `gpt-oss:20b`)
 - **VAD thresholds**: Edit constants in `src/audio.rs` and `src/vad.rs`
 - **Preview interval**: `PREVIEW_INTERVAL` in `src/audio.rs` (default 500ms)
 

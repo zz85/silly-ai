@@ -23,7 +23,10 @@ pub fn thinking() {
 
 pub fn speaking(frame: usize) {
     const FRAMES: [&str; 4] = ["♪", "♫", "♪", "♬"];
-    print!("\r\x1b[K\x1b[35m{} Speaking...\x1b[0m", FRAMES[frame % FRAMES.len()]);
+    print!(
+        "\r\x1b[K\x1b[35m{} Speaking...\x1b[0m",
+        FRAMES[frame % FRAMES.len()]
+    );
     std::io::stdout().flush().ok();
 }
 

@@ -8,11 +8,12 @@ mod supertonic;
 mod test_ui;
 mod transcriber;
 mod tts;
+mod tui;
 mod vad;
 mod wake;
 
 use config::{Config, TtsConfig};
-use render::{Renderer, Ui};
+use render::Ui;
 use repl::TranscriptEvent;
 
 use clap::{Parser, Subcommand};
@@ -202,28 +203,11 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let wake_word = wake::WakeWord::new(&config.wake_word);
 
     let (ui, ui_rx) = Ui::new();
-    let mut renderer = Renderer::new();
 
-    // Animation tick for spinners
-    let ui_tick = ui.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
-        loop {
-            interval.tick().await;
-            ui_tick.tick();
-        }
-    });
+    // Initialize TUI
+    let mut tui = tui::Tui::new()?;
 
-    // Spawn render loop
-    let (render_done_tx, mut render_done_rx) = tokio::sync::oneshot::channel::<()>();
-    let render_handle = std::thread::spawn(move || {
-        while let Ok(event) = ui_rx.recv() {
-            renderer.handle(event);
-        }
-        let _ = render_done_tx.send(());
-    });
-
-    // Initial greeting
+    // Initial greeting (before TUI takes over display)
     tts_playing.store(true, Ordering::Relaxed);
     if let Ok((stream, sink)) = tts::Tts::create_sink() {
         ui.set_thinking();
@@ -246,79 +230,81 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
     tts_playing.store(false, Ordering::Relaxed);
 
-    println!(
-        "Listening for \"{}\"... (or type your message)\n",
-        wake_word.phrase()
-    );
-
     let mut last_interaction: Option<std::time::Instant> = None;
     let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
-
-    let (input_rx, prefill_tx) = repl::spawn_readline();
 
     let mut pending_command: Option<String> = None;
     let mut pending_deadline: Option<tokio::time::Instant> = None;
 
     loop {
-        let timeout_fut = async {
-            match pending_deadline {
-                Some(deadline) => tokio::time::sleep_until(deadline).await,
-                None => std::future::pending::<()>().await,
-            }
-        };
+        // Process all pending UI events
+        while let Ok(event) = ui_rx.try_recv() {
+            tui.handle_ui_event(event);
+        }
 
-        tokio::select! {
-            biased;
+        // Draw TUI
+        tui.draw()?;
 
-            Ok(line) = input_rx.recv_async() => {
-                pending_command = None;
-                pending_deadline = None;
-
-                if line.is_empty() {
-                    continue;
-                }
-
-                ui.show_final(&line);
-                last_interaction = repl::process_command(
-                    &line, &tts_playing, &tts_engine, &mut ollama_chat, &ui
-                ).await;
+        // Poll keyboard input
+        if let Some(line) = tui.poll_input()? {
+            if line == "\x03" {
+                break; // Ctrl+C
             }
 
-            _ = timeout_fut, if pending_deadline.is_some() => {
+            pending_command = None;
+            pending_deadline = None;
+
+            ui.show_final(&line);
+            last_interaction = repl::process_command(
+                &line, &tts_playing, &tts_engine, &mut ollama_chat, &ui
+            ).await;
+            continue;
+        }
+
+        // Check voice command timeout
+        if let Some(deadline) = pending_deadline {
+            if tokio::time::Instant::now() >= deadline {
                 if let Some(command) = pending_command.take() {
                     pending_deadline = None;
-                    let _ = prefill_tx.send(command);
-                }
-            }
-
-            event = async_display_rx.recv() => {
-                match event {
-                    Some(DisplayEvent::AudioLevel(_)) => {}
-                    Some(DisplayEvent::Preview(text)) => {
-                        repl::handle_transcript(
-                            TranscriptEvent::Preview(text),
-                            &wake_word,
-                            last_interaction,
-                            wake_timeout,
-                            &mut pending_command,
-                            &mut pending_deadline,
-                        );
-                    }
-                    Some(DisplayEvent::Final(text)) => {
-                        repl::handle_transcript(
-                            TranscriptEvent::Final(text),
-                            &wake_word,
-                            last_interaction,
-                            wake_timeout,
-                            &mut pending_command,
-                            &mut pending_deadline,
-                        );
-                    }
-                    None => break,
+                    tui.set_input(&command);
                 }
             }
         }
+
+        // Process audio transcription events
+        if let Ok(event) = async_display_rx.try_recv() {
+            match event {
+                DisplayEvent::AudioLevel(_) => {}
+                DisplayEvent::Preview(text) => {
+                    repl::handle_transcript(
+                        TranscriptEvent::Preview(text),
+                        &wake_word,
+                        last_interaction,
+                        wake_timeout,
+                        &mut pending_command,
+                        &mut pending_deadline,
+                        &ui,
+                    );
+                }
+                DisplayEvent::Final(text) => {
+                    repl::handle_transcript(
+                        TranscriptEvent::Final(text),
+                        &wake_word,
+                        last_interaction,
+                        wake_timeout,
+                        &mut pending_command,
+                        &mut pending_deadline,
+                        &ui,
+                    );
+                }
+            }
+        }
+
+        // Small sleep to prevent busy loop
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+
+    drop(tui); // Restore terminal
 
     let _ = vad_handle.join();
     let _ = preview_handle.join();

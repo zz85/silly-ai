@@ -17,6 +17,7 @@ use clap::{Parser, Subcommand};
 use futures_util::FutureExt;
 use rustyline_async::{Readline, ReadlineEvent};
 use std::error::Error;
+use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -232,13 +233,28 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     });
 
+    let mut pending_command: Option<String> = None;
+    let mut pending_deadline: Option<tokio::time::Instant> = None;
+    const EDIT_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
     loop {
+        // Create timeout future only if we have a pending command
+        let timeout_fut = async {
+            match pending_deadline {
+                Some(deadline) => tokio::time::sleep_until(deadline).await,
+                None => std::future::pending().await,
+            }
+        };
+
         tokio::select! {
             event = async_display_rx.recv() => {
                 match event {
                     Some(DisplayEvent::AudioLevel(_)) => {}
                     Some(DisplayEvent::Preview(text)) => {
-                        ui.set_preview(text);
+                        // Only show preview if no pending command
+                        if pending_command.is_none() {
+                            ui.set_preview(text);
+                        }
                     }
                     Some(DisplayEvent::Final(text)) => {
                         let in_conversation = last_interaction
@@ -251,22 +267,33 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             match wake_word.detect(&text) {
                                 Some(cmd) => cmd,
                                 None => {
-                                    ui.set_idle();
+                                    if pending_command.is_none() {
+                                        ui.set_idle();
+                                    }
                                     continue;
                                 }
                             }
                         };
 
                         if command.is_empty() {
-                            ui.set_idle();
+                            if pending_command.is_none() {
+                                ui.set_idle();
+                            }
                             continue;
                         }
 
-                        ui.show_final(&command);
-
-                        last_interaction = process_command(
-                            &command, &tts_playing, &tts_engine, &mut ollama_chat, &ui
-                        ).await;
+                        // Append to pending command buffer
+                        if let Some(ref mut pending) = pending_command {
+                            pending.push(' ');
+                            pending.push_str(&command);
+                        } else {
+                            pending_command = Some(command);
+                        }
+                        // Reset deadline on each new transcription
+                        pending_deadline = Some(tokio::time::Instant::now() + EDIT_DELAY);
+                        // Show pending text
+                        print!("\r\x1b[K> {}", pending_command.as_ref().unwrap());
+                        std::io::stdout().flush().ok();
                     }
                     None => break,
                 }
@@ -275,16 +302,32 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 match line {
                     Ok(ReadlineEvent::Line(text)) => {
                         let text = text.trim();
-                        if text.is_empty() {
+                        
+                        // If we have pending text, use it if user just hit enter
+                        let final_text = if let Some(pending) = pending_command.take() {
+                            pending_deadline = None;
+                            if text.is_empty() {
+                                pending
+                            } else {
+                                text.to_string()
+                            }
+                        } else {
+                            text.to_string()
+                        };
+
+                        if final_text.is_empty() {
                             continue;
                         }
-                        rl.add_history_entry(text.to_owned());
+                        rl.add_history_entry(final_text.clone());
+                        print!("\r\x1b[K");
 
                         last_interaction = process_command(
-                            text, &tts_playing, &tts_engine, &mut ollama_chat, &ui
+                            &final_text, &tts_playing, &tts_engine, &mut ollama_chat, &ui
                         ).await;
                     }
                     Ok(ReadlineEvent::Eof) | Ok(ReadlineEvent::Interrupted) => {
+                        pending_command = None;
+                        pending_deadline = None;
                         println!();
                         break;
                     }
@@ -293,6 +336,17 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
             Ok(ui_event) = ui_rx.recv_async() => {
                 renderer.handle(ui_event);
+            }
+            _ = timeout_fut, if pending_deadline.is_some() => {
+                // Timeout expired, send pending command
+                if let Some(command) = pending_command.take() {
+                    pending_deadline = None;
+                    print!("\r\x1b[K> {}\n", command);
+                    std::io::stdout().flush().ok();
+                    last_interaction = process_command(
+                        &command, &tts_playing, &tts_engine, &mut ollama_chat, &ui
+                    ).await;
+                }
             }
         }
     }

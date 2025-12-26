@@ -158,9 +158,13 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let config = Config::load();
     let tts_engine: tts::Tts = match config.tts {
         #[cfg(feature = "kokoro")]
-        TtsConfig::Kokoro { model, voices } => {
-            eprintln!("TTS: Kokoro");
-            let engine = tts::KokoroEngine::new(&model, &voices).await;
+        TtsConfig::Kokoro {
+            model,
+            voices,
+            speed,
+        } => {
+            eprintln!("TTS: Kokoro (speed: {})", speed);
+            let engine = tts::KokoroEngine::new(&model, &voices, speed).await;
             tts::Tts::new(Box::new(engine))
         }
         #[cfg(not(feature = "kokoro"))]
@@ -171,9 +175,10 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         TtsConfig::Supertonic {
             onnx_dir,
             voice_style,
+            speed,
         } => {
-            eprintln!("TTS: Supertonic");
-            let engine = tts::SupertonicEngine::new(&onnx_dir, &voice_style)
+            eprintln!("TTS: Supertonic (speed: {})", speed);
+            let engine = tts::SupertonicEngine::new(&onnx_dir, &voice_style, speed)
                 .expect("Failed to load Supertonic");
             tts::Tts::new(Box::new(engine))
         }
@@ -236,11 +241,11 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     thread::spawn(move || {
         use rustyline::DefaultEditor;
         let mut rl = DefaultEditor::new().expect("Failed to create readline");
-        
+
         loop {
             // Check for prefill request
             let initial = prefill_rx.try_recv().unwrap_or_default();
-            
+
             let result = if initial.is_empty() {
                 rl.readline("> ")
             } else {
@@ -280,7 +285,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             Ok(line) = input_rx.recv_async() => {
                 pending_command = None;
                 pending_deadline = None;
-                
+
                 if line.is_empty() {
                     continue;
                 }
@@ -290,7 +295,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     &line, &tts_playing, &tts_engine, &mut ollama_chat, &ui
                 ).await;
             }
-            
+
             _ = timeout_fut, if pending_deadline.is_some() => {
                 if let Some(command) = pending_command.take() {
                     pending_deadline = None;
@@ -337,13 +342,13 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             pending_command = Some(command);
                         }
                         pending_deadline = Some(tokio::time::Instant::now() + EDIT_DELAY);
-                        
+
                         ui.set_preview(format!("▶ {}", pending_command.as_ref().unwrap()));
                     }
                     None => break,
                 }
             }
-            
+
             Ok(ui_event) = ui_rx.recv_async() => {
                 renderer.handle(ui_event);
             }
@@ -449,14 +454,22 @@ async fn run_transcribe_mode() -> Result<(), Box<dyn Error + Send + Sync>> {
         } else {
             Some(VadEngine::energy())
         };
-        audio::run_vad_processor(audio_rx, final_tx, preview_tx, vad, tts_playing_vad, display_tx);
+        audio::run_vad_processor(
+            audio_rx,
+            final_tx,
+            preview_tx,
+            vad,
+            tts_playing_vad,
+            display_tx,
+        );
     });
 
     thread::spawn(move || {
-        let mut transcriber = match transcriber::Transcriber::new("models/parakeet-tdt-0.6b-v3-int8") {
-            Ok(t) => t,
-            Err(_) => return,
-        };
+        let mut transcriber =
+            match transcriber::Transcriber::new("models/parakeet-tdt-0.6b-v3-int8") {
+                Ok(t) => t,
+                Err(_) => return,
+            };
         while let Ok(samples) = final_rx.recv() {
             if let Ok(text) = transcriber.transcribe(&samples) {
                 if !text.is_empty() {

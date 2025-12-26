@@ -17,11 +17,11 @@ pub struct KokoroEngine {
 
 #[cfg(feature = "kokoro")]
 impl KokoroEngine {
-    pub async fn new(model_path: &str, voices_path: &str) -> Self {
+    pub async fn new(model_path: &str, voices_path: &str, speed: f32) -> Self {
         Self {
             engine: kokoros::tts::koko::TTSKoko::new(model_path, voices_path).await,
             style: "af_heart".to_string(),
-            speed: 1.0,
+            speed,
         }
     }
 }
@@ -62,14 +62,18 @@ pub struct SupertonicEngine {
 
 #[cfg(feature = "supertonic")]
 impl SupertonicEngine {
-    pub fn new(onnx_dir: &str, voice_style_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(
+        onnx_dir: &str,
+        voice_style_path: &str,
+        speed: f32,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let tts = supertonic::load_text_to_speech(onnx_dir, false)?;
         let style = supertonic::load_voice_style(&[voice_style_path.to_string()], false)?;
         Ok(Self {
             tts: Mutex::new(tts),
             style,
             total_step: 5,
-            speed: 1.05,
+            speed,
         })
     }
 }

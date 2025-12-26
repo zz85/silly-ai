@@ -44,6 +44,8 @@ pub enum TtsConfig {
         model: String,
         #[serde(default = "default_kokoro_voices")]
         voices: String,
+        #[serde(default = "default_tts_speed")]
+        speed: f32,
     },
     #[serde(rename = "supertonic")]
     Supertonic {
@@ -51,6 +53,8 @@ pub enum TtsConfig {
         onnx_dir: String,
         #[serde(default = "default_supertonic_voice_style")]
         voice_style: String,
+        #[serde(default = "default_tts_speed")]
+        speed: f32,
     },
 }
 
@@ -61,6 +65,7 @@ impl Default for TtsConfig {
             TtsConfig::Supertonic {
                 onnx_dir: default_supertonic_onnx_dir(),
                 voice_style: default_supertonic_voice_style(),
+                speed: default_tts_speed(),
             }
         }
         #[cfg(all(feature = "kokoro", not(feature = "supertonic")))]
@@ -68,6 +73,7 @@ impl Default for TtsConfig {
             TtsConfig::Kokoro {
                 model: default_kokoro_model(),
                 voices: default_kokoro_voices(),
+                speed: default_tts_speed(),
             }
         }
         #[cfg(not(any(feature = "kokoro", feature = "supertonic")))]
@@ -88,6 +94,9 @@ fn default_supertonic_onnx_dir() -> String {
 }
 fn default_supertonic_voice_style() -> String {
     "models/supertonic/voice_styles/M1.json".into()
+}
+fn default_tts_speed() -> f32 {
+    1.0
 }
 
 impl Config {

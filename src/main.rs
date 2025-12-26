@@ -11,6 +11,7 @@ mod wake;
 
 use config::{Config, TtsConfig};
 
+use clap::{Parser, Subcommand};
 use std::error::Error;
 use std::io::Write;
 use std::sync::Arc;
@@ -19,6 +20,19 @@ use std::sync::mpsc;
 use std::thread;
 
 use vad::VadEngine;
+
+#[derive(Parser)]
+#[command(name = "silly")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Transcription-only mode (no LLM/TTS)
+    Transcribe,
+}
 
 const VAD_MODEL_PATH: &str = "models/silero_vad_v4.onnx";
 const TARGET_RATE: usize = 16000;
@@ -32,6 +46,12 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let cli = Cli::parse();
+
+    if matches!(cli.command, Some(Command::Transcribe)) {
+        return run_transcribe_mode().await;
+    }
+
     // Flag to mute VAD during TTS playback
     let tts_playing = Arc::new(AtomicBool::new(false));
     let tts_playing_vad = Arc::clone(&tts_playing);
@@ -300,4 +320,50 @@ enum DisplayEvent {
     Preview(String),
     Final(String),
     AudioLevel(f32),
+}
+
+async fn run_transcribe_mode() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let (audio_tx, audio_rx) = mpsc::channel::<Vec<f32>>();
+    let (final_tx, final_rx) = mpsc::channel::<Arc<[f32]>>();
+    let (preview_tx, _) = mpsc::sync_channel::<Arc<[f32]>>(1); // unused but required
+    let (display_tx, display_rx) = mpsc::channel::<DisplayEvent>();
+
+    let _stream = audio::start_capture(audio_tx)?;
+
+    let tts_playing = Arc::new(AtomicBool::new(false));
+    let tts_playing_vad = Arc::clone(&tts_playing);
+
+    thread::spawn(move || {
+        let vad = if std::path::Path::new(VAD_MODEL_PATH).exists() {
+            VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE).ok()
+        } else {
+            Some(VadEngine::energy())
+        };
+        audio::run_vad_processor(audio_rx, final_tx, preview_tx, vad, tts_playing_vad, display_tx);
+    });
+
+    thread::spawn(move || {
+        let mut transcriber = match transcriber::Transcriber::new("models/parakeet-tdt-0.6b-v3-int8") {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        while let Ok(samples) = final_rx.recv() {
+            if let Ok(text) = transcriber.transcribe(&samples) {
+                if !text.is_empty() {
+                    println!("{}", text);
+                }
+            }
+        }
+    });
+
+    eprintln!("Transcribe mode. Press Ctrl+C to stop.\n");
+
+    loop {
+        match display_rx.recv() {
+            Ok(_) => {} // ignore display events, just keep loop alive
+            Err(_) => break,
+        }
+    }
+
+    Ok(())
 }

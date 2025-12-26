@@ -254,7 +254,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut last_interaction: Option<std::time::Instant> = None;
     let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
 
-    let (input_rx, prefill_tx) = repl::spawn_readline();
+    let (input_rx, prefill_tx, preview_hint) = repl::spawn_readline();
 
     let mut pending_command: Option<String> = None;
     let mut pending_deadline: Option<tokio::time::Instant> = None;
@@ -273,6 +273,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             Ok(line) = input_rx.recv_async() => {
                 pending_command = None;
                 pending_deadline = None;
+                preview_hint.clear();
 
                 if line.is_empty() {
                     continue;
@@ -302,7 +303,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             wake_timeout,
                             &mut pending_command,
                             &mut pending_deadline,
-                            &ui,
+                            &preview_hint,
                         );
                     }
                     Some(DisplayEvent::Final(text)) => {
@@ -313,7 +314,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             wake_timeout,
                             &mut pending_command,
                             &mut pending_deadline,
-                            &ui,
+                            &preview_hint,
                         );
                     }
                     None => break,

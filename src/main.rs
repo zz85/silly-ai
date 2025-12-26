@@ -2,6 +2,7 @@ mod audio;
 mod chat;
 mod config;
 mod render;
+mod repl;
 #[cfg(feature = "supertonic")]
 mod supertonic;
 mod test_ui;
@@ -12,6 +13,7 @@ mod wake;
 
 use config::{Config, TtsConfig};
 use render::{Renderer, Ui};
+use repl::TranscriptEvent;
 
 use clap::{Parser, Subcommand};
 use std::error::Error;
@@ -252,43 +254,10 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut last_interaction: Option<std::time::Instant> = None;
     let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
 
-    // Channel for readline input and pre-fill requests
-    let (input_tx, input_rx) = flume::unbounded::<String>();
-    let (prefill_tx, prefill_rx) = flume::unbounded::<String>();
-
-    // Readline thread
-    thread::spawn(move || {
-        use rustyline::DefaultEditor;
-        let mut rl = DefaultEditor::new().expect("Failed to create readline");
-
-        loop {
-            // Check for prefill request
-            let initial = prefill_rx.try_recv().unwrap_or_default();
-
-            let result = if initial.is_empty() {
-                rl.readline("> ")
-            } else {
-                rl.readline_with_initial("> ", (&initial, ""))
-            };
-
-            match result {
-                Ok(line) => {
-                    let line = line.trim().to_string();
-                    if !line.is_empty() {
-                        let _ = rl.add_history_entry(&line);
-                    }
-                    if input_tx.send(line).is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
+    let (input_rx, prefill_tx) = repl::spawn_readline();
 
     let mut pending_command: Option<String> = None;
     let mut pending_deadline: Option<tokio::time::Instant> = None;
-    const EDIT_DELAY: std::time::Duration = std::time::Duration::from_millis(800);
 
     loop {
         let timeout_fut = async {
@@ -310,7 +279,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 }
 
                 ui.show_final(&line);
-                last_interaction = process_command(
+                last_interaction = repl::process_command(
                     &line, &tts_playing, &tts_engine, &mut ollama_chat, &ui
                 ).await;
             }
@@ -318,7 +287,6 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             _ = timeout_fut, if pending_deadline.is_some() => {
                 if let Some(command) = pending_command.take() {
                     pending_deadline = None;
-                    // Send to readline as prefill
                     let _ = prefill_tx.send(command);
                 }
             }
@@ -327,42 +295,26 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 match event {
                     Some(DisplayEvent::AudioLevel(_)) => {}
                     Some(DisplayEvent::Preview(text)) => {
-                        if pending_command.is_none() {
-                            ui.set_preview(text);
-                        }
+                        repl::handle_transcript(
+                            TranscriptEvent::Preview(text),
+                            &wake_word,
+                            last_interaction,
+                            wake_timeout,
+                            &mut pending_command,
+                            &mut pending_deadline,
+                            &ui,
+                        );
                     }
                     Some(DisplayEvent::Final(text)) => {
-                        let in_conversation = last_interaction
-                            .map(|t| t.elapsed() < wake_timeout)
-                            .unwrap_or(false);
-
-                        let command = if in_conversation {
-                            text.clone()
-                        } else {
-                            match wake_word.detect(&text) {
-                                Some(cmd) => cmd,
-                                None => {
-                                    ui.set_idle();
-                                    continue;
-                                }
-                            }
-                        };
-
-                        if command.is_empty() {
-                            ui.set_idle();
-                            continue;
-                        }
-
-                        // Append to pending command buffer
-                        if let Some(ref mut pending) = pending_command {
-                            pending.push(' ');
-                            pending.push_str(&command);
-                        } else {
-                            pending_command = Some(command);
-                        }
-                        pending_deadline = Some(tokio::time::Instant::now() + EDIT_DELAY);
-
-                        ui.set_preview(format!("▶ {}", pending_command.as_ref().unwrap()));
+                        repl::handle_transcript(
+                            TranscriptEvent::Final(text),
+                            &wake_word,
+                            last_interaction,
+                            wake_timeout,
+                            &mut pending_command,
+                            &mut pending_deadline,
+                            &ui,
+                        );
                     }
                     None => break,
                 }
@@ -375,81 +327,6 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let _ = final_handle.join();
 
     Ok(())
-}
-
-async fn process_command(
-    command: &str,
-    tts_playing: &Arc<AtomicBool>,
-    tts_engine: &tts::Tts,
-    ollama_chat: &mut chat::Chat,
-    ui: &Ui,
-) -> Option<std::time::Instant> {
-    use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-
-    tts_playing.store(true, Ordering::SeqCst);
-    ui.set_thinking();
-
-    let sink_result = tts::Tts::create_sink();
-    match sink_result {
-        Ok((stream, sink)) => {
-            let ui_resp = ui.clone();
-            if let Err(e) = ollama_chat
-                .send_streaming_with_callback(
-                    command,
-                    |sentence| {
-                        let _ = tts_engine.queue(sentence, &sink);
-                    },
-                    |chunk| ui_resp.append_response(chunk),
-                )
-                .await
-            {
-                eprintln!("Chat error: {}", e);
-            }
-            ui.end_response();
-
-            ui.set_context_words(ollama_chat.context_words());
-            ui.set_speaking();
-            let mut paused = false;
-            while !sink.empty() {
-                // Check for keypress (non-blocking)
-                if event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
-                    if let Ok(Event::Key(key)) = event::read() {
-                        if key.kind == KeyEventKind::Press {
-                            match key.code {
-                                KeyCode::Char(' ') => {
-                                    paused = !paused;
-                                    if paused {
-                                        sink.pause();
-                                    } else {
-                                        sink.play();
-                                    }
-                                }
-                                KeyCode::Esc | KeyCode::Char('q') => {
-                                    sink.stop();
-                                    break;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-            tts::Tts::finish(stream, sink);
-        }
-        Err(e) => {
-            eprintln!("Audio error: {}", e);
-            let ui_resp = ui.clone();
-            let _ = ollama_chat
-                .send_streaming_with_callback(command, |_| {}, |chunk| ui_resp.append_response(chunk))
-                .await;
-            ui.end_response();
-            ui.set_context_words(ollama_chat.context_words());
-        }
-    }
-
-    tts_playing.store(false, Ordering::SeqCst);
-    ui.set_idle();
-    Some(std::time::Instant::now())
 }
 
 enum DisplayEvent {

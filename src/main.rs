@@ -32,6 +32,12 @@ struct Cli {
 enum Command {
     /// Transcription-only mode (no LLM/TTS)
     Transcribe,
+    /// Test UI rendering without audio
+    TestUi {
+        /// Scene to test: idle, preview, thinking, speaking, response
+        #[arg(default_value = "all")]
+        scene: String,
+    },
 }
 
 const VAD_MODEL_PATH: &str = "models/silero_vad_v4.onnx";
@@ -48,8 +54,10 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let cli = Cli::parse();
 
-    if matches!(cli.command, Some(Command::Transcribe)) {
-        return run_transcribe_mode().await;
+    match &cli.command {
+        Some(Command::Transcribe) => return run_transcribe_mode().await,
+        Some(Command::TestUi { scene }) => return run_test_ui(scene).await,
+        None => {}
     }
 
     // Flag to mute VAD during TTS playback
@@ -192,7 +200,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let wake_word = wake::WakeWord::new(&config.wake_word);
 
     // Initial greeting
-    tts_playing.store(true, Ordering::SeqCst);
+    tts_playing.store(true, Ordering::Relaxed);
     if let Ok((stream, sink)) = tts::Tts::create_sink() {
         let _ = ollama_chat
             .greet_with_callback(
@@ -211,7 +219,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         ui::clear_line();
         tts::Tts::finish(stream, sink);
     }
-    tts_playing.store(false, Ordering::SeqCst);
+    tts_playing.store(false, Ordering::Relaxed);
 
     println!(
         "Listening for \"{}\"... (or type your message)\n",
@@ -488,5 +496,91 @@ async fn run_transcribe_mode() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     }
 
+    Ok(())
+}
+
+async fn run_test_ui(scene: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+    use render::UiEvent;
+    use std::time::Duration;
+    use tokio::time::sleep;
+
+    let (ui, ui_rx) = Ui::new();
+    let mut renderer = Renderer::new();
+
+    // Spawn render loop
+    let render_handle = tokio::spawn(async move {
+        while let Ok(event) = ui_rx.recv_async().await {
+            renderer.handle(event);
+        }
+    });
+
+    // Tick for animations
+    let ui_tick = ui.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        loop {
+            interval.tick().await;
+            ui_tick.tick();
+        }
+    });
+
+    match scene {
+        "preview" => {
+            for i in 1..=3 {
+                ui.set_preview(format!("Transcribing{}...", ".".repeat(i)));
+                sleep(Duration::from_millis(500)).await;
+            }
+            ui.set_preview("Hello this is a preview".into());
+            sleep(Duration::from_secs(2)).await;
+        }
+        "thinking" => {
+            ui.set_thinking();
+            sleep(Duration::from_secs(3)).await;
+        }
+        "speaking" => {
+            ui.set_speaking();
+            sleep(Duration::from_secs(3)).await;
+        }
+        "response" => {
+            ui.set_thinking();
+            sleep(Duration::from_secs(1)).await;
+            for word in "Hello! I am Silly, your AI assistant.".split_whitespace() {
+                ui.append_response(&format!("{} ", word));
+                sleep(Duration::from_millis(100)).await;
+            }
+            ui.end_response();
+            sleep(Duration::from_millis(500)).await;
+        }
+        _ => {
+            // Run all scenes
+            println!("=== Preview ===");
+            ui.set_preview("Hello this is preview text".into());
+            sleep(Duration::from_secs(2)).await;
+
+            ui.show_final("Final transcription");
+            sleep(Duration::from_millis(500)).await;
+
+            println!("=== Thinking ===");
+            ui.set_thinking();
+            sleep(Duration::from_secs(2)).await;
+
+            println!("\n=== Response ===");
+            for word in "Hello! I am Silly.".split_whitespace() {
+                ui.append_response(&format!("{} ", word));
+                sleep(Duration::from_millis(150)).await;
+            }
+            ui.end_response();
+
+            println!("=== Speaking ===");
+            ui.set_speaking();
+            sleep(Duration::from_secs(2)).await;
+
+            ui.set_idle();
+        }
+    }
+
+    ui.set_idle();
+    drop(ui);
+    let _ = render_handle.await;
     Ok(())
 }

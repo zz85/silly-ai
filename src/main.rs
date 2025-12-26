@@ -206,13 +206,16 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Initialize TUI
     let mut tui = tui::Tui::new()?;
+    tui.draw()?; // Initial draw
 
-    // Initial greeting (before TUI takes over display)
+    // Initial greeting - draw TUI during greeting
     tts_playing.store(true, Ordering::Relaxed);
     if let Ok((stream, sink)) = tts::Tts::create_sink() {
         ui.set_thinking();
+
+        // Process UI events during greeting
         let ui_greet = ui.clone();
-        let _ = ollama_chat
+        let greeting_result = ollama_chat
             .greet_with_callback(
                 |sentence| {
                     let _ = tts_engine.queue(sentence, &sink);
@@ -220,13 +223,27 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 |chunk| ui_greet.append_response(chunk),
             )
             .await;
-        ui.end_response();
-        ui.set_speaking();
-        while !sink.empty() {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Drain UI events after greeting
+        while let Ok(event) = ui_rx.try_recv() {
+            tui.handle_ui_event(event);
         }
-        tts::Tts::finish(stream, sink);
-        ui.speaking_done();
+        tui.draw()?;
+
+        if greeting_result.is_ok() {
+            ui.end_response();
+            ui.set_speaking();
+            while !sink.empty() {
+                // Keep UI responsive during TTS
+                while let Ok(event) = ui_rx.try_recv() {
+                    tui.handle_ui_event(event);
+                }
+                tui.draw()?;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            tts::Tts::finish(stream, sink);
+            ui.speaking_done();
+        }
     }
     tts_playing.store(false, Ordering::Relaxed);
 
@@ -238,14 +255,18 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     loop {
         // Process all pending UI events
+        let mut had_events = false;
         while let Ok(event) = ui_rx.try_recv() {
             tui.handle_ui_event(event);
+            had_events = true;
         }
 
-        // Draw TUI
-        tui.draw()?;
+        // Only draw if there were events or input
+        if had_events {
+            tui.draw()?;
+        }
 
-        // Poll keyboard input
+        // Poll keyboard input (non-blocking, 1ms timeout)
         if let Some(line) = tui.poll_input()? {
             if line == "\x03" {
                 break; // Ctrl+C
@@ -299,9 +320,6 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 }
             }
         }
-
-        // Small sleep to prevent busy loop
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
     drop(tui); // Restore terminal

@@ -136,7 +136,7 @@ impl Tui {
 
     /// Poll for keyboard input, returns Some(line) if Enter pressed
     pub fn poll_input(&mut self) -> io::Result<Option<String>> {
-        if event::poll(std::time::Duration::from_millis(16))? {
+        if event::poll(std::time::Duration::from_millis(1))? {
             if let Event::Key(key) = event::read()? {
                 self.needs_redraw = true;
 

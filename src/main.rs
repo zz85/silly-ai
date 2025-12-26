@@ -312,6 +312,8 @@ async fn process_command(
     ollama_chat: &mut chat::Chat,
     ui: &Ui,
 ) -> Option<std::time::Instant> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+
     tts_playing.store(true, Ordering::SeqCst);
     ui.set_thinking();
 
@@ -332,8 +334,30 @@ async fn process_command(
             }
 
             ui.set_speaking();
+            let mut paused = false;
             while !sink.empty() {
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                // Check for keypress (non-blocking)
+                if event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
+                    if let Ok(Event::Key(key)) = event::read() {
+                        if key.kind == KeyEventKind::Press {
+                            match key.code {
+                                KeyCode::Char(' ') => {
+                                    paused = !paused;
+                                    if paused {
+                                        sink.pause();
+                                    } else {
+                                        sink.play();
+                                    }
+                                }
+                                KeyCode::Esc | KeyCode::Char('q') => {
+                                    sink.stop();
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
             }
             tts::Tts::finish(stream, sink);
         }

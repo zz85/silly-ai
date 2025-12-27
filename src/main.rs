@@ -329,6 +329,11 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     pending_command = None;
                     pending_deadline = None;
                     ui.show_final(&line);
+                    // Process and draw immediately
+                    while let Ok(event) = async_ui_rx.try_recv() {
+                        tui.handle_ui_event(event)?;
+                    }
+                    tui.draw()?;
                     let _ = session_tx.send(session::SessionCommand::UserInput(line));
                     continue;
                 }

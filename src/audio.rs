@@ -172,6 +172,7 @@ pub fn run_vad_processor(
     preview_tx: SyncSender<Arc<[f32]>>,
     mut vad: Option<VadEngine>,
     tts_playing: Arc<AtomicBool>,
+    mic_muted: Arc<AtomicBool>,
     level_tx: Sender<crate::DisplayEvent>,
 ) {
     let mut state = VadState::Idle;
@@ -196,8 +197,8 @@ pub fn run_vad_processor(
             last_level = now;
         }
 
-        // Skip VAD processing while TTS is playing
-        if tts_playing.load(Ordering::SeqCst) {
+        // Skip VAD processing while TTS is playing or mic is muted
+        if tts_playing.load(Ordering::SeqCst) || mic_muted.load(Ordering::SeqCst) {
             // Reset state to avoid partial utterances
             state = VadState::Idle;
             speech_buf.clear();

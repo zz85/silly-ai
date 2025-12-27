@@ -33,6 +33,9 @@ pub struct Tui {
     spin_frame: usize,
     audio_level: f32,
     input_activity: bool,
+    mic_muted: bool,
+    tts_enabled: bool,
+    wake_enabled: bool,
 }
 
 impl Tui {
@@ -53,7 +56,22 @@ impl Tui {
             spin_frame: 0,
             audio_level: 0.0,
             input_activity: false,
+            mic_muted: false,
+            tts_enabled: true,
+            wake_enabled: true,
         })
+    }
+
+    pub fn set_mic_muted(&mut self, muted: bool) {
+        self.mic_muted = muted;
+    }
+
+    pub fn set_tts_enabled(&mut self, enabled: bool) {
+        self.tts_enabled = enabled;
+    }
+
+    pub fn set_wake_enabled(&mut self, enabled: bool) {
+        self.wake_enabled = enabled;
     }
 
     pub fn restore(&self) -> io::Result<()> {
@@ -178,9 +196,15 @@ impl Tui {
                 format!("\x1b[92m{}\x1b[90m ", BARS[idx])
             }
         };
+        let toggles = format!(
+            "{}{}{}",
+            if self.mic_muted { "🔇" } else { "🎙" },
+            if self.tts_enabled { "🔊" } else { "🔈" },
+            if self.wake_enabled { "👂" } else { "💤" },
+        );
         let status = format!(
-            "\x1b[90m{}{} │ 📝 {} │ 💬 {}\x1b[0m",
-            spinner_str, self.status, self.context_words, self.last_response_words
+            "\x1b[90m{}{} │ {} │ 📝 {} │ 💬 {}\x1b[0m",
+            spinner_str, self.status, toggles, self.context_words, self.last_response_words
         );
 
         // Input line with optional preview
@@ -215,6 +239,9 @@ impl Tui {
         if let Event::Key(key) = event::read()? {
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                 return Ok(Some("\x03".to_string()));
+            }
+            if key.code == KeyCode::Char('m') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                return Ok(Some("/mute".to_string()));
             }
 
             match key.code {

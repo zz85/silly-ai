@@ -28,6 +28,7 @@ pub struct SessionManager {
     chat: Chat,
     tts: Tts,
     tts_playing: Arc<AtomicBool>,
+    tts_enabled: Arc<AtomicBool>,
     event_tx: mpsc::UnboundedSender<SessionEvent>,
 }
 
@@ -36,9 +37,10 @@ impl SessionManager {
         chat: Chat,
         tts: Tts,
         tts_playing: Arc<AtomicBool>,
+        tts_enabled: Arc<AtomicBool>,
         event_tx: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
-        Self { chat, tts, tts_playing, event_tx }
+        Self { chat, tts, tts_playing, tts_enabled, event_tx }
     }
 
     pub async fn run(mut self, mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>) {
@@ -100,7 +102,7 @@ impl SessionManager {
 
                             while let Some(pos) = buffer.find(|c| c == '.' || c == '!' || c == '?') {
                                 let sentence = buffer[..=pos].trim().to_string();
-                                if !sentence.is_empty() {
+                                if !sentence.is_empty() && self.tts_enabled.load(Ordering::SeqCst) {
                                     if !speaking_sent {
                                         let _ = self.event_tx.send(SessionEvent::Speaking);
                                         speaking_sent = true;
@@ -133,7 +135,7 @@ impl SessionManager {
 
         // Flush remaining
         let remaining = buffer.trim();
-        if !remaining.is_empty() {
+        if !remaining.is_empty() && self.tts_enabled.load(Ordering::SeqCst) {
             if !speaking_sent {
                 let _ = self.event_tx.send(SessionEvent::Speaking);
                 speaking_sent = true;

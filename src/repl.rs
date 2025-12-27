@@ -65,6 +65,7 @@ pub fn handle_transcript(
     wake_word: &WakeWord,
     last_interaction: Option<Instant>,
     wake_timeout: Duration,
+    wake_enabled: bool,
     ui: &Ui,
 ) -> Option<String> {
     match event {
@@ -79,7 +80,7 @@ pub fn handle_transcript(
                 .map(|t| t.elapsed() < wake_timeout)
                 .unwrap_or(false);
 
-            let command = if in_conversation {
+            let command = if !wake_enabled || in_conversation {
                 text
             } else {
                 match wake_word.detect(&text) {

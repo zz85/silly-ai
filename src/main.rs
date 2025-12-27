@@ -68,6 +68,17 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let tts_playing = Arc::new(AtomicBool::new(false));
     let tts_playing_vad = Arc::clone(&tts_playing);
 
+    // Flag to mute microphone input
+    let mic_muted = Arc::new(AtomicBool::new(false));
+    let mic_muted_vad = Arc::clone(&mic_muted);
+
+    // Flag to disable TTS output
+    let tts_enabled = Arc::new(AtomicBool::new(true));
+    let tts_enabled_session = Arc::clone(&tts_enabled);
+
+    // Flag to require wake word
+    let wake_enabled = Arc::new(AtomicBool::new(true));
+
     // Channel: audio -> VAD processor
     let (audio_tx, audio_rx) = mpsc::channel::<Vec<f32>>();
 
@@ -120,6 +131,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             preview_tx,
             vad,
             tts_playing_vad,
+            mic_muted_vad,
             display_tx_audio,
         );
     });
@@ -212,6 +224,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         ollama_chat,
         tts_engine,
         Arc::clone(&tts_playing),
+        tts_enabled_session,
         session_event_tx,
     );
     // Spawn session manager on dedicated thread (OutputStream isn't Send)
@@ -304,6 +317,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             &wake_word,
                             last_interaction,
                             wake_timeout,
+                            wake_enabled.load(Ordering::SeqCst),
                             &ui,
                         );
                         // Cancel auto-submit on preview activity
@@ -315,6 +329,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             &wake_word,
                             last_interaction,
                             wake_timeout,
+                            wake_enabled.load(Ordering::SeqCst),
                             &ui,
                         ) {
                             tui.append_input(&input_text);
@@ -330,6 +345,27 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 if let Some(line) = tui.poll_input()? {
                     if line == "\x03" {
                         break;
+                    }
+                    if line == "/mute" || line == "/mic" {
+                        let muted = !mic_muted.load(Ordering::SeqCst);
+                        mic_muted.store(muted, Ordering::SeqCst);
+                        tui.set_mic_muted(muted);
+                        tui.draw()?;
+                        continue;
+                    }
+                    if line == "/speak" || line == "/tts" {
+                        let enabled = !tts_enabled.load(Ordering::SeqCst);
+                        tts_enabled.store(enabled, Ordering::SeqCst);
+                        tui.set_tts_enabled(enabled);
+                        tui.draw()?;
+                        continue;
+                    }
+                    if line == "/wake" {
+                        let enabled = !wake_enabled.load(Ordering::SeqCst);
+                        wake_enabled.store(enabled, Ordering::SeqCst);
+                        tui.set_wake_enabled(enabled);
+                        tui.draw()?;
+                        continue;
                     }
                     // Cancel auto-submit on manual submit
                     auto_submit_deadline = None;
@@ -400,6 +436,8 @@ async fn run_transcribe_mode() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let tts_playing = Arc::new(AtomicBool::new(false));
     let tts_playing_vad = Arc::clone(&tts_playing);
+    let mic_muted = Arc::new(AtomicBool::new(false));
+    let mic_muted_vad = Arc::clone(&mic_muted);
 
     thread::spawn(move || {
         let vad = if std::path::Path::new(VAD_MODEL_PATH).exists() {
@@ -413,6 +451,7 @@ async fn run_transcribe_mode() -> Result<(), Box<dyn Error + Send + Sync>> {
             preview_tx,
             vad,
             tts_playing_vad,
+            mic_muted_vad,
             display_tx,
         );
     });

@@ -333,6 +333,8 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     }
                     // Cancel auto-submit on manual submit
                     auto_submit_deadline = None;
+                    // Cancel any in-progress response
+                    let _ = session_tx.send(session::SessionCommand::Cancel);
                     ui.show_final(&line);
                     while let Ok(event) = async_ui_rx.try_recv() {
                         tui.handle_ui_event(event)?;
@@ -353,6 +355,8 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         auto_submit_deadline = None;
                         if let Some(line) = tui.take_input() {
                             if !line.is_empty() {
+                                // Cancel any in-progress response
+                                let _ = session_tx.send(session::SessionCommand::Cancel);
                                 ui.show_final(&line);
                                 while let Ok(event) = async_ui_rx.try_recv() {
                                     tui.handle_ui_event(event)?;

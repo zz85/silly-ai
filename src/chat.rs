@@ -119,6 +119,11 @@ impl Chat {
         self.history.push(ChatMessage::assistant(message.to_string()));
     }
 
+    /// Remove last message from history
+    pub fn history_pop(&mut self) {
+        self.history.pop();
+    }
+
     /// Create a stream for LLM response
     pub async fn create_stream(&self) -> Result<ChatStream, Box<dyn std::error::Error + Send + Sync>> {
         let request = ChatMessageRequest::new(MODEL.to_string(), self.history.clone());

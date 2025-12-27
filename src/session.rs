@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 pub enum SessionCommand {
     UserInput(String),
     Greet,
+    Cancel,
 }
 
 #[derive(Clone, Debug)]
@@ -44,64 +45,37 @@ impl SessionManager {
         while let Some(cmd) = cmd_rx.recv().await {
             match cmd {
                 SessionCommand::Greet => {
-                    self.process_message("Hello.").await;
+                    self.process_message("Hello.", &mut cmd_rx).await;
                 }
                 SessionCommand::UserInput(text) => {
-                    self.process_message(&text).await;
+                    self.process_message(&text, &mut cmd_rx).await;
+                }
+                SessionCommand::Cancel => {
+                    // Nothing to cancel if idle
                 }
             }
         }
     }
 
-    async fn process_message(&mut self, message: &str) {
+    async fn process_message(&mut self, message: &str, cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>) {
         self.tts_playing.store(true, Ordering::SeqCst);
         let _ = self.event_tx.send(SessionEvent::Thinking);
 
-        // Stream LLM response first
         self.chat.history_push_user(message);
         
-        let mut sentences: Vec<String> = Vec::new();
         let mut full_response = String::new();
 
-        match self.chat.create_stream().await {
-            Ok(mut llm_stream) => {
-                let mut buffer = String::new();
-
-                while let Some(content) = llm_stream.next().await {
-                    let _ = self.event_tx.send(SessionEvent::Chunk(content.clone()));
-                    full_response.push_str(&content);
-                    buffer.push_str(&content);
-
-                    // Collect complete sentences for TTS
-                    while let Some(pos) = buffer.find(|c| c == '.' || c == '!' || c == '?') {
-                        let sentence = buffer[..=pos].trim().to_string();
-                        if !sentence.is_empty() {
-                            sentences.push(sentence);
-                        }
-                        buffer = buffer[pos + 1..].to_string();
-                    }
-                }
-
-                // Flush remaining
-                let remaining = buffer.trim();
-                if !remaining.is_empty() {
-                    sentences.push(remaining.to_string());
-                }
-
-                self.chat.history_push_assistant(&full_response);
-            }
+        let stream_result = self.chat.create_stream().await;
+        let mut llm_stream = match stream_result {
+            Ok(s) => s,
             Err(e) => {
                 let _ = self.event_tx.send(SessionEvent::Error(e.to_string()));
                 self.tts_playing.store(false, Ordering::SeqCst);
                 return;
             }
-        }
+        };
 
-        let response_words = full_response.split_whitespace().count();
-        let _ = self.event_tx.send(SessionEvent::ResponseEnd { response_words });
-        let _ = self.event_tx.send(SessionEvent::ContextWords(self.chat.context_words()));
-
-        // Now create audio and play TTS
+        // Create TTS sink upfront for streaming TTS
         let (stream, sink) = match Tts::create_sink() {
             Ok(s) => s,
             Err(e) => {
@@ -111,15 +85,82 @@ impl SessionManager {
             }
         };
 
-        for sentence in &sentences {
-            let _ = self.tts.queue(sentence, &sink);
+        let mut buffer = String::new();
+        let mut cancelled = false;
+        let mut speaking_sent = false;
+
+        loop {
+            tokio::select! {
+                chunk = llm_stream.next() => {
+                    match chunk {
+                        Some(content) => {
+                            let _ = self.event_tx.send(SessionEvent::Chunk(content.clone()));
+                            full_response.push_str(&content);
+                            buffer.push_str(&content);
+
+                            while let Some(pos) = buffer.find(|c| c == '.' || c == '!' || c == '?') {
+                                let sentence = buffer[..=pos].trim().to_string();
+                                if !sentence.is_empty() {
+                                    if !speaking_sent {
+                                        let _ = self.event_tx.send(SessionEvent::Speaking);
+                                        speaking_sent = true;
+                                    }
+                                    let _ = self.tts.queue(&sentence, &sink);
+                                }
+                                buffer = buffer[pos + 1..].to_string();
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                cmd = cmd_rx.recv() => {
+                    if let Some(SessionCommand::Cancel) = cmd {
+                        cancelled = true;
+                        sink.stop();
+                        break;
+                    }
+                }
+            }
         }
 
-        let _ = self.event_tx.send(SessionEvent::Speaking);
+        if cancelled {
+            self.chat.history_pop();
+            Tts::finish(stream, sink);
+            self.tts_playing.store(false, Ordering::SeqCst);
+            let _ = self.event_tx.send(SessionEvent::Ready);
+            return;
+        }
 
-        // Wait for TTS playback
-        while !sink.empty() {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Flush remaining
+        let remaining = buffer.trim();
+        if !remaining.is_empty() {
+            if !speaking_sent {
+                let _ = self.event_tx.send(SessionEvent::Speaking);
+                speaking_sent = true;
+            }
+            let _ = self.tts.queue(remaining, &sink);
+        }
+
+        self.chat.history_push_assistant(&full_response);
+
+        let response_words = full_response.split_whitespace().count();
+        let _ = self.event_tx.send(SessionEvent::ResponseEnd { response_words });
+        let _ = self.event_tx.send(SessionEvent::ContextWords(self.chat.context_words()));
+
+        // Wait for TTS with cancel check
+        loop {
+            if sink.empty() {
+                break;
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
+                cmd = cmd_rx.recv() => {
+                    if let Some(SessionCommand::Cancel) = cmd {
+                        sink.stop();
+                        break;
+                    }
+                }
+            }
         }
 
         Tts::finish(stream, sink);

@@ -310,7 +310,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         );
                     }
                     DisplayEvent::Final(text) => {
-                        repl::handle_transcript(
+                        if let Some(input_text) = repl::handle_transcript(
                             TranscriptEvent::Final(text),
                             &wake_word,
                             last_interaction,
@@ -318,7 +318,9 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             &mut pending_command,
                             &mut pending_deadline,
                             &ui,
-                        );
+                        ) {
+                            tui.append_input(&input_text);
+                        }
                     }
                 }
             }
@@ -341,13 +343,11 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     continue;
                 }
 
-                // Check voice command timeout
+                // Check voice command timeout (clear pending, input already has text)
                 if let Some(deadline) = pending_deadline {
                     if tokio::time::Instant::now() >= deadline {
-                        if let Some(command) = pending_command.take() {
-                            pending_deadline = None;
-                            tui.set_input(&command);
-                        }
+                        pending_command = None;
+                        pending_deadline = None;
                     }
                 }
 

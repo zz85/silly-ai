@@ -256,6 +256,14 @@ impl Tui {
         self.cursor_pos = self.char_count();
     }
 
+    pub fn append_input(&mut self, text: &str) {
+        if !self.input.is_empty() && !self.input.ends_with(' ') {
+            self.input.push(' ');
+        }
+        self.input.push_str(text);
+        self.cursor_pos = self.char_count();
+    }
+
     /// Convert character index to byte index
     fn char_to_byte_index(&self, char_idx: usize) -> usize {
         self.input.char_indices()

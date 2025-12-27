@@ -59,7 +59,7 @@ pub async fn process_command(
     }
 }
 
-/// Handle voice transcript event
+/// Handle voice transcript event, returns text to add to input if any
 pub fn handle_transcript(
     event: TranscriptEvent,
     wake_word: &WakeWord,
@@ -68,14 +68,17 @@ pub fn handle_transcript(
     pending: &mut Option<String>,
     deadline: &mut Option<tokio::time::Instant>,
     ui: &Ui,
-) {
+) -> Option<String> {
     const EDIT_DELAY: Duration = Duration::from_millis(800);
 
     match event {
         TranscriptEvent::Preview(text) => {
             ui.set_preview(text);
+            None
         }
         TranscriptEvent::Final(text) => {
+            ui.set_idle(); // Clear preview
+            
             let in_conversation = last_interaction
                 .map(|t| t.elapsed() < wake_timeout)
                 .unwrap_or(false);
@@ -85,28 +88,25 @@ pub fn handle_transcript(
             } else {
                 match wake_word.detect(&text) {
                     Some(cmd) => cmd,
-                    None => {
-                        ui.set_idle();
-                        return;
-                    }
+                    None => return None,
                 }
             };
 
             if command.is_empty() {
-                ui.set_idle();
-                return;
+                return None;
             }
 
-            // Append to pending buffer
+            // Append to pending buffer (for timeout tracking)
             if let Some(p) = pending {
                 p.push(' ');
                 p.push_str(&command);
             } else {
-                *pending = Some(command);
+                *pending = Some(command.clone());
             }
             *deadline = Some(tokio::time::Instant::now() + EDIT_DELAY);
 
-            ui.set_preview(format!("▶ {}", pending.as_ref().unwrap()));
+            // Return just the new command to append to input
+            Some(command)
         }
     }
 }

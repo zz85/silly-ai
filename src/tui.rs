@@ -8,6 +8,16 @@ use std::io::{self, stdout, Write};
 use unicode_width::UnicodeWidthStr;
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const MUSIC: [&str; 4] = ["♪", "♫", "♪", "♬"];
+const BARS: [&str; 5] = ["▁", "▂", "▄", "▆", "█"];
+
+#[derive(Clone, Copy, PartialEq)]
+enum SpinnerType {
+    None,
+    Dots,
+    Music,
+    Bars,
+}
 
 pub struct Tui {
     preview: String,
@@ -19,7 +29,7 @@ pub struct Tui {
     status_drawn: bool,
     responding: bool,
     ready: bool,
-    spinning: bool,
+    spinner_type: SpinnerType,
     spin_frame: usize,
 }
 
@@ -37,7 +47,7 @@ impl Tui {
             status_drawn: false,
             responding: false,
             ready: false,
-            spinning: true,
+            spinner_type: SpinnerType::Dots,
             spin_frame: 0,
         })
     }
@@ -77,26 +87,26 @@ impl Tui {
             UiEvent::Preview(text) => {
                 self.preview = text;
                 self.status = "🎤 Listening".to_string();
-                self.spinning = true;
+                self.spinner_type = SpinnerType::Bars;
             }
             UiEvent::Final(text) => {
                 self.print_content(&format!("\x1b[32m>\x1b[0m {}", text))?;
                 self.preview.clear();
                 self.status = "⏳ Sending".to_string();
-                self.spinning = true;
+                self.spinner_type = SpinnerType::Dots;
             }
             UiEvent::Thinking => {
                 self.status = "💭 Thinking".to_string();
-                self.spinning = true;
+                self.spinner_type = SpinnerType::Dots;
             }
             UiEvent::Speaking => {
                 self.status = "🔊 Speaking".to_string();
-                self.spinning = true;
+                self.spinner_type = SpinnerType::Music;
             }
             UiEvent::SpeakingDone => {
                 self.ready = true;
                 self.status = "✓ Ready".to_string();
-                self.spinning = false;
+                self.spinner_type = SpinnerType::None;
             }
             UiEvent::ResponseChunk(text) => {
                 if self.status_drawn {
@@ -110,7 +120,7 @@ impl Tui {
                     println!();
                 }
                 self.responding = true;
-                self.spinning = false;
+                self.spinner_type = SpinnerType::None;
                 print!("{}", text);
                 stdout().flush()?;
             }
@@ -119,11 +129,11 @@ impl Tui {
                 self.status = "⏸ Idle".to_string();
                 self.status_drawn = false;
                 self.responding = false;
-                self.spinning = false;
+                self.spinner_type = SpinnerType::None;
             }
             UiEvent::Idle => {
                 self.status = if self.ready { "✓ Ready".to_string() } else { "⏸ Idle".to_string() };
-                self.spinning = false;
+                self.spinner_type = SpinnerType::None;
                 self.preview.clear();
             }
             UiEvent::Tick => {}
@@ -150,12 +160,21 @@ impl Tui {
         }
         queue!(out, cursor::MoveToColumn(0), terminal::Clear(ClearType::FromCursorDown))?;
 
-        // Status line with optional spinner
-        let spinner_str = if self.spinning {
-            self.spin_frame = (self.spin_frame + 1) % SPINNER.len();
-            format!("{} ", SPINNER[self.spin_frame])
-        } else {
-            String::new()
+        // Status line with optional spinner (bright color)
+        let spinner_str = match self.spinner_type {
+            SpinnerType::None => String::new(),
+            SpinnerType::Dots => {
+                self.spin_frame = (self.spin_frame + 1) % SPINNER.len();
+                format!("\x1b[93m{}\x1b[90m ", SPINNER[self.spin_frame])
+            }
+            SpinnerType::Music => {
+                self.spin_frame = (self.spin_frame + 1) % MUSIC.len();
+                format!("\x1b[95m{}\x1b[90m ", MUSIC[self.spin_frame])
+            }
+            SpinnerType::Bars => {
+                self.spin_frame = (self.spin_frame + 1) % BARS.len();
+                format!("\x1b[92m{}\x1b[90m ", BARS[self.spin_frame])
+            }
         };
         let status = format!(
             "\x1b[90m{}{} │ 📝 {} │ 💬 {}\x1b[0m",

@@ -96,8 +96,6 @@ impl Tui {
             UiEvent::Final(text) => {
                 self.print_content(&format!("\x1b[32m>\x1b[0m {}", text))?;
                 self.preview.clear();
-                self.status = "⏳ Sending".to_string();
-                self.spinner_type = SpinnerType::Dots;
             }
             UiEvent::Thinking => {
                 self.status = "💭 Thinking".to_string();

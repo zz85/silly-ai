@@ -3,6 +3,7 @@ mod chat;
 mod config;
 mod render;
 mod repl;
+mod session;
 #[cfg(feature = "supertonic")]
 mod supertonic;
 mod test_ui;
@@ -199,8 +200,28 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     };
 
-    let mut ollama_chat = chat::Chat::new(&config.name);
+    let ollama_chat = chat::Chat::new(&config.name);
     let wake_word = wake::WakeWord::new(&config.wake_word);
+
+    // Session manager channels
+    let (session_tx, session_rx) = tokio::sync::mpsc::unbounded_channel::<session::SessionCommand>();
+    let (session_event_tx, mut session_event_rx) = tokio::sync::mpsc::unbounded_channel::<session::SessionEvent>();
+    
+    // Spawn session manager
+    let session_mgr = session::SessionManager::new(
+        ollama_chat,
+        tts_engine,
+        Arc::clone(&tts_playing),
+        session_event_tx,
+    );
+    // Spawn session manager on dedicated thread (OutputStream isn't Send)
+    let session_handle = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(session_mgr.run(session_rx));
+    });
 
     let (ui, ui_rx) = Ui::new();
 
@@ -214,56 +235,8 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut pending_command: Option<String> = None;
     let mut pending_deadline: Option<tokio::time::Instant> = None;
 
-    // Initial greeting (non-blocking render loop)
-    tts_playing.store(true, Ordering::Relaxed);
-    // if let Ok((stream, sink)) = tts::Tts::create_sink() {
-    //     ui.set_thinking();
-
-    //     // Process events during greeting
-    //     let mut process_ui = || -> std::io::Result<bool> {
-    //         while let Ok(event) = ui_rx.try_recv() {
-    //             tui.handle_ui_event(event)?;
-    //         }
-    //         tui.draw()?;
-    //         if let Some(line) = tui.poll_input()? {
-    //             if line == "\x03" {
-    //                 return Ok(true); // quit
-    //             }
-    //         }
-    //         Ok(false)
-    //     };
-
-    //     // Draw initial thinking state
-    //     process_ui()?;
-
-    //     let ui_greet = ui.clone();
-    //     let greeting_result = ollama_chat
-    //         .greet_with_callback(
-    //             |sentence| {
-    //                 let _ = tts_engine.queue(sentence, &sink);
-    //             },
-    //             |chunk| ui_greet.append_response(chunk),
-    //         )
-    //         .await;
-
-    //     if greeting_result.is_ok() {
-    //         ui.end_response();
-    //         ui.set_speaking();
-    //         while !sink.empty() {
-    //             if process_ui()? {
-    //                 drop(tui);
-    //                 return Ok(());
-    //             }
-    //             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    //         }
-    //         tts::Tts::finish(stream, sink);
-    //         ui.speaking_done();
-    //     }
-    // }
-    // tts_playing.store(false, Ordering::Relaxed);
-
-    // Active TTS playback (if any)
-    let mut active_playback: Option<(rodio::OutputStream, rodio::Sink)> = None;
+    // Initial greeting
+    let _ = session_tx.send(session::SessionCommand::Greet);
 
     // Bridge ui_rx to async
     let (async_ui_tx, mut async_ui_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -280,6 +253,43 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             // UI events from Ui sender
             Some(event) = async_ui_rx.recv() => {
                 tui.handle_ui_event(event)?;
+                tui.draw()?;
+            }
+            // Session events - process UI and draw immediately
+            Some(event) = session_event_rx.recv() => {
+                match event {
+                    session::SessionEvent::Thinking => {
+                        ui.set_thinking();
+                    }
+                    session::SessionEvent::Chunk(text) => {
+                        ui.append_response(&text);
+                    }
+                    session::SessionEvent::ResponseEnd => {
+                        ui.end_response();
+                    }
+                    session::SessionEvent::Speaking => {
+                        ui.set_speaking();
+                    }
+                    session::SessionEvent::SpeakingDone => {
+                        ui.speaking_done();
+                        last_interaction = Some(std::time::Instant::now());
+                    }
+                    session::SessionEvent::ContextWords(words) => {
+                        ui.set_context_words(words);
+                    }
+                    session::SessionEvent::Ready => {
+                        tui.set_ready();
+                    }
+                    session::SessionEvent::Error(e) => {
+                        eprintln!("Session error: {}", e);
+                        ui.set_idle();
+                    }
+                }
+                // Process pending UI events and draw
+                while let Ok(ui_event) = async_ui_rx.try_recv() {
+                    tui.handle_ui_event(ui_event)?;
+                }
+                tui.draw()?;
             }
             // Audio transcription events
             Some(event) = async_display_rx.recv() => {
@@ -309,20 +319,8 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     }
                 }
             }
-            // Periodic: keyboard input, playback check, deadline check, redraw
+            // Periodic: keyboard input, deadline check, redraw
             _ = tokio::time::sleep(std::time::Duration::from_millis(16)) => {
-                // Check active playback
-                if let Some((stream, sink)) = active_playback.take() {
-                    if sink.empty() {
-                        tts::Tts::finish(stream, sink);
-                        ui.speaking_done();
-                        tts_playing.store(false, Ordering::Relaxed);
-                        last_interaction = Some(std::time::Instant::now());
-                    } else {
-                        active_playback = Some((stream, sink));
-                    }
-                }
-
                 // Poll keyboard input
                 if let Some(line) = tui.poll_input()? {
                     if line == "\x03" {
@@ -331,36 +329,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     pending_command = None;
                     pending_deadline = None;
                     ui.show_final(&line);
-                    
-                    // Start LLM + TTS - break out of select to handle streaming
-                    tts_playing.store(true, Ordering::SeqCst);
-                    ui.set_thinking();
-                    
-                    if let Ok((stream, sink)) = tts::Tts::create_sink() {
-                        // Stream LLM response while processing UI events
-                        let ui_cmd = ui.clone();
-                        let mut llm_stream = ollama_chat.send_streaming(&line).await;
-                        
-                        while let Some(chunk) = llm_stream.next().await {
-                            if let Some(sentence) = chunk.sentence {
-                                let _ = tts_engine.queue(&sentence, &sink);
-                            }
-                            if let Some(text) = chunk.text {
-                                ui_cmd.append_response(&text);
-                            }
-                            // Process UI events during streaming
-                            while let Ok(event) = async_ui_rx.try_recv() {
-                                tui.handle_ui_event(event)?;
-                            }
-                            tui.draw()?;
-                        }
-                        
-                        ollama_chat.finish_response(llm_stream.response);
-                        ui.end_response();
-                        ui.set_context_words(ollama_chat.context_words());
-                        ui.set_speaking();
-                        active_playback = Some((stream, sink));
-                    }
+                    let _ = session_tx.send(session::SessionCommand::UserInput(line));
                     continue;
                 }
 

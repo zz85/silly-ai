@@ -385,10 +385,12 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     auto_submit_deadline = None;
                 }
 
-                // Check auto-submit timeout
+                // Update auto-submit progress bar
                 if let Some(deadline) = auto_submit_deadline {
-                    if tokio::time::Instant::now() >= deadline {
+                    let now = tokio::time::Instant::now();
+                    if now >= deadline {
                         auto_submit_deadline = None;
+                        tui.set_auto_submit_progress(None);
                         if let Some(line) = tui.take_input() {
                             if !line.is_empty() {
                                 // Cancel any in-progress response
@@ -401,7 +403,13 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                                 let _ = session_tx.send(session::SessionCommand::UserInput(line));
                             }
                         }
+                    } else {
+                        let elapsed = auto_submit_delay.as_millis() as f32 - (deadline - now).as_millis() as f32;
+                        let total = auto_submit_delay.as_millis() as f32;
+                        tui.set_auto_submit_progress(Some(elapsed / total));
                     }
+                } else {
+                    tui.set_auto_submit_progress(None);
                 }
 
                 // Redraw

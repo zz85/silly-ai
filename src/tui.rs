@@ -36,6 +36,7 @@ pub struct Tui {
     mic_muted: bool,
     tts_enabled: bool,
     wake_enabled: bool,
+    auto_submit_progress: Option<f32>, // 1.0 = full, 0.0 = about to submit
 }
 
 impl Tui {
@@ -59,7 +60,12 @@ impl Tui {
             mic_muted: false,
             tts_enabled: true,
             wake_enabled: true,
+            auto_submit_progress: None,
         })
+    }
+
+    pub fn set_auto_submit_progress(&mut self, progress: Option<f32>) {
+        self.auto_submit_progress = progress;
     }
 
     pub fn set_mic_muted(&mut self, muted: bool) {
@@ -207,16 +213,23 @@ impl Tui {
             spinner_str, self.status, toggles, self.context_words, self.last_response_words
         );
 
-        // Input line with optional preview
-        let prompt = if self.preview.is_empty() {
-            format!("\x1b[32m>\x1b[0m {}", self.input)
+        // Input line with optional preview and auto-submit timer
+        let timer_bar = if let Some(progress) = self.auto_submit_progress {
+            let filled = (progress * 8.0) as usize;
+            let empty = 8 - filled;
+            format!("\x1b[33m[{}{}]\x1b[0m ", "█".repeat(filled), "░".repeat(empty))
         } else {
-            format!("\x1b[90m{}\x1b[0m \x1b[32m>\x1b[0m {}", self.preview, self.input)
+            String::new()
+        };
+        let prompt = if self.preview.is_empty() {
+            format!("{}\x1b[32m>\x1b[0m {}", timer_bar, self.input)
+        } else {
+            format!("\x1b[90m{}\x1b[0m {}\x1b[32m>\x1b[0m {}", self.preview, timer_bar, self.input)
         };
         let cursor_offset = if self.preview.is_empty() {
-            2 // "> "
+            2 + if self.auto_submit_progress.is_some() { 11 } else { 0 } // "> " + "[████████] "
         } else {
-            self.preview.width() + 4 // preview + " > "
+            self.preview.width() + 4 + if self.auto_submit_progress.is_some() { 11 } else { 0 }
         };
 
         queue!(out,

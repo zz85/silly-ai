@@ -215,9 +215,19 @@ impl Tui {
 
         // Input line with optional preview and auto-submit timer
         let timer_bar = if let Some(progress) = self.auto_submit_progress {
-            let filled = (progress * 8.0) as usize;
-            let empty = 8 - filled;
-            format!("\x1b[33m[{}{}]\x1b[0m ", "█".repeat(filled), "░".repeat(empty))
+            const BLOCKS: &[char] = &[' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
+            let total_steps = 4 * 8;
+            let step = (progress * total_steps as f32) as usize;
+            let full = step / 8;
+            let partial = step % 8;
+            let mut bar = "█".repeat(full);
+            if full < 4 {
+                bar.push(BLOCKS[partial]);
+                bar.push_str(&" ".repeat(3 - full));
+            }
+            self.spin_frame = self.spin_frame.wrapping_add(1);
+            let spinner = SPINNER[self.spin_frame % SPINNER.len()];
+            format!("\x1b[33m{}{}\x1b[0m ", bar, spinner)
         } else {
             String::new()
         };
@@ -227,9 +237,9 @@ impl Tui {
             format!("\x1b[90m{}\x1b[0m {}\x1b[32m>\x1b[0m {}", self.preview, timer_bar, self.input)
         };
         let cursor_offset = if self.preview.is_empty() {
-            2 + if self.auto_submit_progress.is_some() { 11 } else { 0 } // "> " + "[████████] "
+            2 + if self.auto_submit_progress.is_some() { 6 } else { 0 } // "> " + "████⠋ "
         } else {
-            self.preview.width() + 4 + if self.auto_submit_progress.is_some() { 11 } else { 0 }
+            self.preview.width() + 4 + if self.auto_submit_progress.is_some() { 6 } else { 0 }
         };
 
         queue!(out,

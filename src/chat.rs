@@ -2,6 +2,7 @@ use ollama_rs::Ollama;
 use ollama_rs::generation::chat::ChatMessage;
 use ollama_rs::generation::chat::request::ChatMessageRequest;
 use tokio_stream::StreamExt;
+use std::pin::Pin;
 
 const MODEL: &str = "gpt-oss:20b";
 
@@ -107,5 +108,84 @@ impl Chat {
         self.history
             .push(ChatMessage::assistant(full_response.clone()));
         Ok(full_response)
+    }
+
+    /// Start streaming response, returns an async stream of chunks
+    pub async fn send_streaming(&mut self, message: &str) -> LlmStream {
+        self.history.push(ChatMessage::user(message.to_string()));
+        let request = ChatMessageRequest::new(MODEL.to_string(), self.history.clone());
+        
+        match self.ollama.send_chat_messages_stream(request).await {
+            Ok(stream) => LlmStream {
+                stream: Some(Box::pin(stream)),
+                buffer: String::new(),
+                response: String::new(),
+            },
+            Err(e) => {
+                eprintln!("LLM error: {}", e);
+                LlmStream {
+                    stream: None,
+                    buffer: String::new(),
+                    response: String::new(),
+                }
+            }
+        }
+    }
+
+    /// Finish response and add to history
+    pub fn finish_response(&mut self, response: String) {
+        if !response.is_empty() {
+            self.history.push(ChatMessage::assistant(response));
+        }
+    }
+}
+
+pub struct LlmChunk {
+    pub text: Option<String>,
+    pub sentence: Option<String>,
+}
+
+pub struct LlmStream {
+    stream: Option<Pin<Box<dyn tokio_stream::Stream<Item = Result<ollama_rs::generation::chat::ChatMessageResponse, ()>> + Send>>>,
+    buffer: String,
+    pub response: String,
+}
+
+impl LlmStream {
+    pub async fn next(&mut self) -> Option<LlmChunk> {
+        let stream = self.stream.as_mut()?;
+        
+        if let Some(Ok(chunk)) = stream.next().await {
+            let content = chunk.message.content;
+            self.response.push_str(&content);
+            self.buffer.push_str(&content);
+            
+            // Check for complete sentence
+            let sentence = if let Some(pos) = self.buffer.find(|c| c == '.' || c == '!' || c == '?') {
+                let s = self.buffer[..=pos].trim().to_string();
+                self.buffer = self.buffer[pos + 1..].to_string();
+                if s.is_empty() { None } else { Some(s) }
+            } else {
+                None
+            };
+            
+            Some(LlmChunk {
+                text: Some(content),
+                sentence,
+            })
+        } else {
+            // Stream ended, flush remaining buffer
+            if !self.buffer.is_empty() {
+                let remaining = std::mem::take(&mut self.buffer);
+                let trimmed = remaining.trim();
+                if !trimmed.is_empty() {
+                    return Some(LlmChunk {
+                        text: None,
+                        sentence: Some(trimmed.to_string()),
+                    });
+                }
+            }
+            None
+        }
     }
 }

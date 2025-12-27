@@ -216,135 +216,172 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Initial greeting (non-blocking render loop)
     tts_playing.store(true, Ordering::Relaxed);
-    if let Ok((stream, sink)) = tts::Tts::create_sink() {
-        ui.set_thinking();
+    // if let Ok((stream, sink)) = tts::Tts::create_sink() {
+    //     ui.set_thinking();
 
-        // Process events during greeting
-        let mut process_ui = || -> std::io::Result<bool> {
-            while let Ok(event) = ui_rx.try_recv() {
-                tui.handle_ui_event(event)?;
-            }
-            tui.draw()?;
-            if let Some(line) = tui.poll_input()? {
-                if line == "\x03" {
-                    return Ok(true); // quit
-                }
-            }
-            Ok(false)
-        };
+    //     // Process events during greeting
+    //     let mut process_ui = || -> std::io::Result<bool> {
+    //         while let Ok(event) = ui_rx.try_recv() {
+    //             tui.handle_ui_event(event)?;
+    //         }
+    //         tui.draw()?;
+    //         if let Some(line) = tui.poll_input()? {
+    //             if line == "\x03" {
+    //                 return Ok(true); // quit
+    //             }
+    //         }
+    //         Ok(false)
+    //     };
 
-        // Draw initial thinking state
-        process_ui()?;
+    //     // Draw initial thinking state
+    //     process_ui()?;
 
-        let ui_greet = ui.clone();
-        let greeting_result = ollama_chat
-            .greet_with_callback(
-                |sentence| {
-                    let _ = tts_engine.queue(sentence, &sink);
-                },
-                |chunk| ui_greet.append_response(chunk),
-            )
-            .await;
+    //     let ui_greet = ui.clone();
+    //     let greeting_result = ollama_chat
+    //         .greet_with_callback(
+    //             |sentence| {
+    //                 let _ = tts_engine.queue(sentence, &sink);
+    //             },
+    //             |chunk| ui_greet.append_response(chunk),
+    //         )
+    //         .await;
 
-        if greeting_result.is_ok() {
-            ui.end_response();
-            ui.set_speaking();
-            while !sink.empty() {
-                if process_ui()? {
-                    drop(tui);
-                    return Ok(());
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            }
-            tts::Tts::finish(stream, sink);
-            ui.speaking_done();
-        }
-    }
-    tts_playing.store(false, Ordering::Relaxed);
+    //     if greeting_result.is_ok() {
+    //         ui.end_response();
+    //         ui.set_speaking();
+    //         while !sink.empty() {
+    //             if process_ui()? {
+    //                 drop(tui);
+    //                 return Ok(());
+    //             }
+    //             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    //         }
+    //         tts::Tts::finish(stream, sink);
+    //         ui.speaking_done();
+    //     }
+    // }
+    // tts_playing.store(false, Ordering::Relaxed);
 
     // Active TTS playback (if any)
     let mut active_playback: Option<(rodio::OutputStream, rodio::Sink)> = None;
 
+    // Bridge ui_rx to async
+    let (async_ui_tx, mut async_ui_rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui_rx_bridge = std::thread::spawn(move || {
+        while let Ok(event) = ui_rx.recv() {
+            if async_ui_tx.send(event).is_err() {
+                break;
+            }
+        }
+    });
+
     loop {
-        // Process UI events
-        while let Ok(event) = ui_rx.try_recv() {
-            tui.handle_ui_event(event)?;
-        }
-
-        // Check active playback
-        if let Some((stream, sink)) = active_playback.take() {
-            if sink.empty() {
-                tts::Tts::finish(stream, sink);
-                ui.speaking_done();
-                tts_playing.store(false, Ordering::Relaxed);
-                last_interaction = Some(std::time::Instant::now());
-            } else {
-                active_playback = Some((stream, sink));
+        tokio::select! {
+            // UI events from Ui sender
+            Some(event) = async_ui_rx.recv() => {
+                tui.handle_ui_event(event)?;
             }
-        }
-
-        // Draw
-        tui.draw()?;
-
-        // Poll keyboard input
-        if let Some(line) = tui.poll_input()? {
-            if line == "\x03" {
-                break; // Ctrl+C
+            // Audio transcription events
+            Some(event) = async_display_rx.recv() => {
+                match event {
+                    DisplayEvent::AudioLevel(_) => {}
+                    DisplayEvent::Preview(text) => {
+                        repl::handle_transcript(
+                            TranscriptEvent::Preview(text),
+                            &wake_word,
+                            last_interaction,
+                            wake_timeout,
+                            &mut pending_command,
+                            &mut pending_deadline,
+                            &ui,
+                        );
+                    }
+                    DisplayEvent::Final(text) => {
+                        repl::handle_transcript(
+                            TranscriptEvent::Final(text),
+                            &wake_word,
+                            last_interaction,
+                            wake_timeout,
+                            &mut pending_command,
+                            &mut pending_deadline,
+                            &ui,
+                        );
+                    }
+                }
             }
+            // Periodic: keyboard input, playback check, deadline check, redraw
+            _ = tokio::time::sleep(std::time::Duration::from_millis(16)) => {
+                // Check active playback
+                if let Some((stream, sink)) = active_playback.take() {
+                    if sink.empty() {
+                        tts::Tts::finish(stream, sink);
+                        ui.speaking_done();
+                        tts_playing.store(false, Ordering::Relaxed);
+                        last_interaction = Some(std::time::Instant::now());
+                    } else {
+                        active_playback = Some((stream, sink));
+                    }
+                }
 
-            pending_command = None;
-            pending_deadline = None;
-
-            ui.show_final(&line);
-            if let Some(playback) = repl::process_command(
-                &line, &tts_playing, &tts_engine, &mut ollama_chat, &ui
-            ).await {
-                active_playback = Some(playback);
-            }
-            continue;
-        }
-
-        // Check voice command timeout
-        if let Some(deadline) = pending_deadline {
-            if tokio::time::Instant::now() >= deadline {
-                if let Some(command) = pending_command.take() {
+                // Poll keyboard input
+                if let Some(line) = tui.poll_input()? {
+                    if line == "\x03" {
+                        break;
+                    }
+                    pending_command = None;
                     pending_deadline = None;
-                    tui.set_input(&command);
+                    ui.show_final(&line);
+                    
+                    // Start LLM + TTS - break out of select to handle streaming
+                    tts_playing.store(true, Ordering::SeqCst);
+                    ui.set_thinking();
+                    
+                    if let Ok((stream, sink)) = tts::Tts::create_sink() {
+                        // Stream LLM response while processing UI events
+                        let ui_cmd = ui.clone();
+                        let mut llm_stream = ollama_chat.send_streaming(&line).await;
+                        
+                        while let Some(chunk) = llm_stream.next().await {
+                            if let Some(sentence) = chunk.sentence {
+                                let _ = tts_engine.queue(&sentence, &sink);
+                            }
+                            if let Some(text) = chunk.text {
+                                ui_cmd.append_response(&text);
+                            }
+                            // Process UI events during streaming
+                            while let Ok(event) = async_ui_rx.try_recv() {
+                                tui.handle_ui_event(event)?;
+                            }
+                            tui.draw()?;
+                        }
+                        
+                        ollama_chat.finish_response(llm_stream.response);
+                        ui.end_response();
+                        ui.set_context_words(ollama_chat.context_words());
+                        ui.set_speaking();
+                        active_playback = Some((stream, sink));
+                    }
+                    continue;
                 }
-            }
-        }
 
-        // Process audio transcription events
-        if let Ok(event) = async_display_rx.try_recv() {
-            match event {
-                DisplayEvent::AudioLevel(_) => {}
-                DisplayEvent::Preview(text) => {
-                    repl::handle_transcript(
-                        TranscriptEvent::Preview(text),
-                        &wake_word,
-                        last_interaction,
-                        wake_timeout,
-                        &mut pending_command,
-                        &mut pending_deadline,
-                        &ui,
-                    );
+                // Check voice command timeout
+                if let Some(deadline) = pending_deadline {
+                    if tokio::time::Instant::now() >= deadline {
+                        if let Some(command) = pending_command.take() {
+                            pending_deadline = None;
+                            tui.set_input(&command);
+                        }
+                    }
                 }
-                DisplayEvent::Final(text) => {
-                    repl::handle_transcript(
-                        TranscriptEvent::Final(text),
-                        &wake_word,
-                        last_interaction,
-                        wake_timeout,
-                        &mut pending_command,
-                        &mut pending_deadline,
-                        &ui,
-                    );
-                }
+
+                // Redraw
+                tui.draw()?;
             }
         }
     }
 
     drop(tui);
+    drop(ui_rx_bridge);
 
     let _ = vad_handle.join();
     let _ = preview_handle.join();

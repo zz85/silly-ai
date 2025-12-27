@@ -7,6 +7,8 @@ use crossterm::{cursor, execute, queue};
 use std::io::{self, stdout, Write};
 use unicode_width::UnicodeWidthStr;
 
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 pub struct Tui {
     preview: String,
     status: String,
@@ -17,6 +19,8 @@ pub struct Tui {
     status_drawn: bool,
     responding: bool,
     ready: bool,
+    spinning: bool,
+    spin_frame: usize,
 }
 
 impl Tui {
@@ -33,6 +37,8 @@ impl Tui {
             status_drawn: false,
             responding: false,
             ready: false,
+            spinning: true,
+            spin_frame: 0,
         })
     }
 
@@ -71,25 +77,28 @@ impl Tui {
             UiEvent::Preview(text) => {
                 self.preview = text;
                 self.status = "🎤 Listening".to_string();
+                self.spinning = true;
             }
             UiEvent::Final(text) => {
-                // Green ">" prompt, white text
                 self.print_content(&format!("\x1b[32m>\x1b[0m {}", text))?;
                 self.preview.clear();
-                self.status = "⏳ Sending...".to_string();
+                self.status = "⏳ Sending".to_string();
+                self.spinning = true;
             }
             UiEvent::Thinking => {
                 self.status = "💭 Thinking".to_string();
+                self.spinning = true;
             }
             UiEvent::Speaking => {
                 self.status = "🔊 Speaking".to_string();
+                self.spinning = true;
             }
             UiEvent::SpeakingDone => {
                 self.ready = true;
                 self.status = "✓ Ready".to_string();
+                self.spinning = false;
             }
             UiEvent::ResponseChunk(text) => {
-                // Clear status area once, then stream inline (no color)
                 if self.status_drawn {
                     let mut out = stdout();
                     queue!(out, cursor::MoveUp(1), cursor::MoveToColumn(0))?;
@@ -98,20 +107,23 @@ impl Tui {
                     self.status_drawn = false;
                 }
                 if !self.responding {
-                    println!(); // newline before response
+                    println!();
                 }
                 self.responding = true;
+                self.spinning = false;
                 print!("{}", text);
                 stdout().flush()?;
             }
             UiEvent::ResponseEnd => {
-                println!("\n"); // newline after response
+                println!("\n");
                 self.status = "⏸ Idle".to_string();
                 self.status_drawn = false;
                 self.responding = false;
+                self.spinning = false;
             }
             UiEvent::Idle => {
                 self.status = if self.ready { "✓ Ready".to_string() } else { "⏸ Idle".to_string() };
+                self.spinning = false;
                 self.preview.clear();
             }
             UiEvent::Tick => {}
@@ -138,10 +150,16 @@ impl Tui {
         }
         queue!(out, cursor::MoveToColumn(0), terminal::Clear(ClearType::FromCursorDown))?;
 
-        // Status line (dim, above prompt)
+        // Status line with optional spinner
+        let spinner_str = if self.spinning {
+            self.spin_frame = (self.spin_frame + 1) % SPINNER.len();
+            format!("{} ", SPINNER[self.spin_frame])
+        } else {
+            String::new()
+        };
         let status = format!(
-            "\x1b[90m{} │ 📝 {} │ 💬 {}\x1b[0m",
-            self.status, self.context_words, self.last_response_words
+            "\x1b[90m{}{} │ 📝 {} │ 💬 {}\x1b[0m",
+            spinner_str, self.status, self.context_words, self.last_response_words
         );
 
         // Input line with optional preview

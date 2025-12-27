@@ -232,6 +232,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut last_interaction: Option<std::time::Instant> = None;
     let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
 
+    let auto_submit_delay = std::time::Duration::from_millis(2000);
     let mut auto_submit_deadline: Option<tokio::time::Instant> = None;
 
     // Initial greeting
@@ -317,8 +318,8 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             &ui,
                         ) {
                             tui.append_input(&input_text);
-                            // Start/reset auto-submit timer
-                            auto_submit_deadline = Some(tokio::time::Instant::now() + std::time::Duration::from_millis(1500));
+                            // Start auto-submit timer
+                            auto_submit_deadline = Some(tokio::time::Instant::now() + auto_submit_delay);
                         }
                     }
                 }

@@ -5,6 +5,7 @@ use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{self, ClearType};
 use crossterm::{cursor, execute, queue};
 use std::io::{self, stdout, Write};
+use unicode_width::UnicodeWidthStr;
 
 pub struct Tui {
     preview: String,
@@ -75,7 +76,7 @@ impl Tui {
                 // Green ">" prompt, white text
                 self.print_content(&format!("\x1b[32m>\x1b[0m {}", text))?;
                 self.preview.clear();
-                self.status = "⏸ Idle".to_string();
+                self.status = "⏳ Sending...".to_string();
             }
             UiEvent::Thinking => {
                 self.status = "💭 Thinking".to_string();
@@ -130,16 +131,16 @@ impl Tui {
 
         let mut out = stdout();
 
-        // Go to status start and clear
+        // Go to start and clear (2 lines: status + prompt)
         queue!(out, cursor::Hide)?;
         if self.status_drawn {
             queue!(out, cursor::MoveUp(1))?;
         }
         queue!(out, cursor::MoveToColumn(0), terminal::Clear(ClearType::FromCursorDown))?;
 
-        // Status line
+        // Status line (dim, above prompt)
         let status = format!(
-            "\x1b[7m {} │ 📝 {} │ 💬 {} \x1b[0m",
+            "\x1b[90m{} │ 📝 {} │ 💬 {}\x1b[0m",
             self.status, self.context_words, self.last_response_words
         );
 
@@ -152,14 +153,14 @@ impl Tui {
         let cursor_offset = if self.preview.is_empty() {
             2 // "> "
         } else {
-            self.preview.len() + 4 // preview + " > "
+            self.preview.width() + 4 // preview + " > "
         };
 
         queue!(out,
             crossterm::style::Print(&status),
             crossterm::style::Print("\r\n"),
             crossterm::style::Print(&prompt),
-            cursor::MoveToColumn((cursor_offset + self.cursor_pos) as u16),
+            cursor::MoveToColumn((cursor_offset + self.cursor_display_width()) as u16),
             cursor::Show,
         )?;
         out.flush()?;
@@ -187,20 +188,23 @@ impl Tui {
                     }
                 }
                 KeyCode::Char(c) => {
-                    self.input.insert(self.cursor_pos, c);
+                    let byte_pos = self.char_to_byte_index(self.cursor_pos);
+                    self.input.insert(byte_pos, c);
                     self.cursor_pos += 1;
                 }
                 KeyCode::Backspace if self.cursor_pos > 0 => {
                     self.cursor_pos -= 1;
-                    self.input.remove(self.cursor_pos);
+                    let byte_pos = self.char_to_byte_index(self.cursor_pos);
+                    self.input.remove(byte_pos);
                 }
-                KeyCode::Delete if self.cursor_pos < self.input.len() => {
-                    self.input.remove(self.cursor_pos);
+                KeyCode::Delete if self.cursor_pos < self.char_count() => {
+                    let byte_pos = self.char_to_byte_index(self.cursor_pos);
+                    self.input.remove(byte_pos);
                 }
                 KeyCode::Left => self.cursor_pos = self.cursor_pos.saturating_sub(1),
-                KeyCode::Right if self.cursor_pos < self.input.len() => self.cursor_pos += 1,
+                KeyCode::Right if self.cursor_pos < self.char_count() => self.cursor_pos += 1,
                 KeyCode::Home => self.cursor_pos = 0,
-                KeyCode::End => self.cursor_pos = self.input.len(),
+                KeyCode::End => self.cursor_pos = self.char_count(),
                 _ => {}
             }
         }
@@ -209,7 +213,28 @@ impl Tui {
 
     pub fn set_input(&mut self, text: &str) {
         self.input = text.to_string();
-        self.cursor_pos = self.input.len();
+        self.cursor_pos = self.char_count();
+    }
+
+    /// Convert character index to byte index
+    fn char_to_byte_index(&self, char_idx: usize) -> usize {
+        self.input.char_indices()
+            .nth(char_idx)
+            .map(|(i, _)| i)
+            .unwrap_or(self.input.len())
+    }
+
+    /// Get character count
+    fn char_count(&self) -> usize {
+        self.input.chars().count()
+    }
+
+    /// Get display width up to cursor position
+    fn cursor_display_width(&self) -> usize {
+        self.input.chars()
+            .take(self.cursor_pos)
+            .collect::<String>()
+            .width()
     }
 
     pub fn set_ready(&mut self) {

@@ -1,6 +1,6 @@
 # silly-ai
 
-"Hey Silly" is a voice-first AI chat CLI using real-time speech transcription, Ollama, and TTS. It allows answering questions from LLM while completely offline, making this a good replacement for cloud based personal assistants like Siri, Alexa, Google, ChatGPT if you are ever concerned about sending anything over the internet.
+"Hey Silly" is a CLI based AI voice chat assistant using real-time speech transcription, Ollama, and TTS. It allows answering questions from LLM while completely offline, making this a good replacement for cloud based personal assistants like Siri, Alexa, Google, ChatGPT if you are ever concerned about sending anything over the internet.
 
 ## Features
 
@@ -11,6 +11,9 @@
 - Text-to-speech with [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M) or [Supertonic](https://github.com/supertone-inc/supertonic)
 - Streaming TTS: speech starts as soon as the first sentence is generated
 - Multi-threaded architecture: separate threads for audio capture, VAD, preview transcription, and final transcription
+
+## Demo
+[demo](https://x.com/BlurSpline/status/2004470406435295742?s=20)
 
 ## Architecture
 

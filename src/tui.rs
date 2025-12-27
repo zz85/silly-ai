@@ -31,6 +31,7 @@ pub struct Tui {
     ready: bool,
     spinner_type: SpinnerType,
     spin_frame: usize,
+    audio_level: f32,
 }
 
 impl Tui {
@@ -49,6 +50,7 @@ impl Tui {
             ready: false,
             spinner_type: SpinnerType::Dots,
             spin_frame: 0,
+            audio_level: 0.0,
         })
     }
 
@@ -172,8 +174,9 @@ impl Tui {
                 format!("\x1b[95m{}\x1b[90m ", MUSIC[self.spin_frame])
             }
             SpinnerType::Bars => {
-                self.spin_frame = (self.spin_frame + 1) % BARS.len();
-                format!("\x1b[92m{}\x1b[90m ", BARS[self.spin_frame])
+                // Use audio level to select bar height
+                let idx = ((self.audio_level * 50.0).min(1.0) * (BARS.len() - 1) as f32) as usize;
+                format!("\x1b[92m{}\x1b[90m ", BARS[idx])
             }
         };
         let status = format!(
@@ -281,6 +284,10 @@ impl Tui {
 
     pub fn set_last_response_words(&mut self, words: usize) {
         self.last_response_words = words;
+    }
+
+    pub fn set_audio_level(&mut self, level: f32) {
+        self.audio_level = level;
     }
 }
 

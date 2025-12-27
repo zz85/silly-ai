@@ -295,7 +295,9 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             // Audio transcription events
             Some(event) = async_display_rx.recv() => {
                 match event {
-                    DisplayEvent::AudioLevel(_) => {}
+                    DisplayEvent::AudioLevel(level) => {
+                        tui.set_audio_level(level);
+                    }
                     DisplayEvent::Preview(text) => {
                         repl::handle_transcript(
                             TranscriptEvent::Preview(text),

@@ -208,10 +208,14 @@ impl Tui {
             if self.tts_enabled { "🔊" } else { "🔈" },
             if self.wake_enabled { "👂" } else { "💤" },
         );
-        let status = format!(
-            "\x1b[90m{}{} │ {} │ 📝 {} │ 💬 {}\x1b[0m",
+        let status_content = format!(
+            "{}{} │ {} │ 📝 {} │ 💬 {}",
             spinner_str, self.status, toggles, self.context_words, self.last_response_words
         );
+        let term_width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+        let status_width = status_content.width();
+        let padding = if term_width > status_width { (term_width - status_width) / 2 } else { 0 };
+        let status = format!("\x1b[90m{}{}\x1b[0m", " ".repeat(padding), status_content);
 
         // Input line with optional preview and auto-submit timer
         let timer_bar = if let Some(progress) = self.auto_submit_progress {

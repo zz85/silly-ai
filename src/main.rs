@@ -232,8 +232,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut last_interaction: Option<std::time::Instant> = None;
     let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
 
-    let mut pending_command: Option<String> = None;
-    let mut pending_deadline: Option<tokio::time::Instant> = None;
+    let mut auto_submit_deadline: Option<tokio::time::Instant> = None;
 
     // Initial greeting
     let _ = session_tx.send(session::SessionCommand::Greet);
@@ -304,10 +303,10 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             &wake_word,
                             last_interaction,
                             wake_timeout,
-                            &mut pending_command,
-                            &mut pending_deadline,
                             &ui,
                         );
+                        // Cancel auto-submit on preview activity
+                        auto_submit_deadline = None;
                     }
                     DisplayEvent::Final(text) => {
                         if let Some(input_text) = repl::handle_transcript(
@@ -315,11 +314,11 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             &wake_word,
                             last_interaction,
                             wake_timeout,
-                            &mut pending_command,
-                            &mut pending_deadline,
                             &ui,
                         ) {
                             tui.append_input(&input_text);
+                            // Start/reset auto-submit timer
+                            auto_submit_deadline = Some(tokio::time::Instant::now() + std::time::Duration::from_millis(1500));
                         }
                     }
                 }
@@ -331,10 +330,9 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     if line == "\x03" {
                         break;
                     }
-                    pending_command = None;
-                    pending_deadline = None;
+                    // Cancel auto-submit on manual submit
+                    auto_submit_deadline = None;
                     ui.show_final(&line);
-                    // Process and draw immediately
                     while let Ok(event) = async_ui_rx.try_recv() {
                         tui.handle_ui_event(event)?;
                     }
@@ -343,11 +341,25 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     continue;
                 }
 
-                // Check voice command timeout (clear pending, input already has text)
-                if let Some(deadline) = pending_deadline {
+                // Cancel auto-submit timer on any keypress
+                if tui.has_input_activity() {
+                    auto_submit_deadline = None;
+                }
+
+                // Check auto-submit timeout
+                if let Some(deadline) = auto_submit_deadline {
                     if tokio::time::Instant::now() >= deadline {
-                        pending_command = None;
-                        pending_deadline = None;
+                        auto_submit_deadline = None;
+                        if let Some(line) = tui.take_input() {
+                            if !line.is_empty() {
+                                ui.show_final(&line);
+                                while let Ok(event) = async_ui_rx.try_recv() {
+                                    tui.handle_ui_event(event)?;
+                                }
+                                tui.draw()?;
+                                let _ = session_tx.send(session::SessionCommand::UserInput(line));
+                            }
+                        }
                     }
                 }
 

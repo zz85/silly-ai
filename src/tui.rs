@@ -32,6 +32,7 @@ pub struct Tui {
     spinner_type: SpinnerType,
     spin_frame: usize,
     audio_level: f32,
+    input_activity: bool,
 }
 
 impl Tui {
@@ -51,6 +52,7 @@ impl Tui {
             spinner_type: SpinnerType::Dots,
             spin_frame: 0,
             audio_level: 0.0,
+            input_activity: false,
         })
     }
 
@@ -231,15 +233,18 @@ impl Tui {
                     let byte_pos = self.char_to_byte_index(self.cursor_pos);
                     self.input.insert(byte_pos, c);
                     self.cursor_pos += 1;
+                    self.input_activity = true;
                 }
                 KeyCode::Backspace if self.cursor_pos > 0 => {
                     self.cursor_pos -= 1;
                     let byte_pos = self.char_to_byte_index(self.cursor_pos);
                     self.input.remove(byte_pos);
+                    self.input_activity = true;
                 }
                 KeyCode::Delete if self.cursor_pos < self.char_count() => {
                     let byte_pos = self.char_to_byte_index(self.cursor_pos);
                     self.input.remove(byte_pos);
+                    self.input_activity = true;
                 }
                 KeyCode::Left => self.cursor_pos = self.cursor_pos.saturating_sub(1),
                 KeyCode::Right if self.cursor_pos < self.char_count() => self.cursor_pos += 1,
@@ -296,6 +301,24 @@ impl Tui {
 
     pub fn set_audio_level(&mut self, level: f32) {
         self.audio_level = level;
+    }
+
+    /// Check if there was input activity (keypress) since last call
+    pub fn has_input_activity(&mut self) -> bool {
+        let activity = self.input_activity;
+        self.input_activity = false;
+        activity
+    }
+
+    /// Take the current input and clear it
+    pub fn take_input(&mut self) -> Option<String> {
+        if self.input.is_empty() {
+            None
+        } else {
+            let text = std::mem::take(&mut self.input);
+            self.cursor_pos = 0;
+            Some(text)
+        }
     }
 }
 

@@ -65,12 +65,8 @@ pub fn handle_transcript(
     wake_word: &WakeWord,
     last_interaction: Option<Instant>,
     wake_timeout: Duration,
-    pending: &mut Option<String>,
-    deadline: &mut Option<tokio::time::Instant>,
     ui: &Ui,
 ) -> Option<String> {
-    const EDIT_DELAY: Duration = Duration::from_millis(800);
-
     match event {
         TranscriptEvent::Preview(text) => {
             ui.set_preview(text);
@@ -96,16 +92,6 @@ pub fn handle_transcript(
                 return None;
             }
 
-            // Append to pending buffer (for timeout tracking)
-            if let Some(p) = pending {
-                p.push(' ');
-                p.push_str(&command);
-            } else {
-                *pending = Some(command.clone());
-            }
-            *deadline = Some(tokio::time::Instant::now() + EDIT_DELAY);
-
-            // Return just the new command to append to input
             Some(command)
         }
     }

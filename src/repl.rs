@@ -14,14 +14,14 @@ pub enum TranscriptEvent {
     Final(String),
 }
 
-/// Process a command: send to LLM, stream response, play TTS
+/// Process a command: send to LLM, stream response, return sink for playback
 pub async fn process_command(
     command: &str,
     tts_playing: &Arc<AtomicBool>,
     tts_engine: &Tts,
     chat: &mut Chat,
     ui: &Ui,
-) -> Option<Instant> {
+) -> Option<(rodio::OutputStream, rodio::Sink)> {
     tts_playing.store(true, Ordering::SeqCst);
     ui.set_thinking();
 
@@ -42,11 +42,8 @@ pub async fn process_command(
             }
             ui.end_response();
             ui.set_context_words(chat.context_words());
-
             ui.set_speaking();
-            wait_for_playback(&sink);
-            Tts::finish(stream, sink);
-            ui.speaking_done();
+            Some((stream, sink))
         }
         Err(e) => {
             eprintln!("Audio error: {}", e);
@@ -56,17 +53,9 @@ pub async fn process_command(
                 .await;
             ui.end_response();
             ui.set_context_words(chat.context_words());
+            tts_playing.store(false, Ordering::SeqCst);
+            None
         }
-    }
-
-    tts_playing.store(false, Ordering::SeqCst);
-    Some(Instant::now())
-}
-
-/// Wait for TTS playback (no key handling in TUI mode - handled by main loop)
-fn wait_for_playback(sink: &rodio::Sink) {
-    while !sink.empty() {
-        std::thread::sleep(Duration::from_millis(50));
     }
 }
 

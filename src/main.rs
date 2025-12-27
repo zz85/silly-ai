@@ -206,11 +206,35 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Initialize TUI
     let mut tui = tui::Tui::new()?;
+    tui.draw()?;
 
-    // Initial greeting
+    let mut last_interaction: Option<std::time::Instant> = None;
+    let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
+
+    let mut pending_command: Option<String> = None;
+    let mut pending_deadline: Option<tokio::time::Instant> = None;
+
+    // Initial greeting (non-blocking render loop)
     tts_playing.store(true, Ordering::Relaxed);
     if let Ok((stream, sink)) = tts::Tts::create_sink() {
         ui.set_thinking();
+
+        // Process events during greeting
+        let mut process_ui = || -> std::io::Result<bool> {
+            while let Ok(event) = ui_rx.try_recv() {
+                tui.handle_ui_event(event)?;
+            }
+            tui.draw()?;
+            if let Some(line) = tui.poll_input()? {
+                if line == "\x03" {
+                    return Ok(true); // quit
+                }
+            }
+            Ok(false)
+        };
+
+        // Draw initial thinking state
+        process_ui()?;
 
         let ui_greet = ui.clone();
         let greeting_result = ollama_chat
@@ -222,20 +246,14 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             )
             .await;
 
-        // Process UI events
-        while let Ok(event) = ui_rx.try_recv() {
-            tui.handle_ui_event(event)?;
-        }
-        tui.draw()?;
-
         if greeting_result.is_ok() {
             ui.end_response();
             ui.set_speaking();
             while !sink.empty() {
-                while let Ok(event) = ui_rx.try_recv() {
-                    tui.handle_ui_event(event)?;
+                if process_ui()? {
+                    drop(tui);
+                    return Ok(());
                 }
-                tui.draw()?;
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
             tts::Tts::finish(stream, sink);
@@ -244,16 +262,25 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
     tts_playing.store(false, Ordering::Relaxed);
 
-    let mut last_interaction: Option<std::time::Instant> = None;
-    let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
-
-    let mut pending_command: Option<String> = None;
-    let mut pending_deadline: Option<tokio::time::Instant> = None;
+    // Active TTS playback (if any)
+    let mut active_playback: Option<(rodio::OutputStream, rodio::Sink)> = None;
 
     loop {
         // Process UI events
         while let Ok(event) = ui_rx.try_recv() {
             tui.handle_ui_event(event)?;
+        }
+
+        // Check active playback
+        if let Some((stream, sink)) = active_playback.take() {
+            if sink.empty() {
+                tts::Tts::finish(stream, sink);
+                ui.speaking_done();
+                tts_playing.store(false, Ordering::Relaxed);
+                last_interaction = Some(std::time::Instant::now());
+            } else {
+                active_playback = Some((stream, sink));
+            }
         }
 
         // Draw
@@ -269,9 +296,11 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             pending_deadline = None;
 
             ui.show_final(&line);
-            last_interaction = repl::process_command(
+            if let Some(playback) = repl::process_command(
                 &line, &tts_playing, &tts_engine, &mut ollama_chat, &ui
-            ).await;
+            ).await {
+                active_playback = Some(playback);
+            }
             continue;
         }
 

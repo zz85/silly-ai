@@ -264,8 +264,9 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     session::SessionEvent::Chunk(text) => {
                         ui.append_response(&text);
                     }
-                    session::SessionEvent::ResponseEnd => {
+                    session::SessionEvent::ResponseEnd { response_words } => {
                         ui.end_response();
+                        tui.set_last_response_words(response_words);
                     }
                     session::SessionEvent::Speaking => {
                         ui.set_speaking();

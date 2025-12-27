@@ -15,7 +15,7 @@ pub enum SessionCommand {
 pub enum SessionEvent {
     Thinking,
     Chunk(String),
-    ResponseEnd,
+    ResponseEnd { response_words: usize },
     Speaking,
     SpeakingDone,
     ContextWords(usize),
@@ -97,7 +97,8 @@ impl SessionManager {
             }
         }
 
-        let _ = self.event_tx.send(SessionEvent::ResponseEnd);
+        let response_words = full_response.split_whitespace().count();
+        let _ = self.event_tx.send(SessionEvent::ResponseEnd { response_words });
         let _ = self.event_tx.send(SessionEvent::ContextWords(self.chat.context_words()));
 
         // Now create audio and play TTS

@@ -10,6 +10,7 @@ pub struct Tui {
     preview: String,
     status: String,
     context_words: usize,
+    last_response_words: usize,
     input: String,
     cursor_pos: usize,
     status_drawn: bool,
@@ -25,6 +26,7 @@ impl Tui {
             preview: String::new(),
             status: "⏳ Loading".to_string(),
             context_words: 0,
+            last_response_words: 0,
             input: String::new(),
             cursor_pos: 0,
             status_drawn: false,
@@ -70,7 +72,8 @@ impl Tui {
                 self.status = "🎤 Listening".to_string();
             }
             UiEvent::Final(text) => {
-                self.print_content(&format!("\x1b[32m> {}\x1b[0m", text))?;
+                // Green ">" prompt, white text
+                self.print_content(&format!("\x1b[32m>\x1b[0m {}", text))?;
                 self.preview.clear();
                 self.status = "⏸ Idle".to_string();
             }
@@ -85,7 +88,7 @@ impl Tui {
                 self.status = "✓ Ready".to_string();
             }
             UiEvent::ResponseChunk(text) => {
-                // Clear status area once, then stream inline
+                // Clear status area once, then stream inline (no color)
                 if self.status_drawn {
                     let mut out = stdout();
                     queue!(out, cursor::MoveUp(1), cursor::MoveToColumn(0))?;
@@ -93,12 +96,15 @@ impl Tui {
                     out.flush()?;
                     self.status_drawn = false;
                 }
+                if !self.responding {
+                    println!(); // newline before response
+                }
                 self.responding = true;
-                print!("\x1b[36m{}\x1b[0m", text);
+                print!("{}", text);
                 stdout().flush()?;
             }
             UiEvent::ResponseEnd => {
-                println!("\x1b[0m");
+                println!("\n"); // newline after response
                 self.status = "⏸ Idle".to_string();
                 self.status_drawn = false;
                 self.responding = false;
@@ -132,13 +138,16 @@ impl Tui {
         queue!(out, cursor::MoveToColumn(0), terminal::Clear(ClearType::FromCursorDown))?;
 
         // Status line
-        let status = format!("\x1b[7m {} | ~{} words \x1b[0m", self.status, self.context_words);
+        let status = format!(
+            "\x1b[7m {} │ 📝 {} │ 💬 {} \x1b[0m",
+            self.status, self.context_words, self.last_response_words
+        );
 
         // Input line with optional preview
         let prompt = if self.preview.is_empty() {
-            format!("> {}", self.input)
+            format!("\x1b[32m>\x1b[0m {}", self.input)
         } else {
-            format!("\x1b[90m{}\x1b[0m > {}", self.preview, self.input)
+            format!("\x1b[90m{}\x1b[0m \x1b[32m>\x1b[0m {}", self.preview, self.input)
         };
         let cursor_offset = if self.preview.is_empty() {
             2 // "> "
@@ -206,6 +215,10 @@ impl Tui {
     pub fn set_ready(&mut self) {
         self.ready = true;
         self.status = "✓ Ready".to_string();
+    }
+
+    pub fn set_last_response_words(&mut self, words: usize) {
+        self.last_response_words = words;
     }
 }
 

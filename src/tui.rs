@@ -27,6 +27,7 @@ pub struct Tui {
     input: String,
     cursor_pos: usize,
     status_drawn: bool,
+    last_drawn_lines: usize, // track how many lines were drawn
     responding: bool,
     ready: bool,
     spinner_type: SpinnerType,
@@ -51,6 +52,7 @@ impl Tui {
             input: String::new(),
             cursor_pos: 0,
             status_drawn: false,
+            last_drawn_lines: 0,
             responding: false,
             ready: false,
             spinner_type: SpinnerType::Dots,
@@ -87,12 +89,11 @@ impl Tui {
         Ok(())
     }
 
-    /// Move cursor to start of status area (2 lines: status + input)
+    /// Move cursor to start of status area
     fn goto_status_start(&self) -> io::Result<()> {
         let mut out = stdout();
-        if self.status_drawn {
-            // We're at end of input line, go up 1 to status line, column 0
-            queue!(out, cursor::MoveUp(1), cursor::MoveToColumn(0))?;
+        if self.status_drawn && self.last_drawn_lines > 0 {
+            queue!(out, cursor::MoveUp(self.last_drawn_lines as u16), cursor::MoveToColumn(0))?;
         }
         out.flush()
     }
@@ -100,13 +101,14 @@ impl Tui {
     /// Print scrolling content (clears status, prints, marks status not drawn)
     fn print_content(&mut self, text: &str) -> io::Result<()> {
         let mut out = stdout();
-        if self.status_drawn {
-            queue!(out, cursor::MoveUp(1), cursor::MoveToColumn(0))?;
+        if self.status_drawn && self.last_drawn_lines > 0 {
+            queue!(out, cursor::MoveUp(self.last_drawn_lines as u16), cursor::MoveToColumn(0))?;
             queue!(out, terminal::Clear(ClearType::FromCursorDown))?;
         }
         queue!(out, crossterm::style::Print(text), crossterm::style::Print("\r\n"))?;
         out.flush()?;
         self.status_drawn = false;
+        self.last_drawn_lines = 0;
         Ok(())
     }
 
@@ -177,11 +179,12 @@ impl Tui {
         }
 
         let mut out = stdout();
+        let term_width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
 
-        // Go to start and clear (2 lines: status + prompt)
+        // Go to start and clear
         queue!(out, cursor::Hide)?;
-        if self.status_drawn {
-            queue!(out, cursor::MoveUp(1))?;
+        if self.status_drawn && self.last_drawn_lines > 0 {
+            queue!(out, cursor::MoveUp(self.last_drawn_lines as u16))?;
         }
         queue!(out, cursor::MoveToColumn(0), terminal::Clear(ClearType::FromCursorDown))?;
 
@@ -212,7 +215,6 @@ impl Tui {
             "{}{} │ {} │ 📝 {} │ 💬 {}",
             spinner_str, self.status, toggles, self.context_words, self.last_response_words
         );
-        let term_width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
         let status_width = status_content.width();
         let padding = if term_width > status_width { (term_width - status_width) / 2 } else { 0 };
         let status = format!("\x1b[90m{}{}\x1b[0m", " ".repeat(padding), status_content);
@@ -245,6 +247,16 @@ impl Tui {
         } else {
             self.preview.width() + 4 + if self.auto_submit_progress.is_some() { 6 } else { 0 }
         };
+
+        // Calculate how many lines the prompt takes (visible width, not including ANSI codes)
+        let prompt_visible_width = cursor_offset + self.input.width();
+        let prompt_lines = if term_width > 0 && prompt_visible_width > 0 { 
+            (prompt_visible_width + term_width - 1) / term_width 
+        } else { 
+            1 
+        };
+        // Cursor is at end of input, need to go up: (prompt_lines - 1) to get to first prompt line, +1 for status
+        self.last_drawn_lines = prompt_lines; // lines below status line
 
         queue!(out,
             crossterm::style::Print(&status),

@@ -96,7 +96,7 @@ fn default_supertonic_voice_style() -> String {
     "models/supertonic/voice_styles/M1.json".into()
 }
 fn default_tts_speed() -> f32 {
-    1.0
+    1.1
 }
 
 impl Config {

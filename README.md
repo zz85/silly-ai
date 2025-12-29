@@ -93,6 +93,19 @@ AUDIOPUS_SYS_USE_PKG_CONFIG=1 cargo build --release --no-default-features --feat
 cargo build --release --features kokoro
 ```
 
+## CLI Commands
+
+```bash
+# Full voice assistant mode (default)
+silly
+
+# Transcription-only mode (no LLM/TTS)
+silly transcribe
+
+# Test UI rendering without audio
+silly test-ui [scene]  # scenes: idle, preview, thinking, speaking, response, all
+```
+
 ## Usage
 
 Say the wake word ("Hey Silly" by default) to activate, then speak your question. The CLI will:
@@ -103,7 +116,20 @@ Say the wake word ("Hey Silly" by default) to activate, then speak your question
 
 After responding, the assistant listens for follow-up questions for 30 seconds (configurable) before requiring the wake word again.
 
+### Keyboard Commands
+
+- `/mute` or `/mic` - Toggle microphone mute
+- `/speak` or `/tts` - Toggle TTS output
+- `/wake` - Toggle wake word requirement
+- Type text and press Enter to submit directly (bypasses transcription)
+
+### Auto-Submit
+
+Voice input auto-submits after 2 seconds of silence, showing a progress bar. Any typing or new speech cancels the timer.
+
 Press `Ctrl+C` to stop.
+
+The assistant greets you on startup when in full mode.
 
 ## Configuration
 
@@ -116,8 +142,9 @@ wake_timeout_secs = 30
 
 [tts]
 engine = "supertonic"
-onnx_dir = "models/supertonic/assets/onnx"
-voice_style = "models/supertonic/assets/voice_styles/F2.json"
+onnx_dir = "models/supertonic/onnx"
+voice_style = "models/supertonic/voice_styles/M1.json"
+speed = 1.1  # Optional: 0.5 to 2.0 (default: 1.1)
 ```
 
 Or for Kokoro TTS:
@@ -126,6 +153,7 @@ Or for Kokoro TTS:
 engine = "kokoro"
 model = "models/kokoro-v1.0.onnx"
 voices = "models/voices-v1.0.bin"
+speed = 1.1  # Optional: 0.5 to 2.0 (default: 1.1)
 ```
 
 Other settings:

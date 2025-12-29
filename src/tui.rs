@@ -293,10 +293,52 @@ impl Tui {
                     }
                 }
                 KeyCode::Char(c) => {
-                    let byte_pos = self.char_to_byte_index(self.cursor_pos);
-                    self.input.insert(byte_pos, c);
-                    self.cursor_pos += 1;
-                    self.input_activity = true;
+                    if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        match c {
+                            'a' => self.cursor_pos = 0,
+                            'e' => self.cursor_pos = self.char_count(),
+                            'k' => {
+                                if self.cursor_pos < self.char_count() {
+                                    let byte_pos = self.char_to_byte_index(self.cursor_pos);
+                                    self.input.truncate(byte_pos);
+                                    self.input_activity = true;
+                                }
+                            }
+                            'u' => {
+                                if self.cursor_pos > 0 {
+                                    let byte_pos = self.char_to_byte_index(self.cursor_pos);
+                                    self.input = self.input[byte_pos..].to_string();
+                                    self.cursor_pos = 0;
+                                    self.input_activity = true;
+                                }
+                            }
+                            'w' => {
+                                if self.cursor_pos > 0 {
+                                    let chars: Vec<char> = self.input.chars().collect();
+                                    let mut end = self.cursor_pos;
+
+                                    while end > 0 && chars[end - 1].is_whitespace() {
+                                        end -= 1;
+                                    }
+                                    while end > 0 && !chars[end - 1].is_whitespace() {
+                                        end -= 1;
+                                    }
+
+                                    let start_byte = self.char_to_byte_index(end);
+                                    let end_byte = self.char_to_byte_index(self.cursor_pos);
+                                    self.input.replace_range(start_byte..end_byte, "");
+                                    self.cursor_pos = end;
+                                    self.input_activity = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        let byte_pos = self.char_to_byte_index(self.cursor_pos);
+                        self.input.insert(byte_pos, c);
+                        self.cursor_pos += 1;
+                        self.input_activity = true;
+                    }
                 }
                 KeyCode::Backspace if self.cursor_pos > 0 => {
                     self.cursor_pos -= 1;

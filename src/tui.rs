@@ -271,35 +271,42 @@ impl Tui {
     }
 
     pub fn poll_input(&mut self) -> io::Result<Option<String>> {
-        if !event::poll(std::time::Duration::from_millis(10))? {
-            return Ok(None);
-        }
+        let mut pending_submit = None;
 
-        if let Event::Key(key) = event::read()? {
-            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                return Ok(Some("\x03".to_string()));
-            }
-            if key.code == KeyCode::Char('m') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                return Ok(Some("/mute".to_string()));
-            }
-
-            match key.code {
-                KeyCode::Enter => {
-                    let text = self.input.trim().to_string();
-                    self.input.clear();
-                    self.cursor_pos = 0;
-                    if !text.is_empty() {
-                        return Ok(Some(text));
-                    }
+        while event::poll(std::time::Duration::from_millis(0))? {
+            if let Event::Key(key) = event::read()? {
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    return Ok(Some("\x03".to_string()));
                 }
-                KeyCode::Char(c) => {
-                    if key.modifiers.contains(KeyModifiers::CONTROL) {
-                        match c {
-                            'a' => self.cursor_pos = 0,
-                            'e' => self.cursor_pos = self.char_count(),
-                            'k' => {
-                                if self.cursor_pos < self.char_count() {
-                                    let byte_pos = self.char_to_byte_index(self.cursor_pos);
+                if key.code == KeyCode::Char('m') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    return Ok(Some("/mute".to_string()));
+                }
+
+                match key.code {
+                    KeyCode::Enter => {
+                        if event::poll(std::time::Duration::from_millis(0))? {
+                            // More events pending - this Enter is part of paste, insert newline
+                            let byte_pos = self.char_to_byte_index(self.cursor_pos);
+                            self.input.insert(byte_pos, '\n');
+                            self.cursor_pos += 1;
+                            self.input_activity = true;
+                            pending_submit = None; // Clear any pending submit
+                        } else {
+                            // No more events yet - queue submit
+                            let text = self.input.trim().to_string();
+                            self.input.clear();
+                            self.cursor_pos = 0;
+                            pending_submit = if !text.is_empty() { Some(text) } else { None };
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                        if key.modifiers.contains(KeyModifiers::CONTROL) {
+                            match c {
+                                'a' => self.cursor_pos = 0,
+                                'e' => self.cursor_pos = self.char_count(),
+                                'k' => {
+                                    if self.cursor_pos < self.char_count() {
+                                        let byte_pos = self.char_to_byte_index(self.cursor_pos);
                                     self.input.truncate(byte_pos);
                                     self.input_activity = true;
                                 }
@@ -351,14 +358,16 @@ impl Tui {
                     self.input.remove(byte_pos);
                     self.input_activity = true;
                 }
-                KeyCode::Left => self.cursor_pos = self.cursor_pos.saturating_sub(1),
-                KeyCode::Right if self.cursor_pos < self.char_count() => self.cursor_pos += 1,
-                KeyCode::Home => self.cursor_pos = 0,
-                KeyCode::End => self.cursor_pos = self.char_count(),
-                _ => {}
+                    KeyCode::Left => self.cursor_pos = self.cursor_pos.saturating_sub(1),
+                    KeyCode::Right if self.cursor_pos < self.char_count() => self.cursor_pos += 1,
+                    KeyCode::Home => self.cursor_pos = 0,
+                    KeyCode::End => self.cursor_pos = self.char_count(),
+                    _ => {}
+                }
             }
         }
-        Ok(None)
+
+        Ok(pending_submit)
     }
 
     pub fn set_input(&mut self, text: &str) {

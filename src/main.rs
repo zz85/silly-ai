@@ -341,43 +341,51 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
             // Periodic: keyboard input, deadline check, redraw
             _ = tokio::time::sleep(std::time::Duration::from_millis(16)) => {
-                // Poll keyboard input
-                if let Some(line) = tui.poll_input()? {
-                    if line == "\x03" {
-                        break;
+                // Poll keyboard input - drain all available events before redrawing
+                let mut should_break = false;
+                loop {
+                    match tui.poll_input()? {
+                        None => break,
+                        Some(line) => {
+                            if line == "\x03" {
+                                should_break = true;
+                                break;
+                            }
+                            if line == "/mute" || line == "/mic" {
+                                let muted = !mic_muted.load(Ordering::SeqCst);
+                                mic_muted.store(muted, Ordering::SeqCst);
+                                tui.set_mic_muted(muted);
+                                continue;
+                            }
+                            if line == "/speak" || line == "/tts" {
+                                let enabled = !tts_enabled.load(Ordering::SeqCst);
+                                tts_enabled.store(enabled, Ordering::SeqCst);
+                                tui.set_tts_enabled(enabled);
+                                continue;
+                            }
+                            if line == "/wake" {
+                                let enabled = !wake_enabled.load(Ordering::SeqCst);
+                                wake_enabled.store(enabled, Ordering::SeqCst);
+                                tui.set_wake_enabled(enabled);
+                                continue;
+                            }
+                            // Cancel auto-submit on manual submit
+                            auto_submit_deadline = None;
+                            // Cancel any in-progress response
+                            let _ = session_tx.send(session::SessionCommand::Cancel);
+                            ui.show_final(&line);
+                            let _ = session_tx.send(session::SessionCommand::UserInput(line));
+                            break;
+                        }
                     }
-                    if line == "/mute" || line == "/mic" {
-                        let muted = !mic_muted.load(Ordering::SeqCst);
-                        mic_muted.store(muted, Ordering::SeqCst);
-                        tui.set_mic_muted(muted);
-                        tui.draw()?;
-                        continue;
-                    }
-                    if line == "/speak" || line == "/tts" {
-                        let enabled = !tts_enabled.load(Ordering::SeqCst);
-                        tts_enabled.store(enabled, Ordering::SeqCst);
-                        tui.set_tts_enabled(enabled);
-                        tui.draw()?;
-                        continue;
-                    }
-                    if line == "/wake" {
-                        let enabled = !wake_enabled.load(Ordering::SeqCst);
-                        wake_enabled.store(enabled, Ordering::SeqCst);
-                        tui.set_wake_enabled(enabled);
-                        tui.draw()?;
-                        continue;
-                    }
-                    // Cancel auto-submit on manual submit
-                    auto_submit_deadline = None;
-                    // Cancel any in-progress response
-                    let _ = session_tx.send(session::SessionCommand::Cancel);
-                    ui.show_final(&line);
-                    while let Ok(event) = async_ui_rx.try_recv() {
-                        tui.handle_ui_event(event)?;
-                    }
-                    tui.draw()?;
-                    let _ = session_tx.send(session::SessionCommand::UserInput(line));
-                    continue;
+                }
+                if should_break {
+                    break;
+                }
+
+                // Process pending UI events and draw
+                while let Ok(ui_event) = async_ui_rx.try_recv() {
+                    tui.handle_ui_event(ui_event)?;
                 }
 
                 // Cancel auto-submit timer on any keypress

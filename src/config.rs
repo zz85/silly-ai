@@ -12,6 +12,8 @@ pub struct Config {
     pub wake_timeout_secs: u64,
     #[serde(default)]
     pub tts: TtsConfig,
+    #[serde(default)]
+    pub acceleration: AccelerationConfig,
 }
 
 impl Default for Config {
@@ -21,8 +23,25 @@ impl Default for Config {
             wake_word: default_wake_word(),
             wake_timeout_secs: default_wake_timeout(),
             tts: TtsConfig::default(),
+            acceleration: AccelerationConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct AccelerationConfig {
+    #[serde(default = "default_tts_gpu")]
+    pub tts_gpu: bool,
+    #[serde(default = "default_vad_gpu")]
+    pub vad_gpu: bool,
+}
+
+fn default_tts_gpu() -> bool {
+    true
+}
+
+fn default_vad_gpu() -> bool {
+    false
 }
 
 fn default_name() -> String {

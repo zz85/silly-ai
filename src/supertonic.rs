@@ -283,13 +283,20 @@ pub fn load_text_to_speech<P: AsRef<Path>>(
 
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     let create_session = |model_path: &std::path::PathBuf, model_name: &str| -> ort::Result<Session> {
-        let builder = Session::builder()?;
         if use_gpu {
-            Session::builder()?.with_execution_providers([
-                CoreMLExecutionProvider::default()
-                    .with_subgraphs(true)
-                    .build()
-            ])?.commit_from_file(model_path)
+            println!("Loading {} with CoreML...", model_name);
+            match Session::builder()?
+                .with_execution_providers([
+                    CoreMLExecutionProvider::default()
+                        .with_subgraphs(true)
+                        .build()
+                ]) {
+                Ok(builder) => builder.commit_from_file(model_path),
+                Err(e) => {
+                    eprintln!("CoreML EP failed for {}, falling back to CPU: {}", model_name, e);
+                    Session::builder()?.commit_from_file(model_path)
+                }
+            }
         } else {
             Session::builder()?.commit_from_file(model_path)
         }

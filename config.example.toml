@@ -7,11 +7,19 @@ wake_timeout_secs = 30
 
 [tts]
 engine = "supertonic"
-onnx_dir = "models/supertonic/assets/onnx"
-voice_style = "models/supertonic/assets/voice_styles/M1.json"
+onnx_dir = "models/supertonic/onnx"
+voice_style = "models/supertonic/voice_styles/M1.json"
+
+# Hardware acceleration (CoreML on Apple Silicon)
+[acceleration]
+# Enable CoreML for TTS (default: true on Apple Silicon)
+tts_gpu = true
+# Enable CoreML for VAD (default: true on Apple Silicon)
+vad_gpu = false  # VAD is tiny, GPU overhead may not be worth it
 
 # Uncomment below to use Kokoro instead (requires --features kokoro)
 # [tts]
 # engine = "kokoro"
 # model = "models/kokoro-v1.0.onnx"
 # voices = "models/voices-v1.0.bin"
+

@@ -11,6 +11,13 @@ pub enum VadEngine {
 }
 
 impl VadEngine {
+    #[cfg(all(feature = "supertonic", target_arch = "aarch64", target_os = "macos"))]
+    pub fn silero_with_gpu(model_path: &str, sample_rate: usize) -> Result<Self, String> {
+        println!("Enabling CoreML acceleration for VAD...");
+        let vad = Vad::new(model_path, sample_rate).map_err(|e| e.to_string())?;
+        Ok(VadEngine::Silero(vad))
+    }
+
     pub fn silero(model_path: &str, sample_rate: usize) -> Result<Self, String> {
         let vad = Vad::new(model_path, sample_rate).map_err(|e| e.to_string())?;
         Ok(VadEngine::Silero(vad))

@@ -66,8 +66,9 @@ impl SupertonicEngine {
         onnx_dir: &str,
         voice_style_path: &str,
         speed: f32,
+        use_gpu: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let tts = supertonic::load_text_to_speech(onnx_dir, false)?;
+        let tts = supertonic::load_text_to_speech(onnx_dir, use_gpu)?;
         let style = supertonic::load_voice_style(&[voice_style_path.to_string()], false)?;
         Ok(Self {
             tts: Mutex::new(tts),

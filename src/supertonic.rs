@@ -3,6 +3,7 @@
 
 use ndarray::{Array, Array3};
 use ort::{session::Session, value::Value};
+use ort::execution_providers::CoreMLExecutionProvider;
 use rand_distr::{Distribution, Normal};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -271,7 +272,7 @@ impl TextToSpeech {
 
 pub fn load_text_to_speech<P: AsRef<Path>>(
     onnx_dir: P,
-    _use_gpu: bool,
+    use_gpu: bool,
 ) -> anyhow::Result<TextToSpeech> {
     let onnx_dir = onnx_dir.as_ref();
 
@@ -280,11 +281,29 @@ pub fn load_text_to_speech<P: AsRef<Path>>(
 
     let text_processor = UnicodeProcessor::new(onnx_dir.join("unicode_indexer.json"))?;
 
-    let dp_ort = Session::builder()?.commit_from_file(onnx_dir.join("duration_predictor.onnx"))?;
-    let text_enc_ort = Session::builder()?.commit_from_file(onnx_dir.join("text_encoder.onnx"))?;
-    let vector_est_ort =
-        Session::builder()?.commit_from_file(onnx_dir.join("vector_estimator.onnx"))?;
-    let vocoder_ort = Session::builder()?.commit_from_file(onnx_dir.join("vocoder.onnx"))?;
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    let create_session = |model_path: &std::path::PathBuf, model_name: &str| -> ort::Result<Session> {
+        let builder = Session::builder()?;
+        if use_gpu {
+            Session::builder()?.with_execution_providers([
+                CoreMLExecutionProvider::default()
+                    .with_subgraphs(true)
+                    .build()
+            ])?.commit_from_file(model_path)
+        } else {
+            Session::builder()?.commit_from_file(model_path)
+        }
+    };
+
+    #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+    let create_session = |model_path: &std::path::PathBuf, _model_name: &str| -> ort::Result<Session> {
+        Session::builder()?.commit_from_file(model_path)
+    };
+
+    let dp_ort = create_session(&onnx_dir.join("duration_predictor.onnx"), "duration_predictor")?;
+    let text_enc_ort = create_session(&onnx_dir.join("text_encoder.onnx"), "text_encoder")?;
+    let vector_est_ort = create_session(&onnx_dir.join("vector_estimator.onnx"), "vector_estimator")?;
+    let vocoder_ort = create_session(&onnx_dir.join("vocoder.onnx"), "vocoder")?;
 
     let sample_rate = cfgs.ae.sample_rate;
     Ok(TextToSpeech {

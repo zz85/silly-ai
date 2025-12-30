@@ -11,6 +11,7 @@
 - Text-to-speech with [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M) or [Supertonic](https://github.com/supertone-inc/supertonic)
 - Streaming TTS: speech starts as soon as the first sentence is generated
 - Multi-threaded architecture: separate threads for audio capture, VAD, preview transcription, and final transcription
+- **Hardware acceleration**: CoreML on Apple Silicon for VAD, transcription, and TTS (Supertonic)
 
 ## Demo
 [demo](https://x.com/BlurSpline/status/2004470406435295742?s=20)
@@ -82,7 +83,7 @@ Make sure you have a model available (default: `gpt-oss:20b`). Edit `src/chat.rs
 ### 6. Build and run
 
 ```bash
-# Default (Supertonic TTS)
+# Default (Supertonic TTS with CoreML on Apple Silicon)
 cargo build --release
 ./target/release/silly
 
@@ -92,6 +93,13 @@ AUDIOPUS_SYS_USE_PKG_CONFIG=1 cargo build --release --no-default-features --feat
 # With both TTS engines
 cargo build --release --features kokoro
 ```
+
+**Note**: On Apple Silicon (M1/M2/M3), CoreML acceleration is automatically enabled for:
+- VAD (Silero)
+- TTS (Supertonic - 4 ONNX models accelerated)
+- Transcription (via ONNX Runtime backend)
+
+This provides 3-4x speedup for transcription and significant TTS acceleration.
 
 ## CLI Commands
 

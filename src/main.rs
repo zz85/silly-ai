@@ -110,7 +110,16 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Start VAD processing thread
     let vad_handle = thread::spawn(move || {
         let vad = if std::path::Path::new(VAD_MODEL_PATH).exists() {
-            match VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE) {
+            #[cfg(all(feature = "supertonic", target_arch = "aarch64", target_os = "macos"))]
+            let vad_result = VadEngine::silero_with_gpu(VAD_MODEL_PATH, TARGET_RATE);
+
+            #[cfg(not(feature = "supertonic"))]
+            let vad_result = VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE);
+
+            #[cfg(all(feature = "supertonic", not(target_arch = "aarch64"), not(target_os = "macos")))]
+            let vad_result = VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE);
+
+            match vad_result {
                 Ok(v) => {
                     eprintln!("VAD: Silero enabled");
                     Some(v)
@@ -202,7 +211,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             speed,
         } => {
             eprintln!("TTS: Supertonic (speed: {})", speed);
-            let engine = tts::SupertonicEngine::new(&onnx_dir, &voice_style, speed)
+            let engine = tts::SupertonicEngine::new(&onnx_dir, &voice_style, speed, true)
                 .expect("Failed to load Supertonic");
             tts::Tts::new(Box::new(engine))
         }

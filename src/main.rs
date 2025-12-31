@@ -1,6 +1,7 @@
 mod audio;
 mod chat;
 mod config;
+mod llm;
 mod render;
 mod repl;
 mod session;
@@ -14,7 +15,7 @@ mod tui;
 mod vad;
 mod wake;
 
-use config::{Config, TtsConfig};
+use config::{Config, TtsConfig, LlmConfig};
 use render::Ui;
 use repl::TranscriptEvent;
 
@@ -234,7 +235,33 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     };
 
-    let ollama_chat = chat::Chat::new(&config.name);
+    // Initialize LLM backend
+    let system_prompt = chat::system_prompt(&config.name);
+    let llm_backend: Box<dyn llm::LlmBackend> = match config.llm {
+        #[cfg(feature = "llama-cpp")]
+        LlmConfig::LlamaCpp { model_path, hf_repo, hf_file } => {
+            let backend = if let Some(path) = model_path {
+                llm::llama::LlamaCppBackend::from_path(path, &system_prompt)?
+            } else {
+                llm::llama::LlamaCppBackend::from_hf(&hf_repo, &hf_file, &system_prompt)?
+            };
+            Box::new(backend)
+        }
+        #[cfg(not(feature = "llama-cpp"))]
+        LlmConfig::LlamaCpp { .. } => {
+            panic!("llama-cpp not enabled. Build with --features llama-cpp");
+        }
+        #[cfg(feature = "ollama")]
+        LlmConfig::Ollama { model } => {
+            Box::new(llm::ollama::OllamaBackend::new(&model, &system_prompt))
+        }
+        #[cfg(not(feature = "ollama"))]
+        LlmConfig::Ollama { .. } => {
+            panic!("Ollama not enabled. Build with --features ollama");
+        }
+    };
+
+    let llm_chat = chat::Chat::new(llm_backend);
     let wake_word = wake::WakeWord::new(&config.wake_word);
 
     // Session manager channels
@@ -243,19 +270,15 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     
     // Spawn session manager
     let session_mgr = session::SessionManager::new(
-        ollama_chat,
+        llm_chat,
         tts_engine,
         Arc::clone(&tts_playing),
         tts_enabled_session,
         session_event_tx,
     ).with_stats(stats_session);
-    // Spawn session manager on dedicated thread (OutputStream isn't Send)
-    let session_handle = std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        rt.block_on(session_mgr.run(session_rx));
+    // Spawn session manager on dedicated thread (LLM inference is blocking)
+    let _session_handle = std::thread::spawn(move || {
+        session_mgr.run_sync(session_rx);
     });
 
     let (ui, ui_rx) = Ui::new();

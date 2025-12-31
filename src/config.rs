@@ -13,6 +13,8 @@ pub struct Config {
     #[serde(default)]
     pub tts: TtsConfig,
     #[serde(default)]
+    pub llm: LlmConfig,
+    #[serde(default)]
     pub acceleration: AccelerationConfig,
 }
 
@@ -23,6 +25,7 @@ impl Default for Config {
             wake_word: default_wake_word(),
             wake_timeout_secs: default_wake_timeout(),
             tts: TtsConfig::default(),
+            llm: LlmConfig::default(),
             acceleration: AccelerationConfig::default(),
         }
     }
@@ -53,6 +56,71 @@ fn default_wake_word() -> String {
 fn default_wake_timeout() -> u64 {
     30
 }
+
+// ============================================================================
+// LLM Config
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "backend")]
+pub enum LlmConfig {
+    #[serde(rename = "llama-cpp")]
+    LlamaCpp {
+        /// Local path to GGUF model, or will download from HuggingFace
+        #[serde(default)]
+        model_path: Option<String>,
+        /// HuggingFace repo (e.g., "TheBloke/Mistral-7B-Instruct-v0.2-GGUF")
+        #[serde(default = "default_hf_repo")]
+        hf_repo: String,
+        /// GGUF filename in the repo
+        #[serde(default = "default_hf_file")]
+        hf_file: String,
+    },
+    #[serde(rename = "ollama")]
+    Ollama {
+        #[serde(default = "default_ollama_model")]
+        model: String,
+    },
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        #[cfg(feature = "llama-cpp")]
+        {
+            LlmConfig::LlamaCpp {
+                model_path: None,
+                hf_repo: default_hf_repo(),
+                hf_file: default_hf_file(),
+            }
+        }
+        #[cfg(all(feature = "ollama", not(feature = "llama-cpp")))]
+        {
+            LlmConfig::Ollama {
+                model: default_ollama_model(),
+            }
+        }
+        #[cfg(not(any(feature = "llama-cpp", feature = "ollama")))]
+        {
+            panic!("No LLM backend enabled. Build with --features llama-cpp or --features ollama");
+        }
+    }
+}
+
+fn default_hf_repo() -> String {
+    "TheBloke/Mistral-7B-Instruct-v0.2-GGUF".into()
+}
+
+fn default_hf_file() -> String {
+    "mistral-7b-instruct-v0.2.Q4_K_M.gguf".into()
+}
+
+fn default_ollama_model() -> String {
+    "mistral:7b-instruct".into()
+}
+
+// ============================================================================
+// TTS Config
+// ============================================================================
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "engine")]

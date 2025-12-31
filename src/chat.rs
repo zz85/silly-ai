@@ -1,11 +1,6 @@
-use ollama_rs::Ollama;
-use ollama_rs::generation::chat::ChatMessage;
-use ollama_rs::generation::chat::request::ChatMessageRequest;
-use tokio_stream::StreamExt;
+use crate::llm::{LlmBackend, Message, Role};
 
-const MODEL: &str = "gpt-oss:20b";
-
-fn system_prompt(name: &str) -> String {
+pub fn system_prompt(name: &str) -> String {
     format!(
         r#"You are {name}, an AI assistant optimized for voice interaction.
 
@@ -27,17 +22,15 @@ fn system_prompt(name: &str) -> String {
 }
 
 pub struct Chat {
-    ollama: Ollama,
-    history: Vec<ChatMessage>,
-    name: String,
+    backend: Box<dyn LlmBackend>,
+    history: Vec<Message>,
 }
 
 impl Chat {
-    pub fn new(name: &str) -> Self {
+    pub fn new(backend: Box<dyn LlmBackend>) -> Self {
         Self {
-            ollama: Ollama::default(),
-            history: vec![ChatMessage::system(system_prompt(name))],
-            name: name.to_string(),
+            backend,
+            history: Vec::new(),
         }
     }
 
@@ -46,77 +39,14 @@ impl Chat {
         self.history.iter().map(|m| m.content.split_whitespace().count()).sum()
     }
 
-    /// Get initial greeting from the assistant
-    pub async fn greet_with_callback<F, C>(
-        &mut self,
-        on_sentence: F,
-        on_chunk: C,
-    ) -> Result<String, Box<dyn std::error::Error>>
-    where
-        F: FnMut(&str),
-        C: FnMut(&str),
-    {
-        let prompt = format!("Hello.");
-        self.send_streaming_with_callback(&prompt, on_sentence, on_chunk)
-            .await
-    }
-
-    /// Stream response, calling `on_sentence` for each complete sentence
-    /// `on_chunk` is called for each streamed token
-    pub async fn send_streaming_with_callback<F, C>(
-        &mut self,
-        message: &str,
-        mut on_sentence: F,
-        mut on_chunk: C,
-    ) -> Result<String, Box<dyn std::error::Error>>
-    where
-        F: FnMut(&str),
-        C: FnMut(&str),
-    {
-        self.history.push(ChatMessage::user(message.to_string()));
-
-        let request = ChatMessageRequest::new(MODEL.to_string(), self.history.clone());
-
-        let mut stream = self.ollama.send_chat_messages_stream(request).await?;
-
-        let mut full_response = String::new();
-        let mut buffer = String::new();
-
-        while let Some(Ok(chunk)) = stream.next().await {
-            let content = &chunk.message.content;
-            on_chunk(content);
-            full_response.push_str(content);
-            buffer.push_str(content);
-
-            // Yield complete sentences
-            while let Some(pos) = buffer.find(|c| c == '.' || c == '!' || c == '?') {
-                let sentence = buffer[..=pos].trim();
-                if !sentence.is_empty() {
-                    on_sentence(sentence);
-                }
-                buffer = buffer[pos + 1..].to_string();
-            }
-        }
-
-        // Yield any remaining text
-        let remaining = buffer.trim();
-        if !remaining.is_empty() {
-            on_sentence(remaining);
-        }
-
-        self.history
-            .push(ChatMessage::assistant(full_response.clone()));
-        Ok(full_response)
-    }
-
     /// Push user message to history
     pub fn history_push_user(&mut self, message: &str) {
-        self.history.push(ChatMessage::user(message.to_string()));
+        self.history.push(Message { role: Role::User, content: message.to_string() });
     }
 
     /// Push assistant message to history
     pub fn history_push_assistant(&mut self, message: &str) {
-        self.history.push(ChatMessage::assistant(message.to_string()));
+        self.history.push(Message { role: Role::Assistant, content: message.to_string() });
     }
 
     /// Remove last message from history
@@ -124,25 +54,9 @@ impl Chat {
         self.history.pop();
     }
 
-    /// Create a stream for LLM response
-    pub async fn create_stream(&self) -> Result<ChatStream, Box<dyn std::error::Error + Send + Sync>> {
-        let request = ChatMessageRequest::new(MODEL.to_string(), self.history.clone());
-        let stream = self.ollama.send_chat_messages_stream(request).await?;
-        Ok(ChatStream { stream: Box::pin(stream) })
-    }
-}
-
-pub struct ChatStream {
-    stream: std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<ollama_rs::generation::chat::ChatMessageResponse, ()>> + Send>>,
-}
-
-impl ChatStream {
-    pub async fn next(&mut self) -> Option<String> {
-        use tokio_stream::StreamExt;
-        if let Some(Ok(chunk)) = self.stream.next().await {
-            Some(chunk.message.content)
-        } else {
-            None
-        }
+    /// Generate response with streaming callback
+    pub fn generate(&mut self, mut on_token: impl FnMut(&str)) -> Result<String, Box<dyn std::error::Error + Send + Sync>>
+    {
+        self.backend.generate(&self.history, &mut on_token)
     }
 }

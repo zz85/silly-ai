@@ -2,8 +2,10 @@
 
 use crate::chat::Chat;
 use crate::tts::Tts;
+use crate::stats::{SharedStats, Sample, StatKind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 use tokio::sync::mpsc;
 
 pub enum SessionCommand {
@@ -30,6 +32,7 @@ pub struct SessionManager {
     tts_playing: Arc<AtomicBool>,
     tts_enabled: Arc<AtomicBool>,
     event_tx: mpsc::UnboundedSender<SessionEvent>,
+    stats: Option<SharedStats>,
 }
 
 impl SessionManager {
@@ -40,7 +43,12 @@ impl SessionManager {
         tts_enabled: Arc<AtomicBool>,
         event_tx: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
-        Self { chat, tts, tts_playing, tts_enabled, event_tx }
+        Self { chat, tts, tts_playing, tts_enabled, event_tx, stats: None }
+    }
+
+    pub fn with_stats(mut self, stats: SharedStats) -> Self {
+        self.stats = Some(stats);
+        self
     }
 
     pub async fn run(mut self, mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>) {
@@ -90,6 +98,8 @@ impl SessionManager {
         let mut buffer = String::new();
         let mut cancelled = false;
         let mut speaking_sent = false;
+        let llm_start = Instant::now();
+        let input_len = message.len();
 
         loop {
             tokio::select! {
@@ -123,6 +133,16 @@ impl SessionManager {
                     }
                 }
             }
+        }
+
+        // Record LLM stats
+        if let Some(ref stats) = self.stats {
+            let sample = Sample {
+                duration: llm_start.elapsed(),
+                input_size: input_len,
+                output_size: full_response.split_whitespace().count(), // approx tokens
+            };
+            stats.lock().unwrap().llm.push(sample);
         }
 
         if cancelled {

@@ -4,6 +4,7 @@ mod config;
 mod render;
 mod repl;
 mod session;
+mod stats;
 #[cfg(feature = "supertonic")]
 mod supertonic;
 mod test_ui;
@@ -66,6 +67,12 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Load config early for acceleration settings
     let config = Config::load();
+
+    // Shared stats for performance tracking
+    let stats = stats::new_shared();
+    let stats_transcribe = Arc::clone(&stats);
+    let stats_tts = Arc::clone(&stats);
+    let stats_session = Arc::clone(&stats);
 
     // Flag to mute VAD during TTS playback
     let tts_playing = Arc::new(AtomicBool::new(false));
@@ -176,7 +183,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Final transcription thread
     let final_handle = thread::spawn(move || {
         let mut transcriber =
-            match transcriber::Transcriber::new("models/parakeet-tdt-0.6b-v3-int8") {
+            match transcriber::Transcriber::with_stats("models/parakeet-tdt-0.6b-v3-int8", Some(stats_transcribe)) {
                 Ok(t) => t,
                 Err(e) => {
                     eprintln!("Final transcriber failed: {}", e);
@@ -204,7 +211,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         } => {
             eprintln!("TTS: Kokoro (speed: {})", speed);
             let engine = tts::KokoroEngine::new(&model, &voices, speed).await;
-            tts::Tts::new(Box::new(engine))
+            tts::Tts::with_stats(Box::new(engine), stats_tts)
         }
         #[cfg(not(feature = "kokoro"))]
         TtsConfig::Kokoro { .. } => {
@@ -219,7 +226,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             eprintln!("TTS: Supertonic (speed: {}, GPU: {})", speed, use_gpu_tts);
             let engine = tts::SupertonicEngine::new(&onnx_dir, &voice_style, speed, use_gpu_tts)
                 .expect("Failed to load Supertonic");
-            tts::Tts::new(Box::new(engine))
+            tts::Tts::with_stats(Box::new(engine), stats_tts)
         }
         #[cfg(not(feature = "supertonic"))]
         TtsConfig::Supertonic { .. } => {
@@ -241,7 +248,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         Arc::clone(&tts_playing),
         tts_enabled_session,
         session_event_tx,
-    );
+    ).with_stats(stats_session);
     // Spawn session manager on dedicated thread (OutputStream isn't Send)
     let session_handle = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -382,6 +389,11 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                                 let enabled = !wake_enabled.load(Ordering::SeqCst);
                                 wake_enabled.store(enabled, Ordering::SeqCst);
                                 tui.set_wake_enabled(enabled);
+                                continue;
+                            }
+                            if line == "/stats" {
+                                let summary = stats.lock().unwrap().summary();
+                                tui.show_message(&summary);
                                 continue;
                             }
                             // Cancel auto-submit on manual submit

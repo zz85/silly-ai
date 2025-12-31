@@ -112,6 +112,13 @@ impl Tui {
         Ok(())
     }
 
+    /// Show a multi-line message (e.g., stats output)
+    pub fn show_message(&mut self, text: &str) {
+        for line in text.lines() {
+            let _ = self.print_content(line);
+        }
+    }
+
     pub fn handle_ui_event(&mut self, event: UiEvent) -> io::Result<()> {
         match event {
             UiEvent::Preview(text) => {

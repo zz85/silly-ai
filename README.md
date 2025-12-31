@@ -129,6 +129,7 @@ After responding, the assistant listens for follow-up questions for 30 seconds (
 - `/mute` or `/mic` - Toggle microphone mute
 - `/speak` or `/tts` - Toggle TTS output
 - `/wake` - Toggle wake word requirement
+- `/stats` - Show inference performance stats (transcription, TTS, LLM)
 - Type text and press Enter to submit directly (bypasses transcription)
 
 ### Auto-Submit

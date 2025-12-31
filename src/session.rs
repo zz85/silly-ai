@@ -2,10 +2,9 @@
 
 use crate::chat::Chat;
 use crate::tts::Tts;
-use crate::stats::{SharedStats, Sample, StatKind};
+use crate::stats::{SharedStats, LlmTimer};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
 use tokio::sync::mpsc;
 
 pub enum SessionCommand {
@@ -98,14 +97,16 @@ impl SessionManager {
         let mut buffer = String::new();
         let mut cancelled = false;
         let mut speaking_sent = false;
-        let llm_start = Instant::now();
-        let input_len = message.len();
+        let mut llm_timer = self.stats.as_ref().map(|s| LlmTimer::new(Arc::clone(s)));
 
         loop {
             tokio::select! {
                 chunk = llm_stream.next() => {
                     match chunk {
                         Some(content) => {
+                            if let Some(ref mut timer) = llm_timer {
+                                timer.mark_first_token();
+                            }
                             let _ = self.event_tx.send(SessionEvent::Chunk(content.clone()));
                             full_response.push_str(&content);
                             buffer.push_str(&content);
@@ -136,13 +137,9 @@ impl SessionManager {
         }
 
         // Record LLM stats
-        if let Some(ref stats) = self.stats {
-            let sample = Sample {
-                duration: llm_start.elapsed(),
-                input_size: input_len,
-                output_size: full_response.split_whitespace().count(), // approx tokens
-            };
-            stats.lock().unwrap().llm.push(sample);
+        let token_count = full_response.split_whitespace().count();
+        if let Some(timer) = llm_timer {
+            timer.finish(token_count);
         }
 
         if cancelled {

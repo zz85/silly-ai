@@ -1,4 +1,4 @@
-//! LLM backends - llama.cpp (default) and Ollama (optional)
+//! LLM backends - llama.cpp (default), Ollama, and Kalosm (optional)
 
 use std::path::PathBuf;
 use crate::config::PromptFormat;
@@ -252,6 +252,74 @@ pub mod ollama {
                 
                 Ok::<_, Box<dyn std::error::Error + Send + Sync>>(full_response)
             })?;
+            
+            Ok(result)
+        }
+    }
+}
+
+// ============================================================================
+// Kalosm (Floneum) backend
+// ============================================================================
+
+#[cfg(feature = "kalosm")]
+pub mod kalosm_backend {
+    use super::*;
+    use kalosm::language::{Llama, LlamaSource, TextCompletionModelExt};
+    use futures_util::StreamExt;
+
+    pub struct KalosmBackend {
+        model: Llama,
+        system_prompt: String,
+    }
+
+    impl KalosmBackend {
+        pub fn new(source: LlamaSource, system_prompt: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            
+            println!("Loading Kalosm model...");
+            let model = rt.block_on(async {
+                Llama::builder()
+                    .with_source(source)
+                    .build()
+                    .await
+            })?;
+            println!("Model loaded.");
+            
+            Ok(Self { model, system_prompt: system_prompt.to_string() })
+        }
+    }
+
+    impl LlmBackend for KalosmBackend {
+        fn generate(&mut self, messages: &[Message], on_token: &mut dyn FnMut(&str)) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            
+            // Build prompt from messages
+            let mut prompt = format!("System: {}\n\n", self.system_prompt);
+            for msg in messages {
+                let role = match msg.role {
+                    Role::System => "System",
+                    Role::User => "User",
+                    Role::Assistant => "Assistant",
+                };
+                prompt.push_str(&format!("{}: {}\n", role, msg.content));
+            }
+            prompt.push_str("Assistant: ");
+            
+            let result = rt.block_on(async {
+                let mut stream = self.model.complete(&prompt);
+                let mut full_response = String::new();
+                while let Some(token) = stream.next().await {
+                    let t = token.to_string();
+                    on_token(&t);
+                    full_response.push_str(&t);
+                }
+                full_response
+            });
             
             Ok(result)
         }

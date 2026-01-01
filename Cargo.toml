@@ -35,6 +35,9 @@ rand_distr = { version = "0.4", optional = true }
 regex = { version = "1.10", optional = true }
 unicode-normalization = { version = "0.1", optional = true }
 
+# Kalosm (Floneum) - Rust-native LLM
+kalosm = { version = "0.4", features = ["language"], optional = true }
+
 # llama.cpp with Metal on macOS
 [target.'cfg(target_os = "macos")'.dependencies]
 llama_cpp = { version = "0.3", features = ["metal"], optional = true }
@@ -50,3 +53,4 @@ kokoro = ["kokoros"]
 supertonic = ["ndarray", "ort", "rand", "rand_distr", "regex", "unicode-normalization", "serde_json"]
 llama-cpp = ["llama_cpp", "hf-hub"]
 ollama = ["ollama-rs"]
+kalosm = ["dep:kalosm"]

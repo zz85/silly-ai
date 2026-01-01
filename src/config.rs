@@ -93,6 +93,12 @@ pub enum LlmConfig {
         #[serde(default = "default_ollama_model")]
         model: String,
     },
+    #[serde(rename = "kalosm")]
+    Kalosm {
+        /// Model preset: "phi3", "llama3", "mistral" (default: phi3)
+        #[serde(default = "default_kalosm_model")]
+        model: String,
+    },
 }
 
 impl Default for LlmConfig {
@@ -112,9 +118,15 @@ impl Default for LlmConfig {
                 model: default_ollama_model(),
             }
         }
-        #[cfg(not(any(feature = "llama-cpp", feature = "ollama")))]
+        #[cfg(all(feature = "kalosm", not(any(feature = "llama-cpp", feature = "ollama"))))]
         {
-            panic!("No LLM backend enabled. Build with --features llama-cpp or --features ollama");
+            LlmConfig::Kalosm {
+                model: default_kalosm_model(),
+            }
+        }
+        #[cfg(not(any(feature = "llama-cpp", feature = "ollama", feature = "kalosm")))]
+        {
+            panic!("No LLM backend enabled. Build with --features llama-cpp, --features ollama, or --features kalosm");
         }
     }
 }
@@ -129,6 +141,10 @@ fn default_hf_file() -> String {
 
 fn default_ollama_model() -> String {
     "mistral:7b-instruct".into()
+}
+
+fn default_kalosm_model() -> String {
+    "phi3".into()
 }
 
 // ============================================================================

@@ -259,6 +259,21 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         LlmConfig::Ollama { .. } => {
             panic!("Ollama not enabled. Build with --features ollama");
         }
+        #[cfg(feature = "kalosm")]
+        LlmConfig::Kalosm { model } => {
+            use kalosm::language::LlamaSource;
+            let source = match model.as_str() {
+                "phi3" => LlamaSource::phi_3_mini_4k_instruct(),
+                "llama3" => LlamaSource::llama_3_1_8b_chat(),
+                "mistral" => LlamaSource::mistral_7b_instruct_2(),
+                _ => panic!("Unknown kalosm model preset: {}. Use phi3, llama3, or mistral", model),
+            };
+            Box::new(llm::kalosm_backend::KalosmBackend::new(source, &system_prompt)?)
+        }
+        #[cfg(not(feature = "kalosm"))]
+        LlmConfig::Kalosm { .. } => {
+            panic!("Kalosm not enabled. Build with --features kalosm");
+        }
     };
 
     let llm_chat = chat::Chat::new(llm_backend);

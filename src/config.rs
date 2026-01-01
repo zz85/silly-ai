@@ -65,9 +65,9 @@ fn default_wake_timeout() -> u64 {
 #[serde(rename_all = "lowercase")]
 pub enum PromptFormat {
     #[default]
-    ChatML,   // TinyLlama, Qwen, etc: <|im_start|>...<|im_end|>
-    Mistral,  // Mistral: [INST]...[/INST]
-    Llama3,   // Llama 3: <|begin_of_text|>...<|eot_id|>
+    ChatML, // TinyLlama, Qwen, etc: <|im_start|>...<|im_end|>
+    Mistral, // Mistral: [INST]...[/INST]
+    Llama3,  // Llama 3: <|begin_of_text|>...<|eot_id|>
 }
 
 #[derive(Debug, Deserialize)]

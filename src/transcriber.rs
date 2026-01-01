@@ -1,9 +1,9 @@
+use crate::stats::{SharedStats, StatKind, Timer};
 use std::path::Path;
 use transcribe_rs::{
     TranscriptionEngine,
     engines::parakeet::{ParakeetEngine, ParakeetModelParams},
 };
-use crate::stats::{SharedStats, Timer, StatKind};
 
 pub struct Transcriber {
     engine: ParakeetEngine,
@@ -41,7 +41,10 @@ impl Transcriber {
         &mut self,
         samples: &[f32],
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let timer = self.stats.as_ref().map(|s| Timer::new(s, StatKind::Transcription, samples.len()));
+        let timer = self
+            .stats
+            .as_ref()
+            .map(|s| Timer::new(s, StatKind::Transcription, samples.len()));
         let result = self
             .engine
             .transcribe_samples(samples.to_vec(), None)

@@ -119,7 +119,10 @@ pub async fn run(scene: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
-fn process_events(tui: &mut Tui, rx: &flume::Receiver<crate::render::UiEvent>) -> std::io::Result<()> {
+fn process_events(
+    tui: &mut Tui,
+    rx: &flume::Receiver<crate::render::UiEvent>,
+) -> std::io::Result<()> {
     while let Ok(event) = rx.try_recv() {
         tui.handle_ui_event(event)?;
     }
@@ -167,7 +170,9 @@ async fn run_interactive(
                 }
                 "q" => break,
                 "help" | "?" => {
-                    println!("\nCommands: p=preview t=thinking s=speaking r=response f=final i=idle +/- words q=quit\n");
+                    println!(
+                        "\nCommands: p=preview t=thinking s=speaking r=response f=final i=idle +/- words q=quit\n"
+                    );
                 }
                 _ => {}
             }

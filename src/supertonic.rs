@@ -2,8 +2,8 @@
 // Minimal subset for TTS inference
 
 use ndarray::{Array, Array3};
-use ort::{session::Session, value::Value};
 use ort::execution_providers::CoreMLExecutionProvider;
+use ort::{session::Session, value::Value};
 use rand_distr::{Distribution, Normal};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -282,18 +282,21 @@ pub fn load_text_to_speech<P: AsRef<Path>>(
     let text_processor = UnicodeProcessor::new(onnx_dir.join("unicode_indexer.json"))?;
 
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-    let create_session = |model_path: &std::path::PathBuf, model_name: &str| -> ort::Result<Session> {
+    let create_session = |model_path: &std::path::PathBuf,
+                          model_name: &str|
+     -> ort::Result<Session> {
         if use_gpu {
             println!("Loading {} with CoreML...", model_name);
-            match Session::builder()?
-                .with_execution_providers([
-                    CoreMLExecutionProvider::default()
-                        .with_subgraphs(true)
-                        .build()
-                ]) {
+            match Session::builder()?.with_execution_providers([CoreMLExecutionProvider::default()
+                .with_subgraphs(true)
+                .build()])
+            {
                 Ok(builder) => builder.commit_from_file(model_path),
                 Err(e) => {
-                    eprintln!("CoreML EP failed for {}, falling back to CPU: {}", model_name, e);
+                    eprintln!(
+                        "CoreML EP failed for {}, falling back to CPU: {}",
+                        model_name, e
+                    );
                     Session::builder()?.commit_from_file(model_path)
                 }
             }
@@ -303,13 +306,18 @@ pub fn load_text_to_speech<P: AsRef<Path>>(
     };
 
     #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
-    let create_session = |model_path: &std::path::PathBuf, _model_name: &str| -> ort::Result<Session> {
-        Session::builder()?.commit_from_file(model_path)
-    };
+    let create_session =
+        |model_path: &std::path::PathBuf, _model_name: &str| -> ort::Result<Session> {
+            Session::builder()?.commit_from_file(model_path)
+        };
 
-    let dp_ort = create_session(&onnx_dir.join("duration_predictor.onnx"), "duration_predictor")?;
+    let dp_ort = create_session(
+        &onnx_dir.join("duration_predictor.onnx"),
+        "duration_predictor",
+    )?;
     let text_enc_ort = create_session(&onnx_dir.join("text_encoder.onnx"), "text_encoder")?;
-    let vector_est_ort = create_session(&onnx_dir.join("vector_estimator.onnx"), "vector_estimator")?;
+    let vector_est_ort =
+        create_session(&onnx_dir.join("vector_estimator.onnx"), "vector_estimator")?;
     let vocoder_ort = create_session(&onnx_dir.join("vocoder.onnx"), "vocoder")?;
 
     let sample_rate = cfgs.ae.sample_rate;

@@ -4,7 +4,7 @@ use crate::render::UiEvent;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{self, ClearType};
 use crossterm::{cursor, execute, queue};
-use std::io::{self, stdout, Write};
+use std::io::{self, Write, stdout};
 use unicode_width::UnicodeWidthStr;
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -93,7 +93,11 @@ impl Tui {
     fn goto_status_start(&self) -> io::Result<()> {
         let mut out = stdout();
         if self.status_drawn && self.last_drawn_lines > 0 {
-            queue!(out, cursor::MoveUp(self.last_drawn_lines as u16), cursor::MoveToColumn(0))?;
+            queue!(
+                out,
+                cursor::MoveUp(self.last_drawn_lines as u16),
+                cursor::MoveToColumn(0)
+            )?;
         }
         out.flush()
     }
@@ -102,10 +106,18 @@ impl Tui {
     fn print_content(&mut self, text: &str) -> io::Result<()> {
         let mut out = stdout();
         if self.status_drawn && self.last_drawn_lines > 0 {
-            queue!(out, cursor::MoveUp(self.last_drawn_lines as u16), cursor::MoveToColumn(0))?;
+            queue!(
+                out,
+                cursor::MoveUp(self.last_drawn_lines as u16),
+                cursor::MoveToColumn(0)
+            )?;
             queue!(out, terminal::Clear(ClearType::FromCursorDown))?;
         }
-        queue!(out, crossterm::style::Print(text), crossterm::style::Print("\r\n"))?;
+        queue!(
+            out,
+            crossterm::style::Print(text),
+            crossterm::style::Print("\r\n")
+        )?;
         out.flush()?;
         self.status_drawn = false;
         self.last_drawn_lines = 0;
@@ -166,7 +178,11 @@ impl Tui {
                 self.responding = false;
             }
             UiEvent::Idle => {
-                self.status = if self.ready { "✓ Ready".to_string() } else { "⏸ Idle".to_string() };
+                self.status = if self.ready {
+                    "✓ Ready".to_string()
+                } else {
+                    "⏸ Idle".to_string()
+                };
                 self.spinner_type = SpinnerType::None;
                 self.preview.clear();
             }
@@ -193,7 +209,11 @@ impl Tui {
         if self.status_drawn && self.last_drawn_lines > 0 {
             queue!(out, cursor::MoveUp(self.last_drawn_lines as u16))?;
         }
-        queue!(out, cursor::MoveToColumn(0), terminal::Clear(ClearType::FromCursorDown))?;
+        queue!(
+            out,
+            cursor::MoveToColumn(0),
+            terminal::Clear(ClearType::FromCursorDown)
+        )?;
 
         // Status line with optional spinner (bright color)
         let spinner_str = match self.spinner_type {
@@ -223,7 +243,11 @@ impl Tui {
             spinner_str, self.status, toggles, self.context_words, self.last_response_words
         );
         let status_width = status_content.width();
-        let padding = if term_width > status_width { (term_width - status_width) / 2 } else { 0 };
+        let padding = if term_width > status_width {
+            (term_width - status_width) / 2
+        } else {
+            0
+        };
         let status = format!("\x1b[90m{}{}\x1b[0m", " ".repeat(padding), status_content);
 
         // Input line with optional preview and auto-submit timer
@@ -247,25 +271,39 @@ impl Tui {
         let prompt = if self.preview.is_empty() {
             format!("{}\x1b[32m>\x1b[0m {}", timer_bar, self.input)
         } else {
-            format!("\x1b[90m{}\x1b[0m {}\x1b[32m>\x1b[0m {}", self.preview, timer_bar, self.input)
+            format!(
+                "\x1b[90m{}\x1b[0m {}\x1b[32m>\x1b[0m {}",
+                self.preview, timer_bar, self.input
+            )
         };
         let cursor_offset = if self.preview.is_empty() {
-            2 + if self.auto_submit_progress.is_some() { 6 } else { 0 } // "> " + "████⠋ "
+            2 + if self.auto_submit_progress.is_some() {
+                6
+            } else {
+                0
+            } // "> " + "████⠋ "
         } else {
-            self.preview.width() + 4 + if self.auto_submit_progress.is_some() { 6 } else { 0 }
+            self.preview.width()
+                + 4
+                + if self.auto_submit_progress.is_some() {
+                    6
+                } else {
+                    0
+                }
         };
 
         // Calculate how many lines the prompt takes (visible width, not including ANSI codes)
         let prompt_visible_width = cursor_offset + self.input.width();
-        let prompt_lines = if term_width > 0 && prompt_visible_width > 0 { 
-            (prompt_visible_width + term_width - 1) / term_width 
-        } else { 
-            1 
+        let prompt_lines = if term_width > 0 && prompt_visible_width > 0 {
+            (prompt_visible_width + term_width - 1) / term_width
+        } else {
+            1
         };
         // Cursor is at end of input, need to go up: (prompt_lines - 1) to get to first prompt line, +1 for status
         self.last_drawn_lines = prompt_lines; // lines below status line
 
-        queue!(out,
+        queue!(
+            out,
             crossterm::style::Print(&status),
             crossterm::style::Print("\r\n"),
             crossterm::style::Print(&prompt),
@@ -314,57 +352,57 @@ impl Tui {
                                 'k' => {
                                     if self.cursor_pos < self.char_count() {
                                         let byte_pos = self.char_to_byte_index(self.cursor_pos);
-                                    self.input.truncate(byte_pos);
-                                    self.input_activity = true;
-                                }
-                            }
-                            'u' => {
-                                if self.cursor_pos > 0 {
-                                    let byte_pos = self.char_to_byte_index(self.cursor_pos);
-                                    self.input = self.input[byte_pos..].to_string();
-                                    self.cursor_pos = 0;
-                                    self.input_activity = true;
-                                }
-                            }
-                            'w' => {
-                                if self.cursor_pos > 0 {
-                                    let chars: Vec<char> = self.input.chars().collect();
-                                    let mut end = self.cursor_pos;
-
-                                    while end > 0 && chars[end - 1].is_whitespace() {
-                                        end -= 1;
+                                        self.input.truncate(byte_pos);
+                                        self.input_activity = true;
                                     }
-                                    while end > 0 && !chars[end - 1].is_whitespace() {
-                                        end -= 1;
-                                    }
-
-                                    let start_byte = self.char_to_byte_index(end);
-                                    let end_byte = self.char_to_byte_index(self.cursor_pos);
-                                    self.input.replace_range(start_byte..end_byte, "");
-                                    self.cursor_pos = end;
-                                    self.input_activity = true;
                                 }
+                                'u' => {
+                                    if self.cursor_pos > 0 {
+                                        let byte_pos = self.char_to_byte_index(self.cursor_pos);
+                                        self.input = self.input[byte_pos..].to_string();
+                                        self.cursor_pos = 0;
+                                        self.input_activity = true;
+                                    }
+                                }
+                                'w' => {
+                                    if self.cursor_pos > 0 {
+                                        let chars: Vec<char> = self.input.chars().collect();
+                                        let mut end = self.cursor_pos;
+
+                                        while end > 0 && chars[end - 1].is_whitespace() {
+                                            end -= 1;
+                                        }
+                                        while end > 0 && !chars[end - 1].is_whitespace() {
+                                            end -= 1;
+                                        }
+
+                                        let start_byte = self.char_to_byte_index(end);
+                                        let end_byte = self.char_to_byte_index(self.cursor_pos);
+                                        self.input.replace_range(start_byte..end_byte, "");
+                                        self.cursor_pos = end;
+                                        self.input_activity = true;
+                                    }
+                                }
+                                _ => {}
                             }
-                            _ => {}
+                        } else {
+                            let byte_pos = self.char_to_byte_index(self.cursor_pos);
+                            self.input.insert(byte_pos, c);
+                            self.cursor_pos += 1;
+                            self.input_activity = true;
                         }
-                    } else {
+                    }
+                    KeyCode::Backspace if self.cursor_pos > 0 => {
+                        self.cursor_pos -= 1;
                         let byte_pos = self.char_to_byte_index(self.cursor_pos);
-                        self.input.insert(byte_pos, c);
-                        self.cursor_pos += 1;
+                        self.input.remove(byte_pos);
                         self.input_activity = true;
                     }
-                }
-                KeyCode::Backspace if self.cursor_pos > 0 => {
-                    self.cursor_pos -= 1;
-                    let byte_pos = self.char_to_byte_index(self.cursor_pos);
-                    self.input.remove(byte_pos);
-                    self.input_activity = true;
-                }
-                KeyCode::Delete if self.cursor_pos < self.char_count() => {
-                    let byte_pos = self.char_to_byte_index(self.cursor_pos);
-                    self.input.remove(byte_pos);
-                    self.input_activity = true;
-                }
+                    KeyCode::Delete if self.cursor_pos < self.char_count() => {
+                        let byte_pos = self.char_to_byte_index(self.cursor_pos);
+                        self.input.remove(byte_pos);
+                        self.input_activity = true;
+                    }
                     KeyCode::Left => self.cursor_pos = self.cursor_pos.saturating_sub(1),
                     KeyCode::Right if self.cursor_pos < self.char_count() => self.cursor_pos += 1,
                     KeyCode::Home => self.cursor_pos = 0,
@@ -392,7 +430,8 @@ impl Tui {
 
     /// Convert character index to byte index
     fn char_to_byte_index(&self, char_idx: usize) -> usize {
-        self.input.char_indices()
+        self.input
+            .char_indices()
             .nth(char_idx)
             .map(|(i, _)| i)
             .unwrap_or(self.input.len())
@@ -405,7 +444,8 @@ impl Tui {
 
     /// Get display width up to cursor position
     fn cursor_display_width(&self) -> usize {
-        self.input.chars()
+        self.input
+            .chars()
             .take(self.cursor_pos)
             .collect::<String>()
             .width()

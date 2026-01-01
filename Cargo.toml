@@ -50,8 +50,8 @@ kokoro = ["kokoros"]
 supertonic = ["ndarray", "ort", "rand", "rand_distr", "regex", "unicode-normalization", "serde_json"]
 llama-cpp = ["llama_cpp", "hf-hub"]
 ollama = ["ollama-rs"]
-lm-studio = ["lm-studio-api"]
+lm-studio = ["open-agent-sdk"]
 
-[dependencies.lm-studio-api]
-version = "0.1"
+[dependencies.open-agent-sdk]
+version = "0.6"
 optional = true

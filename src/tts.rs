@@ -1,4 +1,5 @@
 use rodio::{OutputStreamBuilder, Sink};
+use crate::stats::{SharedStats, Timer, StatKind};
 
 pub trait TtsEngine: Send + Sync {
     fn synthesize(&self, text: &str) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error>>;
@@ -95,11 +96,16 @@ impl TtsEngine for SupertonicEngine {
 
 pub struct Tts {
     engine: Box<dyn TtsEngine>,
+    stats: Option<SharedStats>,
 }
 
 impl Tts {
     pub fn new(engine: Box<dyn TtsEngine>) -> Self {
-        Self { engine }
+        Self { engine, stats: None }
+    }
+
+    pub fn with_stats(engine: Box<dyn TtsEngine>, stats: SharedStats) -> Self {
+        Self { engine, stats: Some(stats) }
     }
 
     pub fn speak(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -112,7 +118,11 @@ impl Tts {
     }
 
     pub fn queue(&self, text: &str, sink: &Sink) -> Result<(), Box<dyn std::error::Error>> {
+        let timer = self.stats.as_ref().map(|s| Timer::new(s, StatKind::Tts, text.len()));
         let (audio, sample_rate) = self.engine.synthesize(text)?;
+        if let Some(t) = timer {
+            t.finish(audio.len());
+        }
         sink.append(rodio::buffer::SamplesBuffer::new(1, sample_rate, audio));
         Ok(())
     }

@@ -259,117 +259,85 @@ pub mod ollama {
 }
 
 // ============================================================================
-// LM Studio backend (OpenAI-compatible API)
+// LM Studio backend
 // ============================================================================
 
 #[cfg(feature = "lm-studio")]
 pub mod lm_studio {
-    use super::*;
-    use serde::{Deserialize, Serialize};
-    use tokio_stream::StreamExt;
+    use super::{LlmBackend, Message, Role};
+    use lm_studio_api::prelude::*;
 
     pub struct LmStudioBackend {
-        base_url: String,
-        model: String,
+        port: u16,
         system_prompt: String,
     }
 
-    #[derive(Serialize)]
-    struct ChatRequest {
-        model: String,
-        messages: Vec<ChatMsg>,
-        stream: bool,
-    }
-
-    #[derive(Serialize)]
-    struct ChatMsg {
-        role: &'static str,
-        content: String,
-    }
-
-    #[derive(Deserialize)]
-    struct StreamChunk {
-        choices: Vec<Choice>,
-    }
-
-    #[derive(Deserialize)]
-    struct Choice {
-        delta: Delta,
-    }
-
-    #[derive(Deserialize)]
-    struct Delta {
-        content: Option<String>,
+    struct SystemPromptHolder(String);
+    impl SystemInfo for SystemPromptHolder {
+        fn new() -> Box<Self> { Box::new(Self(String::new())) }
+        fn update(&mut self) -> String { self.0.clone() }
     }
 
     impl LmStudioBackend {
-        pub fn new(base_url: &str, model: &str, system_prompt: &str) -> Self {
-            Self {
-                base_url: base_url.trim_end_matches('/').to_string(),
-                model: model.to_string(),
-                system_prompt: system_prompt.to_string(),
-            }
+        pub fn new(base_url: &str, _model: &str, system_prompt: &str) -> Self {
+            let port = base_url
+                .rsplit(':')
+                .next()
+                .and_then(|p| p.trim_matches('/').parse().ok())
+                .unwrap_or(1234);
+            Self { port, system_prompt: system_prompt.to_string() }
         }
     }
 
     impl LlmBackend for LmStudioBackend {
-        fn generate(&mut self, messages: &[Message], on_token: &mut dyn FnMut(&str)) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-            let mut chat_msgs = vec![ChatMsg { role: "system", content: self.system_prompt.clone() }];
-            for msg in messages {
-                let role = match msg.role {
-                    Role::System => "system",
-                    Role::User => "user",
-                    Role::Assistant => "assistant",
-                };
-                chat_msgs.push(ChatMsg { role, content: msg.content.clone() });
-            }
-
-            let request = ChatRequest {
-                model: self.model.clone(),
-                messages: chat_msgs,
-                stream: true,
-            };
-
+        fn generate(&mut self, messages: &[Message], on_token: &mut dyn FnMut(&str)) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync>> {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
 
-            let url = format!("{}/v1/chat/completions", self.base_url);
+            let system_prompt = self.system_prompt.clone();
+            let port = self.port;
+            let msgs: Vec<_> = messages.iter().map(|m| (m.role, m.content.clone())).collect();
+
             let result = rt.block_on(async {
-                let client = reqwest::Client::new();
-                let resp = client.post(&url)
-                    .json(&request)
-                    .send()
-                    .await?;
+                let holder = SystemPromptHolder(system_prompt);
+                let mut chat = Chat::new(Model::Other("default".into()), Context::new(Box::new(holder), 4096), port);
 
-                let mut stream = resp.bytes_stream();
+                let api_messages: Vec<lm_studio_api::chat::Message> = msgs.iter().map(|(role, content)| {
+                    lm_studio_api::chat::Message {
+                        role: match role {
+                            Role::System => lm_studio_api::chat::Role::System,
+                            Role::User => lm_studio_api::chat::Role::User,
+                            Role::Assistant => lm_studio_api::chat::Role::Assistant,
+                        },
+                        content: vec![Content::Text { text: content.clone() }],
+                    }
+                }).collect();
+
+                let request = Messages {
+                    messages: api_messages,
+                    context: false,
+                    stream: true,
+                    ..Default::default()
+                };
+
+                chat.send(request.into()).await?;
+
                 let mut full_response = String::new();
-                let mut buffer = String::new();
-                let mut in_think = false; // Track <think> blocks
+                let mut in_think = false;
 
-                while let Some(chunk) = stream.next().await {
-                    let bytes = chunk?;
-                    buffer.push_str(&String::from_utf8_lossy(&bytes));
-
-                    // Process complete SSE lines
-                    while let Some(pos) = buffer.find('\n') {
-                        let line = buffer[..pos].trim().to_string();
-                        buffer = buffer[pos + 1..].to_string();
-
-                        if line.starts_with("data: ") {
-                            let data = &line[6..];
-                            if data == "[DONE]" { continue; }
-                            if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
-                                if let Some(content) = chunk.choices.first().and_then(|c| c.delta.content.as_ref()) {
-                                    // Filter <think>...</think> blocks
-                                    let filtered = filter_think(content, &mut in_think);
-                                    if !filtered.is_empty() {
-                                        on_token(&filtered);
-                                        full_response.push_str(&filtered);
-                                    }
+                while let Some(result) = chat.next().await {
+                    match result {
+                        Ok(r) => {
+                            if let Some(text) = r.text() {
+                                let filtered = filter_think(&text, &mut in_think);
+                                if !filtered.is_empty() {
+                                    on_token(&filtered);
+                                    full_response.push_str(&filtered);
                                 }
                             }
                         }
+                        Err(_) => break,
                     }
                 }
                 Ok::<_, Box<dyn std::error::Error + Send + Sync>>(full_response)
@@ -379,18 +347,16 @@ pub mod lm_studio {
         }
     }
 
-    /// Filter out <think>...</think> blocks from streaming tokens
     fn filter_think(content: &str, in_think: &mut bool) -> String {
         let mut result = String::new();
         let mut remaining = content;
-
         while !remaining.is_empty() {
             if *in_think {
                 if let Some(end) = remaining.find("</think>") {
                     *in_think = false;
                     remaining = &remaining[end + 8..];
                 } else {
-                    break; // Still inside think block
+                    break;
                 }
             } else if let Some(start) = remaining.find("<think>") {
                 result.push_str(&remaining[..start]);

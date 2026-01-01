@@ -320,6 +320,7 @@ pub mod lm_studio {
                     messages: api_messages,
                     context: false,
                     stream: true,
+                    skip_think: true,
                     ..Default::default()
                 };
 

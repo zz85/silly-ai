@@ -43,7 +43,7 @@ llama_cpp = { version = "0.3", features = ["metal"], optional = true }
 llama_cpp = { version = "0.3", optional = true }
 
 [features]
-default = ["supertonic", "llama-cpp"]
+default = ["supertonic", "lm-studio"]
 hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
 kokoro = ["kokoros"]

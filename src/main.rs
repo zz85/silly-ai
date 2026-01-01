@@ -271,10 +271,26 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         LlmConfig::Kalosm { model } => {
             use kalosm_llama::LlamaSource;
             let source = match model.as_str() {
+                // Small/fast models
+                "tiny-llama" => LlamaSource::tiny_llama_1_1b_chat(),
+                "qwen-0.5b" => LlamaSource::qwen_2_5_0_5b_instruct(),
+                "qwen-1.5b" => LlamaSource::qwen_2_5_1_5b_instruct(),
+                "llama3-1b" => LlamaSource::llama_3_2_1b_chat(),
+                "llama3-3b" => LlamaSource::llama_3_2_3b_chat(),
+                // Medium models
                 "phi3" => LlamaSource::phi_3_mini_4k_instruct(),
-                "llama3" => LlamaSource::llama_3_1_8b_chat(),
+                "phi3.5" => LlamaSource::phi_3_5_mini_4k_instruct(),
+                "qwen-3b" => LlamaSource::qwen_2_5_3b_instruct(),
+                "qwen-7b" => LlamaSource::qwen_2_5_7b_instruct(),
+                // Larger models
+                "llama3" | "llama3-8b" => LlamaSource::llama_3_1_8b_chat(),
                 "mistral" => LlamaSource::mistral_7b_instruct_2(),
-                _ => panic!("Unknown kalosm model preset: {}. Use phi3, llama3, or mistral", model),
+                "phi4" => LlamaSource::phi_4(),
+                // DeepSeek R1 distills
+                "deepseek-1.5b" => LlamaSource::deepseek_r1_distill_qwen_1_5b(),
+                "deepseek-7b" => LlamaSource::deepseek_r1_distill_qwen_7b(),
+                "deepseek-8b" => LlamaSource::deepseek_r1_distill_llama_8b(),
+                _ => panic!("Unknown kalosm model: {}. Options: tiny-llama, qwen-0.5b, qwen-1.5b, qwen-3b, qwen-7b, llama3-1b, llama3-3b, llama3-8b, phi3, phi3.5, phi4, mistral, deepseek-1.5b, deepseek-7b, deepseek-8b", model),
             };
             Box::new(llm::kalosm_backend::KalosmBackend::new_blocking(source, &system_prompt)?)
         }

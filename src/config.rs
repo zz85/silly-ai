@@ -144,7 +144,7 @@ fn default_ollama_model() -> String {
 }
 
 fn default_kalosm_model() -> String {
-    "phi3".into()
+    "qwen-1.5b".into()
 }
 
 // ============================================================================

@@ -1,6 +1,7 @@
 //! LLM backends - llama.cpp (default) and Ollama (optional)
 
 use std::path::PathBuf;
+use crate::config::PromptFormat;
 
 /// Chat message for conversation history
 #[derive(Clone)]
@@ -35,45 +36,110 @@ pub mod llama {
     pub struct LlamaCppBackend {
         model: LlamaModel,
         system_prompt: String,
+        prompt_format: PromptFormat,
     }
 
     impl LlamaCppBackend {
         /// Load model from local path
-        pub fn from_path(path: impl Into<PathBuf>, system_prompt: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        pub fn from_path(path: impl Into<PathBuf>, system_prompt: &str, prompt_format: PromptFormat) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
             let path = path.into();
             println!("Loading model from {:?}...", path);
-            let model = LlamaModel::load_from_file(&path, LlamaParams::default())
+            
+            let mut params = LlamaParams::default();
+            params.n_gpu_layers = 99; // Offload all layers to GPU (Metal on macOS)
+            
+            let model = LlamaModel::load_from_file(&path, params)
                 .map_err(|e| format!("Failed to load model: {:?}", e))?;
             println!("Model loaded.");
-            Ok(Self { model, system_prompt: system_prompt.to_string() })
+            Ok(Self { model, system_prompt: system_prompt.to_string(), prompt_format })
         }
 
         /// Download model from HuggingFace if needed, then load
-        pub fn from_hf(repo: &str, filename: &str, system_prompt: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        pub fn from_hf(repo: &str, filename: &str, system_prompt: &str, prompt_format: PromptFormat) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
             let path = download_model(repo, filename)?;
-            Self::from_path(path, system_prompt)
+            Self::from_path(path, system_prompt, prompt_format)
         }
 
         fn format_prompt(&self, messages: &[Message]) -> String {
-            // Simple ChatML-style format (works with most instruction-tuned models)
+            match self.prompt_format {
+                PromptFormat::ChatML => self.format_chatml(messages),
+                PromptFormat::Mistral => self.format_mistral(messages),
+                PromptFormat::Llama3 => self.format_llama3(messages),
+            }
+        }
+
+        fn format_chatml(&self, messages: &[Message]) -> String {
             let mut prompt = String::new();
-            
-            // Add system prompt
             prompt.push_str("<|im_start|>system\n");
             prompt.push_str(&self.system_prompt);
             prompt.push_str("<|im_end|>\n");
             
             for msg in messages {
                 let role = match msg.role {
-                    Role::System => "system",
+                    Role::System => continue,
                     Role::User => "user",
                     Role::Assistant => "assistant",
                 };
                 prompt.push_str(&format!("<|im_start|>{}\n{}<|im_end|>\n", role, msg.content));
             }
-            
             prompt.push_str("<|im_start|>assistant\n");
             prompt
+        }
+
+        fn format_mistral(&self, messages: &[Message]) -> String {
+            let mut prompt = String::new();
+            prompt.push_str("<s>[INST] ");
+            prompt.push_str(&self.system_prompt);
+            prompt.push_str("\n\n");
+            
+            let mut first_user = true;
+            for msg in messages {
+                match msg.role {
+                    Role::System => {}
+                    Role::User => {
+                        if first_user {
+                            prompt.push_str(&msg.content);
+                            prompt.push_str(" [/INST]");
+                            first_user = false;
+                        } else {
+                            prompt.push_str(" [INST] ");
+                            prompt.push_str(&msg.content);
+                            prompt.push_str(" [/INST]");
+                        }
+                    }
+                    Role::Assistant => {
+                        prompt.push_str(&msg.content);
+                        prompt.push_str("</s>");
+                    }
+                }
+            }
+            prompt
+        }
+
+        fn format_llama3(&self, messages: &[Message]) -> String {
+            let mut prompt = String::new();
+            prompt.push_str("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n");
+            prompt.push_str(&self.system_prompt);
+            prompt.push_str("<|eot_id|>");
+            
+            for msg in messages {
+                let role = match msg.role {
+                    Role::System => continue,
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                };
+                prompt.push_str(&format!("<|start_header_id|>{}<|end_header_id|>\n\n{}<|eot_id|>", role, msg.content));
+            }
+            prompt.push_str("<|start_header_id|>assistant<|end_header_id|>\n\n");
+            prompt
+        }
+
+        fn stop_tokens(&self) -> &[&str] {
+            match self.prompt_format {
+                PromptFormat::ChatML => &["<|im_end|>", "<|im_start|>"],
+                PromptFormat::Mistral => &["</s>", "[INST]"],
+                PromptFormat::Llama3 => &["<|eot_id|>", "<|start_header_id|>"],
+            }
         }
     }
 
@@ -81,8 +147,13 @@ pub mod llama {
         fn generate(&mut self, messages: &[Message], on_token: &mut dyn FnMut(&str)) -> Result<String, Box<dyn std::error::Error + Send + Sync>>
         {
             let prompt = self.format_prompt(messages);
+            let stop_tokens = self.stop_tokens();
             
-            let mut session = self.model.create_session(SessionParams::default())
+            let mut session_params = SessionParams::default();
+            session_params.n_ctx = 4096;
+            session_params.n_batch = 2048;
+            
+            let mut session = self.model.create_session(session_params)
                 .map_err(|e| format!("Failed to create session: {:?}", e))?;
             
             session.advance_context(&prompt)
@@ -94,8 +165,7 @@ pub mod llama {
                 .into_strings();
             
             for token in completions {
-                // Stop at end token
-                if token.contains("<|im_end|>") || token.contains("<|endoftext|>") {
+                if stop_tokens.iter().any(|s| token.contains(s)) {
                     break;
                 }
                 on_token(&token);

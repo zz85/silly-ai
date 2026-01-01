@@ -239,11 +239,11 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let system_prompt = chat::system_prompt(&config.name);
     let llm_backend: Box<dyn llm::LlmBackend> = match config.llm {
         #[cfg(feature = "llama-cpp")]
-        LlmConfig::LlamaCpp { model_path, hf_repo, hf_file } => {
+        LlmConfig::LlamaCpp { model_path, hf_repo, hf_file, prompt_format } => {
             let backend = if let Some(path) = model_path {
-                llm::llama::LlamaCppBackend::from_path(path, &system_prompt)?
+                llm::llama::LlamaCppBackend::from_path(path, &system_prompt, prompt_format)?
             } else {
-                llm::llama::LlamaCppBackend::from_hf(&hf_repo, &hf_file, &system_prompt)?
+                llm::llama::LlamaCppBackend::from_hf(&hf_repo, &hf_file, &system_prompt, prompt_format)?
             };
             Box::new(backend)
         }

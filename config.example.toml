@@ -1,25 +1,58 @@
-# TTS Configuration
-# Options: "kokoro" or "supertonic"
+# Silly AI Configuration
 
 name = "Silly"
 wake_word = "Hey Silly"
 wake_timeout_secs = 30
 
+# LLM Configuration
+[llm]
+backend = "llama-cpp"
+
+# Model from HuggingFace (auto-downloads on first run)
+hf_repo = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
+hf_file = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+prompt_format = "chatml"  # chatml, mistral, or llama3
+
+# Or use a local GGUF file:
+# model_path = "models/your-model.gguf"
+
+# Popular models:
+# TinyLlama (fast, ~670MB):
+#   hf_repo = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
+#   hf_file = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+#   prompt_format = "chatml"
+#
+# Mistral 7B (quality, ~4GB):
+#   hf_repo = "TheBloke/Mistral-7B-Instruct-v0.2-GGUF"
+#   hf_file = "mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+#   prompt_format = "mistral"
+#
+# Llama 3 8B (quality, ~4.5GB):
+#   hf_repo = "QuantFactory/Meta-Llama-3-8B-Instruct-GGUF"
+#   hf_file = "Meta-Llama-3-8B-Instruct.Q4_K_M.gguf"
+#   prompt_format = "llama3"
+
+# Or use Ollama (requires ollama server running):
+# [llm]
+# backend = "ollama"
+# model = "mistral:7b-instruct"
+
+# TTS Configuration
 [tts]
 engine = "supertonic"
 onnx_dir = "models/supertonic/onnx"
 voice_style = "models/supertonic/voice_styles/M1.json"
+speed = 1.1  # 0.5 to 2.0
 
-# Hardware acceleration (CoreML on Apple Silicon)
-[acceleration]
-# Enable CoreML for TTS (default: true on Apple Silicon)
-tts_gpu = true
-# Enable CoreML for VAD (default: true on Apple Silicon)
-vad_gpu = false  # VAD is tiny, GPU overhead may not be worth it
-
-# Uncomment below to use Kokoro instead (requires --features kokoro)
+# Or use Kokoro TTS (requires --features kokoro):
 # [tts]
 # engine = "kokoro"
 # model = "models/kokoro-v1.0.onnx"
 # voices = "models/voices-v1.0.bin"
+# speed = 1.1
+
+# Hardware acceleration (CoreML on Apple Silicon)
+[acceleration]
+tts_gpu = true   # CoreML for TTS
+vad_gpu = false  # CoreML for VAD (small model, CPU is fine)
 

@@ -61,6 +61,15 @@ fn default_wake_timeout() -> u64 {
 // LLM Config
 // ============================================================================
 
+#[derive(Debug, Deserialize, Clone, Copy, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PromptFormat {
+    #[default]
+    ChatML,   // TinyLlama, Qwen, etc: <|im_start|>...<|im_end|>
+    Mistral,  // Mistral: [INST]...[/INST]
+    Llama3,   // Llama 3: <|begin_of_text|>...<|eot_id|>
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "backend")]
 pub enum LlmConfig {
@@ -75,6 +84,9 @@ pub enum LlmConfig {
         /// GGUF filename in the repo
         #[serde(default = "default_hf_file")]
         hf_file: String,
+        /// Prompt format
+        #[serde(default)]
+        prompt_format: PromptFormat,
     },
     #[serde(rename = "ollama")]
     Ollama {
@@ -91,6 +103,7 @@ impl Default for LlmConfig {
                 model_path: None,
                 hf_repo: default_hf_repo(),
                 hf_file: default_hf_file(),
+                prompt_format: PromptFormat::default(),
             }
         }
         #[cfg(all(feature = "ollama", not(feature = "llama-cpp")))]

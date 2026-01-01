@@ -32,6 +32,14 @@ use vad::VadEngine;
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+    
+    /// Disable speech-to-text (type input only)
+    #[arg(long)]
+    no_stt: bool,
+    
+    /// Disable text-to-speech output
+    #[arg(long)]
+    no_tts: bool,
 }
 
 #[derive(Subcommand)]
@@ -80,15 +88,15 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let tts_playing_vad = Arc::clone(&tts_playing);
 
     // Flag to mute microphone input
-    let mic_muted = Arc::new(AtomicBool::new(false));
+    let mic_muted = Arc::new(AtomicBool::new(cli.no_stt));
     let mic_muted_vad = Arc::clone(&mic_muted);
 
     // Flag to disable TTS output
-    let tts_enabled = Arc::new(AtomicBool::new(true));
+    let tts_enabled = Arc::new(AtomicBool::new(!cli.no_tts));
     let tts_enabled_session = Arc::clone(&tts_enabled);
 
-    // Flag to require wake word
-    let wake_enabled = Arc::new(AtomicBool::new(true));
+    // Flag to require wake word (disabled when --no-stt)
+    let wake_enabled = Arc::new(AtomicBool::new(!cli.no_stt));
 
     // Channel: audio -> VAD processor
     let (audio_tx, audio_rx) = mpsc::channel::<Vec<f32>>();

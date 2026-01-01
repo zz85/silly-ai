@@ -75,14 +75,24 @@ cd ..
 
 ### 5. Build and run
 
+Start LM Studio with a model loaded, then build and run:
+
 ```bash
 cargo build --release
 ./target/release/silly
 ```
 
+### 6. (Optional) Use llama.cpp instead
+
+For fully offline operation with auto-downloaded models:
+
+```bash
+cargo build --release --no-default-features --features supertonic,llama-cpp
+```
+
 The LLM model (TinyLlama by default) will be **automatically downloaded** from HuggingFace on first run.
 
-### 6. (Optional) Use Ollama instead
+### 7. (Optional) Use Ollama instead
 
 If you prefer Ollama, start the server and build with the ollama feature:
 
@@ -91,16 +101,19 @@ ollama serve  # in another terminal
 cargo build --release --no-default-features --features supertonic,ollama
 ```
 
-### 7. Build variants
+### 8. Build variants
 
 ```bash
-# Default (llama.cpp + Supertonic TTS with Metal/CoreML)
+# Default (LM Studio + Supertonic TTS with CoreML)
 cargo build --release
 
 # With Kokoro TTS instead
-cargo build --release --no-default-features --features llama-cpp,kokoro
+cargo build --release --no-default-features --features lm-studio,kokoro
 
-# With Ollama instead of llama.cpp
+# With llama.cpp instead (Metal GPU, auto-downloads models)
+cargo build --release --no-default-features --features supertonic,llama-cpp
+
+# With Ollama instead
 cargo build --release --no-default-features --features supertonic,ollama
 ```
 
@@ -166,6 +179,12 @@ prompt_format = "chatml"  # chatml, mistral, or llama3
 
 # Or use a local model:
 # model_path = "models/my-model.gguf"
+
+# Or use LM Studio:
+# [llm]
+# backend = "lm-studio"
+# base_url = "http://localhost:1234"
+# model = "default"
 
 [tts]
 engine = "supertonic"

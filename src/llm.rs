@@ -1,7 +1,7 @@
 //! LLM backends - llama.cpp (default) and Ollama (optional)
 
-use std::path::PathBuf;
 use crate::config::PromptFormat;
+use std::path::PathBuf;
 
 /// Chat message for conversation history
 #[derive(Clone)]
@@ -20,7 +20,11 @@ pub enum Role {
 /// Trait for LLM backends
 pub trait LlmBackend: Send {
     /// Generate streaming response, calling on_token for each token
-    fn generate(&mut self, messages: &[Message], on_token: &mut dyn FnMut(&str)) -> Result<String, Box<dyn std::error::Error + Send + Sync>>;
+    fn generate(
+        &mut self,
+        messages: &[Message],
+        on_token: &mut dyn FnMut(&str),
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 // ============================================================================
@@ -41,21 +45,34 @@ pub mod llama {
 
     impl LlamaCppBackend {
         /// Load model from local path
-        pub fn from_path(path: impl Into<PathBuf>, system_prompt: &str, prompt_format: PromptFormat) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        pub fn from_path(
+            path: impl Into<PathBuf>,
+            system_prompt: &str,
+            prompt_format: PromptFormat,
+        ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
             let path = path.into();
-            println!("Loading model from {:?}...", path);
-            
+            eprintln!("Loading model from {:?}...", path);
+
             let mut params = LlamaParams::default();
             params.n_gpu_layers = 99; // Offload all layers to GPU (Metal on macOS)
-            
+
             let model = LlamaModel::load_from_file(&path, params)
                 .map_err(|e| format!("Failed to load model: {:?}", e))?;
-            println!("Model loaded.");
-            Ok(Self { model, system_prompt: system_prompt.to_string(), prompt_format })
+            eprintln!("Model loaded.");
+            Ok(Self {
+                model,
+                system_prompt: system_prompt.to_string(),
+                prompt_format,
+            })
         }
 
         /// Download model from HuggingFace if needed, then load
-        pub fn from_hf(repo: &str, filename: &str, system_prompt: &str, prompt_format: PromptFormat) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        pub fn from_hf(
+            repo: &str,
+            filename: &str,
+            system_prompt: &str,
+            prompt_format: PromptFormat,
+        ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
             let path = download_model(repo, filename)?;
             Self::from_path(path, system_prompt, prompt_format)
         }
@@ -73,14 +90,17 @@ pub mod llama {
             prompt.push_str("<|im_start|>system\n");
             prompt.push_str(&self.system_prompt);
             prompt.push_str("<|im_end|>\n");
-            
+
             for msg in messages {
                 let role = match msg.role {
                     Role::System => continue,
                     Role::User => "user",
                     Role::Assistant => "assistant",
                 };
-                prompt.push_str(&format!("<|im_start|>{}\n{}<|im_end|>\n", role, msg.content));
+                prompt.push_str(&format!(
+                    "<|im_start|>{}\n{}<|im_end|>\n",
+                    role, msg.content
+                ));
             }
             prompt.push_str("<|im_start|>assistant\n");
             prompt
@@ -91,7 +111,7 @@ pub mod llama {
             prompt.push_str("<s>[INST] ");
             prompt.push_str(&self.system_prompt);
             prompt.push_str("\n\n");
-            
+
             let mut first_user = true;
             for msg in messages {
                 match msg.role {
@@ -121,14 +141,17 @@ pub mod llama {
             prompt.push_str("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n");
             prompt.push_str(&self.system_prompt);
             prompt.push_str("<|eot_id|>");
-            
+
             for msg in messages {
                 let role = match msg.role {
                     Role::System => continue,
                     Role::User => "user",
                     Role::Assistant => "assistant",
                 };
-                prompt.push_str(&format!("<|start_header_id|>{}<|end_header_id|>\n\n{}<|eot_id|>", role, msg.content));
+                prompt.push_str(&format!(
+                    "<|start_header_id|>{}<|end_header_id|>\n\n{}<|eot_id|>",
+                    role, msg.content
+                ));
             }
             prompt.push_str("<|start_header_id|>assistant<|end_header_id|>\n\n");
             prompt
@@ -144,26 +167,33 @@ pub mod llama {
     }
 
     impl LlmBackend for LlamaCppBackend {
-        fn generate(&mut self, messages: &[Message], on_token: &mut dyn FnMut(&str)) -> Result<String, Box<dyn std::error::Error + Send + Sync>>
-        {
+        fn generate(
+            &mut self,
+            messages: &[Message],
+            on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
             let prompt = self.format_prompt(messages);
             let stop_tokens = self.stop_tokens();
-            
+
             let mut session_params = SessionParams::default();
             session_params.n_ctx = 4096;
             session_params.n_batch = 2048;
-            
-            let mut session = self.model.create_session(session_params)
+
+            let mut session = self
+                .model
+                .create_session(session_params)
                 .map_err(|e| format!("Failed to create session: {:?}", e))?;
-            
-            session.advance_context(&prompt)
+
+            session
+                .advance_context(&prompt)
                 .map_err(|e| format!("Failed to advance context: {:?}", e))?;
-            
+
             let mut full_response = String::new();
-            let completions = session.start_completing_with(StandardSampler::default(), 1024)
+            let completions = session
+                .start_completing_with(StandardSampler::default(), 1024)
                 .map_err(|e| format!("Failed to start completion: {:?}", e))?
                 .into_strings();
-            
+
             for token in completions {
                 if stop_tokens.iter().any(|s| token.contains(s)) {
                     break;
@@ -172,20 +202,23 @@ pub mod llama {
                 full_response.push_str(&token);
                 let _ = std::io::stdout().flush();
             }
-            
+
             Ok(full_response)
         }
     }
 
     /// Download model from HuggingFace Hub
-    fn download_model(repo: &str, filename: &str) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+    fn download_model(
+        repo: &str,
+        filename: &str,
+    ) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
         use hf_hub::api::sync::Api;
-        
-        println!("Checking for model {} from {}...", filename, repo);
+
+        eprintln!("Checking for model {} from {}...", filename, repo);
         let api = Api::new()?;
         let repo = api.model(repo.to_string());
         let path = repo.get(filename)?;
-        println!("Model ready at {:?}", path);
+        eprintln!("Model ready at {:?}", path);
         Ok(path)
     }
 }
@@ -219,8 +252,11 @@ pub mod ollama {
     }
 
     impl LlmBackend for OllamaBackend {
-        fn generate(&mut self, messages: &[Message], on_token: &mut dyn FnMut(&str)) -> Result<String, Box<dyn std::error::Error + Send + Sync>>
-        {
+        fn generate(
+            &mut self,
+            messages: &[Message],
+            on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
             // Build message history
             let mut chat_messages = vec![ChatMessage::system(self.system_prompt.clone())];
             for msg in messages {
@@ -233,26 +269,130 @@ pub mod ollama {
             }
 
             let request = ChatMessageRequest::new(self.model.clone(), chat_messages);
-            
+
             // Run async in blocking context
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
-            
+
             let client = &self.client;
             let result = rt.block_on(async {
                 let mut stream = client.send_chat_messages_stream(request).await?;
                 let mut full_response = String::new();
-                
+
                 while let Some(Ok(chunk)) = stream.next().await {
                     let content = &chunk.message.content;
                     on_token(content);
                     full_response.push_str(content);
                 }
-                
+
                 Ok::<_, Box<dyn std::error::Error + Send + Sync>>(full_response)
             })?;
-            
+
+            Ok(result)
+        }
+    }
+}
+
+// ============================================================================
+// LM Studio backend
+// ============================================================================
+
+#[cfg(feature = "lm-studio")]
+pub mod lm_studio {
+    use super::{LlmBackend, Message, Role};
+    use open_agent::{ContentBlock, Message as OaMessage, TextBlock, prelude::*};
+
+    pub struct LmStudioBackend {
+        client: Option<Client>,
+        base_url: String,
+        model: String,
+        system_prompt: String,
+    }
+
+    impl LmStudioBackend {
+        pub fn new(base_url: &str, model: &str, system_prompt: &str) -> Self {
+            Self {
+                client: None,
+                base_url: base_url.to_string(),
+                model: model.to_string(),
+                system_prompt: system_prompt.to_string(),
+            }
+        }
+
+        fn get_or_create_client(
+            &mut self,
+        ) -> std::result::Result<&mut Client, Box<dyn std::error::Error + Send + Sync>> {
+            if self.client.is_none() {
+                let options = AgentOptions::builder()
+                    .system_prompt(&self.system_prompt)
+                    .model(&self.model)
+                    .base_url(&self.base_url)
+                    .auto_execute_tools(false)
+                    .build()?;
+                self.client = Some(Client::new(options)?);
+            }
+            Ok(self.client.as_mut().unwrap())
+        }
+    }
+
+    impl LlmBackend for LmStudioBackend {
+        fn generate(
+            &mut self,
+            messages: &[Message],
+            on_token: &mut dyn FnMut(&str),
+        ) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+
+            let client = self.get_or_create_client()?;
+
+            // Sync history: clear and rebuild from messages (except last user message)
+            client.clear_history();
+            let history = client.history_mut();
+            for msg in messages.iter().take(messages.len().saturating_sub(1)) {
+                let oa_msg = match msg.role {
+                    Role::System => OaMessage::system(&msg.content),
+                    Role::User => OaMessage::user(&msg.content),
+                    Role::Assistant => {
+                        OaMessage::assistant(vec![ContentBlock::Text(TextBlock::new(&msg.content))])
+                    }
+                };
+                history.push(oa_msg);
+            }
+
+            // Get the last user message
+            let user_msg = messages
+                .last()
+                .filter(|m| matches!(m.role, Role::User))
+                .map(|m| m.content.as_str())
+                .unwrap_or("");
+
+            let result = rt.block_on(async {
+                client.send(user_msg).await?;
+
+                let mut full_response = String::new();
+                while let Some(block) = client.receive().await? {
+                    match block {
+                        ContentBlock::Text(text) => {
+                            on_token(&text.text);
+                            full_response.push_str(&text.text);
+                        }
+                        ContentBlock::ToolUse(tool) => {
+                            eprintln!("[ToolUse] {}: {}", tool.name(), tool.input());
+                        }
+                        ContentBlock::ToolResult(result) => {
+                            eprintln!("[ToolResult] {}", result.content());
+                        }
+                        ContentBlock::Image(img) => {
+                            eprintln!("[Image] {}", img.url());
+                        }
+                    }
+                }
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(full_response)
+            })?;
+
             Ok(result)
         }
     }

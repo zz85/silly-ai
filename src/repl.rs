@@ -26,7 +26,7 @@ pub fn handle_transcript(
         }
         TranscriptEvent::Final(text) => {
             ui.set_idle(); // Clear preview
-            
+
             let in_conversation = last_interaction
                 .map(|t| t.elapsed() < wake_timeout)
                 .unwrap_or(false);

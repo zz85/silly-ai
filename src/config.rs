@@ -65,9 +65,9 @@ fn default_wake_timeout() -> u64 {
 #[serde(rename_all = "lowercase")]
 pub enum PromptFormat {
     #[default]
-    ChatML,   // TinyLlama, Qwen, etc: <|im_start|>...<|im_end|>
-    Mistral,  // Mistral: [INST]...[/INST]
-    Llama3,   // Llama 3: <|begin_of_text|>...<|eot_id|>
+    ChatML, // TinyLlama, Qwen, etc: <|im_start|>...<|im_end|>
+    Mistral, // Mistral: [INST]...[/INST]
+    Llama3,  // Llama 3: <|begin_of_text|>...<|eot_id|>
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,6 +91,13 @@ pub enum LlmConfig {
     #[serde(rename = "ollama")]
     Ollama {
         #[serde(default = "default_ollama_model")]
+        model: String,
+    },
+    #[serde(rename = "lm-studio")]
+    LmStudio {
+        #[serde(default = "default_lm_studio_url")]
+        base_url: String,
+        #[serde(default = "default_lm_studio_model")]
         model: String,
     },
 }
@@ -129,6 +136,14 @@ fn default_hf_file() -> String {
 
 fn default_ollama_model() -> String {
     "mistral:7b-instruct".into()
+}
+
+fn default_lm_studio_url() -> String {
+    "http://localhost:1234".into()
+}
+
+fn default_lm_studio_model() -> String {
+    "default".into()
 }
 
 // ============================================================================

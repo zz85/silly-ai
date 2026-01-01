@@ -43,10 +43,15 @@ llama_cpp = { version = "0.3", features = ["metal"], optional = true }
 llama_cpp = { version = "0.3", optional = true }
 
 [features]
-default = ["supertonic", "llama-cpp"]
+default = ["supertonic", "lm-studio"]
 hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
 kokoro = ["kokoros"]
 supertonic = ["ndarray", "ort", "rand", "rand_distr", "regex", "unicode-normalization", "serde_json"]
 llama-cpp = ["llama_cpp", "hf-hub"]
 ollama = ["ollama-rs"]
+lm-studio = ["open-agent-sdk"]
+
+[dependencies.open-agent-sdk]
+version = "0.6"
+optional = true

@@ -36,17 +36,26 @@ impl Chat {
 
     /// Estimate total words in conversation history
     pub fn context_words(&self) -> usize {
-        self.history.iter().map(|m| m.content.split_whitespace().count()).sum()
+        self.history
+            .iter()
+            .map(|m| m.content.split_whitespace().count())
+            .sum()
     }
 
     /// Push user message to history
     pub fn history_push_user(&mut self, message: &str) {
-        self.history.push(Message { role: Role::User, content: message.to_string() });
+        self.history.push(Message {
+            role: Role::User,
+            content: message.to_string(),
+        });
     }
 
     /// Push assistant message to history
     pub fn history_push_assistant(&mut self, message: &str) {
-        self.history.push(Message { role: Role::Assistant, content: message.to_string() });
+        self.history.push(Message {
+            role: Role::Assistant,
+            content: message.to_string(),
+        });
     }
 
     /// Remove last message from history
@@ -55,8 +64,10 @@ impl Chat {
     }
 
     /// Generate response with streaming callback
-    pub fn generate(&mut self, mut on_token: impl FnMut(&str)) -> Result<String, Box<dyn std::error::Error + Send + Sync>>
-    {
+    pub fn generate(
+        &mut self,
+        mut on_token: impl FnMut(&str),
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         self.backend.generate(&self.history, &mut on_token)
     }
 }

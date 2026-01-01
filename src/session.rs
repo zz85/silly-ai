@@ -1,8 +1,8 @@
 //! Session manager - handles LLM, TTS, and audio playback
 
 use crate::chat::Chat;
+use crate::stats::{LlmTimer, SharedStats};
 use crate::tts::Tts;
-use crate::stats::{SharedStats, LlmTimer};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
@@ -42,7 +42,14 @@ impl SessionManager {
         tts_enabled: Arc<AtomicBool>,
         event_tx: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
-        Self { chat, tts, tts_playing, tts_enabled, event_tx, stats: None }
+        Self {
+            chat,
+            tts,
+            tts_playing,
+            tts_enabled,
+            event_tx,
+            stats: None,
+        }
     }
 
     pub fn with_stats(mut self, stats: SharedStats) -> Self {
@@ -140,8 +147,12 @@ impl SessionManager {
         self.chat.history_push_assistant(&full_response);
 
         let response_words = full_response.split_whitespace().count();
-        let _ = self.event_tx.send(SessionEvent::ResponseEnd { response_words });
-        let _ = self.event_tx.send(SessionEvent::ContextWords(self.chat.context_words()));
+        let _ = self
+            .event_tx
+            .send(SessionEvent::ResponseEnd { response_words });
+        let _ = self
+            .event_tx
+            .send(SessionEvent::ContextWords(self.chat.context_words()));
 
         // Wait for TTS to finish
         sink.sleep_until_end();

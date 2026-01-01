@@ -269,6 +269,7 @@ pub mod lm_studio {
 
     pub struct LmStudioBackend {
         port: u16,
+        model: String,
         system_prompt: String,
     }
 
@@ -279,13 +280,13 @@ pub mod lm_studio {
     }
 
     impl LmStudioBackend {
-        pub fn new(base_url: &str, _model: &str, system_prompt: &str) -> Self {
+        pub fn new(base_url: &str, model: &str, system_prompt: &str) -> Self {
             let port = base_url
                 .rsplit(':')
                 .next()
                 .and_then(|p| p.trim_matches('/').parse().ok())
                 .unwrap_or(1234);
-            Self { port, system_prompt: system_prompt.to_string() }
+            Self { port, model: model.to_string(), system_prompt: system_prompt.to_string() }
         }
     }
 
@@ -297,11 +298,12 @@ pub mod lm_studio {
 
             let system_prompt = self.system_prompt.clone();
             let port = self.port;
+            let model_name = self.model.clone();
             let msgs: Vec<_> = messages.iter().map(|m| (m.role, m.content.clone())).collect();
 
             let result = rt.block_on(async {
                 let holder = SystemPromptHolder(system_prompt);
-                let mut chat = Chat::new(Model::Other("default".into()), Context::new(Box::new(holder), 4096), port);
+                let mut chat = Chat::new(Model::Other(model_name), Context::new(Box::new(holder), 4096), port);
 
                 let api_messages: Vec<lm_studio_api::chat::Message> = msgs.iter().map(|(role, content)| {
                     lm_studio_api::chat::Message {
@@ -324,17 +326,12 @@ pub mod lm_studio {
                 chat.send(request.into()).await?;
 
                 let mut full_response = String::new();
-                let mut in_think = false;
-
                 while let Some(result) = chat.next().await {
                     match result {
                         Ok(r) => {
                             if let Some(text) = r.text() {
-                                let filtered = filter_think(&text, &mut in_think);
-                                if !filtered.is_empty() {
-                                    on_token(&filtered);
-                                    full_response.push_str(&filtered);
-                                }
+                                on_token(&text);
+                                full_response.push_str(&text);
                             }
                         }
                         Err(_) => break,
@@ -345,28 +342,5 @@ pub mod lm_studio {
 
             Ok(result)
         }
-    }
-
-    fn filter_think(content: &str, in_think: &mut bool) -> String {
-        let mut result = String::new();
-        let mut remaining = content;
-        while !remaining.is_empty() {
-            if *in_think {
-                if let Some(end) = remaining.find("</think>") {
-                    *in_think = false;
-                    remaining = &remaining[end + 8..];
-                } else {
-                    break;
-                }
-            } else if let Some(start) = remaining.find("<think>") {
-                result.push_str(&remaining[..start]);
-                *in_think = true;
-                remaining = &remaining[start + 7..];
-            } else {
-                result.push_str(remaining);
-                break;
-            }
-        }
-        result
     }
 }

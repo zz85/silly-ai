@@ -93,6 +93,13 @@ pub enum LlmConfig {
         #[serde(default = "default_ollama_model")]
         model: String,
     },
+    #[serde(rename = "lm-studio")]
+    LmStudio {
+        #[serde(default = "default_lm_studio_url")]
+        base_url: String,
+        #[serde(default = "default_lm_studio_model")]
+        model: String,
+    },
 }
 
 impl Default for LlmConfig {
@@ -129,6 +136,14 @@ fn default_hf_file() -> String {
 
 fn default_ollama_model() -> String {
     "mistral:7b-instruct".into()
+}
+
+fn default_lm_studio_url() -> String {
+    "http://localhost:1234".into()
+}
+
+fn default_lm_studio_model() -> String {
+    "default".into()
 }
 
 // ============================================================================

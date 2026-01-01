@@ -257,3 +257,120 @@ pub mod ollama {
         }
     }
 }
+
+// ============================================================================
+// LM Studio backend (OpenAI-compatible API)
+// ============================================================================
+
+#[cfg(feature = "lm-studio")]
+pub mod lm_studio {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+    use tokio_stream::StreamExt;
+
+    pub struct LmStudioBackend {
+        base_url: String,
+        model: String,
+        system_prompt: String,
+    }
+
+    #[derive(Serialize)]
+    struct ChatRequest {
+        model: String,
+        messages: Vec<ChatMsg>,
+        stream: bool,
+    }
+
+    #[derive(Serialize)]
+    struct ChatMsg {
+        role: &'static str,
+        content: String,
+    }
+
+    #[derive(Deserialize)]
+    struct StreamChunk {
+        choices: Vec<Choice>,
+    }
+
+    #[derive(Deserialize)]
+    struct Choice {
+        delta: Delta,
+    }
+
+    #[derive(Deserialize)]
+    struct Delta {
+        content: Option<String>,
+    }
+
+    impl LmStudioBackend {
+        pub fn new(base_url: &str, model: &str, system_prompt: &str) -> Self {
+            Self {
+                base_url: base_url.trim_end_matches('/').to_string(),
+                model: model.to_string(),
+                system_prompt: system_prompt.to_string(),
+            }
+        }
+    }
+
+    impl LlmBackend for LmStudioBackend {
+        fn generate(&mut self, messages: &[Message], on_token: &mut dyn FnMut(&str)) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            let mut chat_msgs = vec![ChatMsg { role: "system", content: self.system_prompt.clone() }];
+            for msg in messages {
+                let role = match msg.role {
+                    Role::System => "system",
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                };
+                chat_msgs.push(ChatMsg { role, content: msg.content.clone() });
+            }
+
+            let request = ChatRequest {
+                model: self.model.clone(),
+                messages: chat_msgs,
+                stream: true,
+            };
+
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+
+            let url = format!("{}/v1/chat/completions", self.base_url);
+            let result = rt.block_on(async {
+                let client = reqwest::Client::new();
+                let resp = client.post(&url)
+                    .json(&request)
+                    .send()
+                    .await?;
+
+                let mut stream = resp.bytes_stream();
+                let mut full_response = String::new();
+                let mut buffer = String::new();
+
+                while let Some(chunk) = stream.next().await {
+                    let bytes = chunk?;
+                    buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                    // Process complete SSE lines
+                    while let Some(pos) = buffer.find('\n') {
+                        let line = buffer[..pos].trim().to_string();
+                        buffer = buffer[pos + 1..].to_string();
+
+                        if line.starts_with("data: ") {
+                            let data = &line[6..];
+                            if data == "[DONE]" { continue; }
+                            if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
+                                if let Some(content) = chunk.choices.first().and_then(|c| c.delta.content.as_ref()) {
+                                    on_token(content);
+                                    full_response.push_str(content);
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(full_response)
+            })?;
+
+            Ok(result)
+        }
+    }
+}

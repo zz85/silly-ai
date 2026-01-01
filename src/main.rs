@@ -267,6 +267,14 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         LlmConfig::Ollama { .. } => {
             panic!("Ollama not enabled. Build with --features ollama");
         }
+        #[cfg(feature = "lm-studio")]
+        LlmConfig::LmStudio { base_url, model } => {
+            Box::new(llm::lm_studio::LmStudioBackend::new(&base_url, &model, &system_prompt))
+        }
+        #[cfg(not(feature = "lm-studio"))]
+        LlmConfig::LmStudio { .. } => {
+            panic!("LM Studio not enabled. Build with --features lm-studio");
+        }
     };
 
     let llm_chat = chat::Chat::new(llm_backend);

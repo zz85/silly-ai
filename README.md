@@ -91,7 +91,15 @@ ollama serve  # in another terminal
 cargo build --release --no-default-features --features supertonic,ollama
 ```
 
-### 7. Build variants
+### 7. (Optional) Use LM Studio instead
+
+Start LM Studio with a model loaded, then build with the lm-studio feature:
+
+```bash
+cargo build --release --no-default-features --features supertonic,lm-studio
+```
+
+### 8. Build variants
 
 ```bash
 # Default (llama.cpp + Supertonic TTS with Metal/CoreML)
@@ -102,6 +110,9 @@ cargo build --release --no-default-features --features llama-cpp,kokoro
 
 # With Ollama instead of llama.cpp
 cargo build --release --no-default-features --features supertonic,ollama
+
+# With LM Studio instead of llama.cpp
+cargo build --release --no-default-features --features supertonic,lm-studio
 ```
 
 **Note**: On Apple Silicon (M1/M2/M3), hardware acceleration is automatically enabled:
@@ -166,6 +177,12 @@ prompt_format = "chatml"  # chatml, mistral, or llama3
 
 # Or use a local model:
 # model_path = "models/my-model.gguf"
+
+# Or use LM Studio:
+# [llm]
+# backend = "lm-studio"
+# base_url = "http://localhost:1234"
+# model = "default"
 
 [tts]
 engine = "supertonic"

@@ -1,17 +1,18 @@
 # silly-ai
 
-"Hey Silly" is a CLI based AI voice chat assistant using real-time speech transcription, Ollama, and TTS. It allows answering questions from LLM while completely offline, making this a good replacement for cloud based personal assistants like Siri, Alexa, Google, ChatGPT if you are ever concerned about sending anything over the internet.
+"Hey Silly" is a CLI based AI voice chat assistant using real-time speech transcription, local LLMs, and TTS. It allows answering questions from LLM while completely offline, making this a good replacement for cloud based personal assistants like Siri, Alexa, Google, ChatGPT if you are ever concerned about sending anything over the internet.
 
 ## Features
 
 - Real-time speech-to-text using [transcribe-rs](https://github.com/cjpais/transcribe-rs) with NVIDIA Parakeet
 - Voice Activity Detection (VAD) with Silero for utterance segmentation
 - Live preview transcription (gray text) while speaking
-- Conversational AI via Ollama with voice-optimized system prompt
+- **Local LLM inference** via llama.cpp with Metal GPU acceleration (or Ollama)
+- **Auto-download models** from HuggingFace on first run
 - Text-to-speech with [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M) or [Supertonic](https://github.com/supertone-inc/supertonic)
 - Streaming TTS: speech starts as soon as the first sentence is generated
 - Multi-threaded architecture: separate threads for audio capture, VAD, preview transcription, and final transcription
-- **Hardware acceleration**: CoreML on Apple Silicon for VAD, transcription, and TTS (Supertonic)
+- **Hardware acceleration**: Metal on Apple Silicon for LLM, CoreML for VAD, transcription, and TTS
 
 ## Demo
 [demo](https://x.com/BlurSpline/status/2004470406435295742?s=20)
@@ -19,10 +20,10 @@
 ## Architecture
 
 ```
-┌─────────┐    ┌─────┐    ┌─────────────────┐    ┌─────────┐    ┌────────┐    ┌─────┐
-│  Audio  │───▶│ VAD │───▶│ Final Transcr.  │───▶│         │───▶│ Ollama │───▶│ TTS │
-│ Capture │    │     │    └─────────────────┘    │ Display │    │  Chat  │    │     │
-└─────────┘    │     │    ┌─────────────────┐    │         │    └────────┘    └─────┘
+┌─────────┐    ┌─────┐    ┌─────────────────┐    ┌─────────┐    ┌───────────┐    ┌─────┐
+│  Audio  │───▶│ VAD │───▶│ Final Transcr.  │───▶│         │───▶│ llama.cpp │───▶│ TTS │
+│ Capture │    │     │    └─────────────────┘    │ Display │    │  (Metal)  │    │     │
+└─────────┘    │     │    ┌─────────────────┐    │         │    └───────────┘    └─────┘
                │     │───▶│Preview Transcr. │───▶│         │
                └─────┘    └─────────────────┘    └─────────┘
                           (lossy channel)
@@ -57,7 +58,7 @@ git clone --depth 1 https://huggingface.co/Supertone/supertonic assets
 cd assets && git lfs pull && cd ../..
 ```
 
-### 4b. (Optional) Download Kokoro TTS model and voices
+### 4. (Optional) Download Kokoro TTS model and voices
 
 #### system dependencies (macOS)
 
@@ -72,34 +73,42 @@ curl -L "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-fil
 cd ..
 ```
 
-### 5. Start Ollama
+### 5. Build and run
 
 ```bash
-ollama serve
-```
-
-Make sure you have a model available (default: `gpt-oss:20b`). Edit `src/chat.rs` to change the model.
-
-### 6. Build and run
-
-```bash
-# Default (Supertonic TTS with CoreML on Apple Silicon)
 cargo build --release
 ./target/release/silly
-
-# With Kokoro TTS instead
-AUDIOPUS_SYS_USE_PKG_CONFIG=1 cargo build --release --no-default-features --features kokoro
-
-# With both TTS engines
-cargo build --release --features kokoro
 ```
 
-**Note**: On Apple Silicon (M1/M2/M3), CoreML acceleration is automatically enabled for:
-- VAD (Silero)
-- TTS (Supertonic - 4 ONNX models accelerated)
-- Transcription (via ONNX Runtime backend)
+The LLM model (TinyLlama by default) will be **automatically downloaded** from HuggingFace on first run.
 
-This provides 3-4x speedup for transcription and significant TTS acceleration.
+### 6. (Optional) Use Ollama instead
+
+If you prefer Ollama, start the server and build with the ollama feature:
+
+```bash
+ollama serve  # in another terminal
+cargo build --release --no-default-features --features supertonic,ollama
+```
+
+### 7. Build variants
+
+```bash
+# Default (llama.cpp + Supertonic TTS with Metal/CoreML)
+cargo build --release
+
+# With Kokoro TTS instead
+cargo build --release --no-default-features --features llama-cpp,kokoro
+
+# With Ollama instead of llama.cpp
+cargo build --release --no-default-features --features supertonic,ollama
+```
+
+**Note**: On Apple Silicon (M1/M2/M3), hardware acceleration is automatically enabled:
+- LLM: Metal GPU via llama.cpp
+- VAD: CoreML (Silero)
+- TTS: CoreML (Supertonic)
+- Transcription: CoreML (Parakeet)
 
 ## CLI Commands
 
@@ -119,7 +128,7 @@ silly test-ui [scene]  # scenes: idle, preview, thinking, speaking, response, al
 Say the wake word ("Hey Silly" by default) to activate, then speak your question. The CLI will:
 1. Show preview text in gray while you're speaking
 2. Print final transcription with `>` prefix when you pause
-3. Send to Ollama and stream the response in cyan
+3. Send to LLM and stream the response in cyan
 4. Speak the response using TTS (streaming sentence-by-sentence)
 
 After responding, the assistant listens for follow-up questions for 30 seconds (configurable) before requiring the wake word again.
@@ -149,24 +158,40 @@ name = "Silly"
 wake_word = "Hey Silly"
 wake_timeout_secs = 30
 
+[llm]
+backend = "llama-cpp"
+hf_repo = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
+hf_file = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+prompt_format = "chatml"  # chatml, mistral, or llama3
+
+# Or use a local model:
+# model_path = "models/my-model.gguf"
+
 [tts]
 engine = "supertonic"
 onnx_dir = "models/supertonic/onnx"
 voice_style = "models/supertonic/voice_styles/M1.json"
-speed = 1.1  # Optional: 0.5 to 2.0 (default: 1.1)
+speed = 1.1
 ```
 
-Or for Kokoro TTS:
+### LLM Models
+
+| Model | Size | prompt_format | hf_repo | hf_file |
+|-------|------|---------------|---------|---------|
+| TinyLlama | ~670MB | chatml | `TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF` | `tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf` |
+| Mistral 7B | ~4GB | mistral | `TheBloke/Mistral-7B-Instruct-v0.2-GGUF` | `mistral-7b-instruct-v0.2.Q4_K_M.gguf` |
+| Llama 3 8B | ~4.5GB | llama3 | `QuantFactory/Meta-Llama-3-8B-Instruct-GGUF` | `Meta-Llama-3-8B-Instruct.Q4_K_M.gguf` |
+
+For Kokoro TTS:
 ```toml
 [tts]
 engine = "kokoro"
 model = "models/kokoro-v1.0.onnx"
 voices = "models/voices-v1.0.bin"
-speed = 1.1  # Optional: 0.5 to 2.0 (default: 1.1)
+speed = 1.1
 ```
 
 Other settings:
-- **LLM Model**: Edit `MODEL` constant in `src/chat.rs` (default: `gpt-oss:20b`)
 - **VAD thresholds**: Edit constants in `src/audio.rs` and `src/vad.rs`
 - **Preview interval**: `PREVIEW_INTERVAL` in `src/audio.rs` (default 500ms)
 
@@ -174,7 +199,7 @@ Other settings:
 
 ```bash
 cargo install hotpath --features="tui"
-AUDIOPUS_SYS_USE_PKG_CONFIG=1 cargo run --release --features hotpath
+cargo run --release --features hotpath
 # In another terminal:
 hotpath console
 ```

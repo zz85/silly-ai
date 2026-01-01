@@ -50,14 +50,14 @@ impl SessionManager {
         self
     }
 
-    pub async fn run(mut self, mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>) {
-        while let Some(cmd) = cmd_rx.recv().await {
+    pub fn run_sync(mut self, mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>) {
+        while let Some(cmd) = cmd_rx.blocking_recv() {
             match cmd {
                 SessionCommand::Greet => {
-                    self.process_message("Hello.", &mut cmd_rx).await;
+                    self.process_message("Hello.");
                 }
                 SessionCommand::UserInput(text) => {
-                    self.process_message(&text, &mut cmd_rx).await;
+                    self.process_message(&text);
                 }
                 SessionCommand::Cancel => {
                     // Nothing to cancel if idle
@@ -66,23 +66,11 @@ impl SessionManager {
         }
     }
 
-    async fn process_message(&mut self, message: &str, cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>) {
+    fn process_message(&mut self, message: &str) {
         self.tts_playing.store(true, Ordering::SeqCst);
         let _ = self.event_tx.send(SessionEvent::Thinking);
 
         self.chat.history_push_user(message);
-        
-        let mut full_response = String::new();
-
-        let stream_result = self.chat.create_stream().await;
-        let mut llm_stream = match stream_result {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = self.event_tx.send(SessionEvent::Error(e.to_string()));
-                self.tts_playing.store(false, Ordering::SeqCst);
-                return;
-            }
-        };
 
         // Create TTS sink upfront for streaming TTS
         let (stream, sink) = match Tts::create_sink() {
@@ -95,46 +83,35 @@ impl SessionManager {
         };
 
         let mut buffer = String::new();
-        let mut cancelled = false;
         let mut speaking_sent = false;
         let mut llm_timer = self.stats.as_ref().map(|s| LlmTimer::new(Arc::clone(s)));
+        let mut full_response = String::new();
 
-        loop {
-            tokio::select! {
-                chunk = llm_stream.next() => {
-                    match chunk {
-                        Some(content) => {
-                            if let Some(ref mut timer) = llm_timer {
-                                timer.mark_first_token();
-                            }
-                            let _ = self.event_tx.send(SessionEvent::Chunk(content.clone()));
-                            full_response.push_str(&content);
-                            buffer.push_str(&content);
+        let event_tx = self.event_tx.clone();
+        let tts_enabled = Arc::clone(&self.tts_enabled);
 
-                            while let Some(pos) = buffer.find(|c| c == '.' || c == '!' || c == '?') {
-                                let sentence = buffer[..=pos].trim().to_string();
-                                if !sentence.is_empty() && self.tts_enabled.load(Ordering::SeqCst) {
-                                    if !speaking_sent {
-                                        let _ = self.event_tx.send(SessionEvent::Speaking);
-                                        speaking_sent = true;
-                                    }
-                                    let _ = self.tts.queue(&sentence, &sink);
-                                }
-                                buffer = buffer[pos + 1..].to_string();
-                            }
-                        }
-                        None => break,
-                    }
-                }
-                cmd = cmd_rx.recv() => {
-                    if let Some(SessionCommand::Cancel) = cmd {
-                        cancelled = true;
-                        sink.stop();
-                        break;
-                    }
-                }
+        // Generate with streaming callback
+        let result = self.chat.generate(|token| {
+            if let Some(ref mut timer) = llm_timer {
+                timer.mark_first_token();
             }
-        }
+            let _ = event_tx.send(SessionEvent::Chunk(token.to_string()));
+            full_response.push_str(token);
+            buffer.push_str(token);
+
+            // Queue complete sentences to TTS
+            while let Some(pos) = buffer.find(|c| c == '.' || c == '!' || c == '?') {
+                let sentence = buffer[..=pos].trim().to_string();
+                if !sentence.is_empty() && tts_enabled.load(Ordering::SeqCst) {
+                    if !speaking_sent {
+                        let _ = event_tx.send(SessionEvent::Speaking);
+                        speaking_sent = true;
+                    }
+                    let _ = self.tts.queue(&sentence, &sink);
+                }
+                buffer = buffer[pos + 1..].to_string();
+            }
+        });
 
         // Record LLM stats
         let token_count = full_response.split_whitespace().count();
@@ -142,7 +119,8 @@ impl SessionManager {
             timer.finish(token_count);
         }
 
-        if cancelled {
+        if let Err(e) = result {
+            let _ = self.event_tx.send(SessionEvent::Error(e.to_string()));
             self.chat.history_pop();
             Tts::finish(stream, sink);
             self.tts_playing.store(false, Ordering::SeqCst);
@@ -155,7 +133,6 @@ impl SessionManager {
         if !remaining.is_empty() && self.tts_enabled.load(Ordering::SeqCst) {
             if !speaking_sent {
                 let _ = self.event_tx.send(SessionEvent::Speaking);
-                speaking_sent = true;
             }
             let _ = self.tts.queue(remaining, &sink);
         }
@@ -166,21 +143,8 @@ impl SessionManager {
         let _ = self.event_tx.send(SessionEvent::ResponseEnd { response_words });
         let _ = self.event_tx.send(SessionEvent::ContextWords(self.chat.context_words()));
 
-        // Wait for TTS with cancel check
-        loop {
-            if sink.empty() {
-                break;
-            }
-            tokio::select! {
-                _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
-                cmd = cmd_rx.recv() => {
-                    if let Some(SessionCommand::Cancel) = cmd {
-                        sink.stop();
-                        break;
-                    }
-                }
-            }
-        }
+        // Wait for TTS to finish
+        sink.sleep_until_end();
 
         Tts::finish(stream, sink);
         let _ = self.event_tx.send(SessionEvent::SpeakingDone);

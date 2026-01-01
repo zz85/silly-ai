@@ -261,7 +261,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
         #[cfg(feature = "kalosm")]
         LlmConfig::Kalosm { model } => {
-            use kalosm::language::LlamaSource;
+            use kalosm_llama::LlamaSource;
             let source = match model.as_str() {
                 "phi3" => LlamaSource::phi_3_mini_4k_instruct(),
                 "llama3" => LlamaSource::llama_3_1_8b_chat(),

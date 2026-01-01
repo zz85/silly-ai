@@ -265,7 +265,8 @@ pub mod ollama {
 #[cfg(feature = "kalosm")]
 pub mod kalosm_backend {
     use super::*;
-    use kalosm::language::{Llama, LlamaSource, TextCompletionModelExt};
+    use kalosm_llama::{Llama, LlamaSource};
+    use kalosm_llama::prelude::TextCompletionModelExt;
     use futures_util::StreamExt;
 
     pub struct KalosmBackend {

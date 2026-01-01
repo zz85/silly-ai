@@ -345,6 +345,7 @@ pub mod lm_studio {
                 let mut stream = resp.bytes_stream();
                 let mut full_response = String::new();
                 let mut buffer = String::new();
+                let mut in_think = false; // Track <think> blocks
 
                 while let Some(chunk) = stream.next().await {
                     let bytes = chunk?;
@@ -360,8 +361,12 @@ pub mod lm_studio {
                             if data == "[DONE]" { continue; }
                             if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
                                 if let Some(content) = chunk.choices.first().and_then(|c| c.delta.content.as_ref()) {
-                                    on_token(content);
-                                    full_response.push_str(content);
+                                    // Filter <think>...</think> blocks
+                                    let filtered = filter_think(content, &mut in_think);
+                                    if !filtered.is_empty() {
+                                        on_token(&filtered);
+                                        full_response.push_str(&filtered);
+                                    }
                                 }
                             }
                         }
@@ -372,5 +377,30 @@ pub mod lm_studio {
 
             Ok(result)
         }
+    }
+
+    /// Filter out <think>...</think> blocks from streaming tokens
+    fn filter_think(content: &str, in_think: &mut bool) -> String {
+        let mut result = String::new();
+        let mut remaining = content;
+
+        while !remaining.is_empty() {
+            if *in_think {
+                if let Some(end) = remaining.find("</think>") {
+                    *in_think = false;
+                    remaining = &remaining[end + 8..];
+                } else {
+                    break; // Still inside think block
+                }
+            } else if let Some(start) = remaining.find("<think>") {
+                result.push_str(&remaining[..start]);
+                *in_think = true;
+                remaining = &remaining[start + 7..];
+            } else {
+                result.push_str(remaining);
+                break;
+            }
+        }
+        result
     }
 }

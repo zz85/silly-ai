@@ -313,18 +313,20 @@ pub mod kalosm_backend {
             }
             prompt.push_str("Assistant: ");
             
-            // Use block_in_place since we're in a multi-threaded runtime
-            let result = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let mut stream = self.model.complete(&prompt);
-                    let mut full_response = String::new();
-                    while let Some(token) = stream.next().await {
-                        let t = token.to_string();
-                        on_token(&t);
-                        full_response.push_str(&t);
-                    }
-                    full_response
-                })
+            // Create a runtime since we're on a dedicated thread without tokio
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            
+            let result = rt.block_on(async {
+                let mut stream = self.model.complete(&prompt);
+                let mut full_response = String::new();
+                while let Some(token) = stream.next().await {
+                    let t = token.to_string();
+                    on_token(&t);
+                    full_response.push_str(&t);
+                }
+                full_response
             });
             
             Ok(result)

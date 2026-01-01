@@ -268,7 +268,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 "mistral" => LlamaSource::mistral_7b_instruct_2(),
                 _ => panic!("Unknown kalosm model preset: {}. Use phi3, llama3, or mistral", model),
             };
-            Box::new(llm::kalosm_backend::KalosmBackend::new(source, &system_prompt)?)
+            Box::new(llm::kalosm_backend::KalosmBackend::new_blocking(source, &system_prompt)?)
         }
         #[cfg(not(feature = "kalosm"))]
         LlmConfig::Kalosm { .. } => {

@@ -274,30 +274,32 @@ pub mod kalosm_backend {
     }
 
     impl KalosmBackend {
-        pub fn new(source: LlamaSource, system_prompt: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?;
+        pub fn new_blocking(source: LlamaSource, system_prompt: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+            // Spawn a new thread to avoid "runtime within runtime" panic
+            let system_prompt = system_prompt.to_string();
+            let handle = std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                
+                println!("Loading Kalosm model...");
+                let model = rt.block_on(async {
+                    Llama::builder()
+                        .with_source(source)
+                        .build()
+                        .await
+                })?;
+                println!("Model loaded.");
+                
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(Self { model, system_prompt })
+            });
             
-            println!("Loading Kalosm model...");
-            let model = rt.block_on(async {
-                Llama::builder()
-                    .with_source(source)
-                    .build()
-                    .await
-            })?;
-            println!("Model loaded.");
-            
-            Ok(Self { model, system_prompt: system_prompt.to_string() })
+            handle.join().map_err(|_| "Thread panicked")?
         }
     }
 
     impl LlmBackend for KalosmBackend {
         fn generate(&mut self, messages: &[Message], on_token: &mut dyn FnMut(&str)) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?;
-            
             // Build prompt from messages
             let mut prompt = format!("System: {}\n\n", self.system_prompt);
             for msg in messages {
@@ -310,15 +312,18 @@ pub mod kalosm_backend {
             }
             prompt.push_str("Assistant: ");
             
-            let result = rt.block_on(async {
-                let mut stream = self.model.complete(&prompt);
-                let mut full_response = String::new();
-                while let Some(token) = stream.next().await {
-                    let t = token.to_string();
-                    on_token(&t);
-                    full_response.push_str(&t);
-                }
-                full_response
+            // Use block_in_place since we're in a multi-threaded runtime
+            let result = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let mut stream = self.model.complete(&prompt);
+                    let mut full_response = String::new();
+                    while let Some(token) = stream.next().await {
+                        let t = token.to_string();
+                        on_token(&t);
+                        full_response.push_str(&t);
+                    }
+                    full_response
+                })
             });
             
             Ok(result)

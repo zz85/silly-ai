@@ -325,6 +325,10 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let auto_submit_delay = std::time::Duration::from_millis(2000);
     let mut auto_submit_deadline: Option<tokio::time::Instant> = None;
 
+    // Temporary mic mute on keypress
+    let keypress_mute_duration = std::time::Duration::from_secs(1);
+    let mut keypress_mute_until: Option<std::time::Instant> = None;
+
     // Initial greeting
     let _ = session_tx.send(session::SessionCommand::Greet);
 
@@ -432,6 +436,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                                 let muted = !mic_muted.load(Ordering::SeqCst);
                                 mic_muted.store(muted, Ordering::SeqCst);
                                 tui.set_mic_muted(muted);
+                                keypress_mute_until = None; // Cancel auto-unmute
                                 continue;
                             }
                             if line == "/speak" || line == "/tts" {
@@ -468,6 +473,20 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 // Process pending UI events and draw
                 while let Ok(ui_event) = async_ui_rx.try_recv() {
                     tui.handle_ui_event(ui_event)?;
+                }
+
+                // Temporarily mute mic on any keypress
+                if tui.has_keypress_activity() {
+                    mic_muted.store(true, Ordering::SeqCst);
+                    keypress_mute_until = Some(std::time::Instant::now() + keypress_mute_duration);
+                }
+
+                // Unmute mic after keypress mute timeout
+                if let Some(until) = keypress_mute_until {
+                    if std::time::Instant::now() >= until {
+                        mic_muted.store(false, Ordering::SeqCst);
+                        keypress_mute_until = None;
+                    }
                 }
 
                 // Cancel auto-submit timer on any keypress

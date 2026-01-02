@@ -34,6 +34,7 @@ pub struct Tui {
     spin_frame: usize,
     audio_level: f32,
     input_activity: bool,
+    keypress_activity: bool,
     mic_muted: bool,
     tts_enabled: bool,
     wake_enabled: bool,
@@ -59,6 +60,7 @@ impl Tui {
             spin_frame: 0,
             audio_level: 0.0,
             input_activity: false,
+            keypress_activity: false,
             mic_muted: false,
             tts_enabled: true,
             wake_enabled: true,
@@ -320,6 +322,8 @@ impl Tui {
 
         while event::poll(std::time::Duration::from_millis(0))? {
             if let Event::Key(key) = event::read()? {
+                self.keypress_activity = true;
+
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     return Ok(Some("\x03".to_string()));
                 }
@@ -468,6 +472,13 @@ impl Tui {
     pub fn has_input_activity(&mut self) -> bool {
         let activity = self.input_activity;
         self.input_activity = false;
+        activity
+    }
+
+    /// Check if there was any keypress since last call
+    pub fn has_keypress_activity(&mut self) -> bool {
+        let activity = self.keypress_activity;
+        self.keypress_activity = false;
         activity
     }
 

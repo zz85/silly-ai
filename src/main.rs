@@ -1,11 +1,17 @@
 mod audio;
+#[cfg(feature = "listen")]
+mod capture;
 mod chat;
 mod config;
 #[cfg(feature = "listen")]
 mod listen;
 mod llm;
+#[cfg(feature = "listen")]
+mod pipeline;
 mod render;
 mod repl;
+#[cfg(feature = "listen")]
+mod segmenter;
 mod session;
 mod stats;
 #[cfg(feature = "listen")]

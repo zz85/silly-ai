@@ -44,9 +44,18 @@ fn create_backend(
             prompt_format,
         } => {
             let backend = if let Some(path) = model_path {
-                crate::llm::llama::LlamaCppBackend::from_path(path, SUMMARIZE_SYSTEM, *prompt_format)?
+                crate::llm::llama::LlamaCppBackend::from_path(
+                    path,
+                    SUMMARIZE_SYSTEM,
+                    *prompt_format,
+                )?
             } else {
-                crate::llm::llama::LlamaCppBackend::from_hf(hf_repo, hf_file, SUMMARIZE_SYSTEM, *prompt_format)?
+                crate::llm::llama::LlamaCppBackend::from_hf(
+                    hf_repo,
+                    hf_file,
+                    SUMMARIZE_SYSTEM,
+                    *prompt_format,
+                )?
             };
             Ok(Box::new(backend))
         }
@@ -55,17 +64,16 @@ fn create_backend(
             Err("llama-cpp not enabled. Build with --features llama-cpp".into())
         }
         #[cfg(feature = "ollama")]
-        LlmConfig::Ollama { model } => {
-            Ok(Box::new(crate::llm::ollama::OllamaBackend::new(model, SUMMARIZE_SYSTEM)))
-        }
+        LlmConfig::Ollama { model } => Ok(Box::new(crate::llm::ollama::OllamaBackend::new(
+            model,
+            SUMMARIZE_SYSTEM,
+        ))),
         #[cfg(not(feature = "ollama"))]
-        LlmConfig::Ollama { .. } => {
-            Err("Ollama not enabled. Build with --features ollama".into())
-        }
+        LlmConfig::Ollama { .. } => Err("Ollama not enabled. Build with --features ollama".into()),
         #[cfg(feature = "lm-studio")]
-        LlmConfig::LmStudio { base_url, model } => {
-            Ok(Box::new(crate::llm::lm_studio::LmStudioBackend::new(base_url, model, SUMMARIZE_SYSTEM)))
-        }
+        LlmConfig::LmStudio { base_url, model } => Ok(Box::new(
+            crate::llm::lm_studio::LmStudioBackend::new(base_url, model, SUMMARIZE_SYSTEM),
+        )),
         #[cfg(not(feature = "lm-studio"))]
         LlmConfig::LmStudio { .. } => {
             Err("LM Studio not enabled. Build with --features lm-studio".into())

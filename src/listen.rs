@@ -10,6 +10,19 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 const TARGET_RATE: usize = 16000;
 const VAD_FRAME_SAMPLES: usize = 480;
+
+fn print_status(status: &str, last: &mut String) {
+    if status != last {
+        print!("\r\x1b[K{}", status);
+        std::io::stdout().flush().ok();
+        *last = status.to_string();
+    }
+}
+
+fn clear_status() {
+    print!("\r\x1b[K");
+    std::io::stdout().flush().ok();
+}
 const VAD_MODEL_PATH: &str = "models/silero_vad_v4.onnx";
 const PARAKEET_MODEL_PATH: &str = "models/parakeet-tdt-0.6b-v3-int8";
 const CAPTURE_SAMPLE_RATE: usize = 48000;
@@ -423,6 +436,7 @@ fn process_audio(
     let mut speech_buf: Vec<f32> = Vec::new();
     let mut silence_frames = 0;
     let mut in_speech = false;
+    let mut last_status = String::new();
 
     // Fixed chunk size when VAD disabled (3 seconds)
     let chunk_size = TARGET_RATE * 3;
@@ -430,7 +444,10 @@ fn process_audio(
     while running.load(Ordering::SeqCst) {
         let samples = match rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(s) => s,
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                print_status("⏳ waiting for audio...", &mut last_status);
+                continue;
+            }
             Err(_) => break,
         };
 
@@ -438,7 +455,7 @@ fn process_audio(
             debug_samples.lock().unwrap().extend_from_slice(&samples);
         }
 
-        if let Some(ref mut vad_engine) = vad {
+        if let Some(vad_engine) = vad {
             // VAD-based processing
             for chunk in samples.chunks(VAD_FRAME_SAMPLES) {
                 if chunk.len() < VAD_FRAME_SAMPLES {
@@ -450,14 +467,19 @@ fn process_audio(
                     silence_frames = 0;
                     in_speech = true;
                     speech_buf.extend_from_slice(chunk);
+                    let secs = speech_buf.len() as f32 / TARGET_RATE as f32;
+                    print_status(&format!("🎤 speech [{:.1}s]", secs), &mut last_status);
                 } else if in_speech {
                     silence_frames += 1;
                     speech_buf.extend_from_slice(chunk);
+                    print_status(&format!("🔇 silence ({})", silence_frames), &mut last_status);
 
                     if silence_frames >= 15 {
                         if speech_buf.len() >= TARGET_RATE / 2 {
+                            print_status("⚙️  transcribing...", &mut last_status);
                             match transcriber.transcribe(&speech_buf) {
                                 Ok(text) if !text.is_empty() => {
+                                    clear_status();
                                     println!("> {}", text);
                                     writeln!(writer, "{}", text)?;
                                     writer.flush()?;
@@ -470,15 +492,21 @@ fn process_audio(
                         in_speech = false;
                         silence_frames = 0;
                     }
+                } else {
+                    print_status("👂 listening...", &mut last_status);
                 }
             }
         } else {
             // No VAD - fixed chunks
             speech_buf.extend_from_slice(&samples);
+            let secs = speech_buf.len() as f32 / TARGET_RATE as f32;
+            print_status(&format!("📥 buffering [{:.1}s/3.0s]", secs), &mut last_status);
 
             if speech_buf.len() >= chunk_size {
+                print_status("⚙️  transcribing...", &mut last_status);
                 match transcriber.transcribe(&speech_buf) {
                     Ok(text) if !text.is_empty() => {
+                        clear_status();
                         println!("> {}", text);
                         writeln!(writer, "{}", text)?;
                         writer.flush()?;

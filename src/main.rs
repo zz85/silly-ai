@@ -100,15 +100,21 @@ const TARGET_RATE: usize = 16000;
 
 #[hotpath::main]
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let cli = Cli::parse();
+
+    // Handle sync commands before starting async runtime
+    #[cfg(feature = "listen")]
+    if let Some(Command::Summarize { input }) = &cli.command {
+        return summarize::run_summarize(input.clone());
+    }
+
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(async_main())
+        .block_on(async_main_with_cli(cli))
 }
 
-async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let cli = Cli::parse();
-
+async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync>> {
     match &cli.command {
         Some(Command::Transcribe) => return run_transcribe_mode().await,
         Some(Command::TestUi { scene }) => return test_ui::run(scene).await,
@@ -139,9 +145,7 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             );
         }
         #[cfg(feature = "listen")]
-        Some(Command::Summarize { input }) => {
-            return summarize::run_summarize(input.clone());
-        }
+        Some(Command::Summarize { .. }) => unreachable!("handled in main()"),
         #[cfg(feature = "listen")]
         Some(Command::TranscribeWav { input }) => {
             return listen::transcribe_wav(input.clone());

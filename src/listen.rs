@@ -1,4 +1,4 @@
-pub use crate::pipeline::{run_pipeline, AudioSource};
+pub use crate::pipeline::{run_pipeline_with_options, AudioSource};
 use crate::capture::{resample, TARGET_RATE};
 use crate::transcriber::Transcriber;
 use std::fs::File;
@@ -46,9 +46,9 @@ pub fn run_listen(
     source: AudioSource,
     output: PathBuf,
     _debug_wav: Option<PathBuf>,
-    _save_ogg: Option<PathBuf>,
+    save_ogg: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    run_pipeline(source, output)
+    run_pipeline_with_options(source, output, save_ogg)
 }
 
 pub fn transcribe_wav(path: PathBuf) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

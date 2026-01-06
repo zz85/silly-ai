@@ -25,11 +25,11 @@ use repl::TranscriptEvent;
 
 use clap::{Parser, Subcommand};
 use std::error::Error;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use std::path::PathBuf;
 use vad::VadEngine;
 
 #[derive(Parser)]
@@ -72,6 +72,12 @@ enum Command {
         /// Save raw audio to WAV file for debugging
         #[arg(long)]
         debug_wav: Option<PathBuf>,
+        /// Save compressed audio to OGG file (64kbps)
+        #[arg(long)]
+        save_ogg: Option<PathBuf>,
+        /// Disable VAD, transcribe fixed chunks instead
+        #[arg(long)]
+        no_vad: bool,
     },
     /// Summarize a transcription file using LLM
     #[cfg(feature = "listen")]
@@ -107,7 +113,14 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
         Some(Command::Transcribe) => return run_transcribe_mode().await,
         Some(Command::TestUi { scene }) => return test_ui::run(scene).await,
         #[cfg(feature = "listen")]
-        Some(Command::Listen { source, output, list, debug_wav }) => {
+        Some(Command::Listen {
+            source,
+            output,
+            list,
+            debug_wav,
+            save_ogg,
+            no_vad,
+        }) => {
             if *list {
                 return listen::list_apps();
             }
@@ -117,7 +130,13 @@ async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 Some(s) => listen::AudioSource::App(s.clone()),
                 None => listen::pick_source_interactive()?,
             };
-            return listen::run_listen(src, output.clone(), debug_wav.clone());
+            return listen::run_listen(
+                src,
+                output.clone(),
+                debug_wav.clone(),
+                save_ogg.clone(),
+                *no_vad,
+            );
         }
         #[cfg(feature = "listen")]
         Some(Command::Summarize { input }) => {

@@ -404,16 +404,7 @@ fn run_screen_capture(
         save_debug,
     )?;
 
-    stream.stop_capture()?;
-
-    println!(
-        "Audio buffers received: {}",
-        buffer_count.load(Ordering::Relaxed)
-    );
-    println!(
-        "Total samples received: {}",
-        sample_count.load(Ordering::Relaxed)
-    );
+    let _ = stream.stop_capture(); // Ignore error if already stopped
 
     Ok(())
 }
@@ -488,6 +479,7 @@ fn process_audio(
                     speech_buf.clear();
                     in_speech = false;
                     silence_frames = 0;
+                    vad_engine.reset();
                 }
             }
             

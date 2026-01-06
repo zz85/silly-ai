@@ -113,6 +113,36 @@ pub fn run_pipeline(
     run_pipeline_with_options(source, output, None)
 }
 
+/// Record audio to OGG only, no transcription
+pub fn run_record_only(
+    source: AudioSource,
+    ogg_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || r.store(false, Ordering::SeqCst))?;
+
+    let (ogg_tx, ogg_rx) = flume::bounded::<Vec<f32>>(100);
+
+    let running_capture = running.clone();
+    let capture_handle = thread::spawn(move || {
+        let result = match source {
+            AudioSource::Mic => capture_mic_with_tap(flume::bounded(1).0, Some(ogg_tx), running_capture),
+            AudioSource::System => capture_system_with_tap(flume::bounded(1).0, Some(ogg_tx), running_capture, None),
+            AudioSource::App(name) => capture_system_with_tap(flume::bounded(1).0, Some(ogg_tx), running_capture, Some(name)),
+        };
+        if let Err(e) = result {
+            eprintln!("Capture error: {}", e);
+        }
+    });
+
+    println!("Recording to {}... Press Ctrl+C to stop.\n", ogg_path.display());
+    run_ogg_writer(ogg_rx, ogg_path, running)?;
+
+    let _ = capture_handle.join();
+    Ok(())
+}
+
 pub fn run_pipeline_with_options(
     source: AudioSource,
     output: PathBuf,

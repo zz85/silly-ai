@@ -82,6 +82,19 @@ enum Command {
         #[arg(long)]
         save_ogg: Option<PathBuf>,
     },
+    /// Record audio to OGG file (no transcription)
+    #[cfg(feature = "listen")]
+    Record {
+        /// Audio source: mic, system, or app name
+        #[arg(short, long)]
+        source: Option<String>,
+        /// Output OGG file
+        #[arg(short, long, default_value = "recording.ogg")]
+        output: PathBuf,
+        /// List available applications
+        #[arg(long)]
+        list: bool,
+    },
     /// Summarize a transcription file using LLM
     #[cfg(feature = "listen")]
     Summarize {
@@ -144,6 +157,23 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 debug_wav.clone(),
                 save_ogg.clone(),
             );
+        }
+        #[cfg(feature = "listen")]
+        Some(Command::Record {
+            source,
+            output,
+            list,
+        }) => {
+            if *list {
+                return listen::list_apps();
+            }
+            let src = match source {
+                Some(s) if s == "mic" => listen::AudioSource::Mic,
+                Some(s) if s == "system" => listen::AudioSource::System,
+                Some(s) => listen::AudioSource::App(s.clone()),
+                None => listen::pick_source_interactive()?,
+            };
+            return pipeline::run_record_only(src, output.clone());
         }
         #[cfg(feature = "listen")]
         Some(Command::Summarize { .. }) => unreachable!("handled in main()"),

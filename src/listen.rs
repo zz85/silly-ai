@@ -10,6 +10,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 const TARGET_RATE: usize = 16000;
 const VAD_FRAME_SAMPLES: usize = 480;
+const SILENCE_THRESHOLD_MS: u32 = 500;
 
 fn print_status(status: &str, last: &mut String) {
     if status != last {
@@ -19,10 +20,6 @@ fn print_status(status: &str, last: &mut String) {
     }
 }
 
-fn clear_status() {
-    print!("\r\x1b[K");
-    std::io::stdout().flush().ok();
-}
 const VAD_MODEL_PATH: &str = "models/silero_vad_v4.onnx";
 const PARAKEET_MODEL_PATH: &str = "models/parakeet-tdt-0.6b-v3-int8";
 const CAPTURE_SAMPLE_RATE: usize = 48000;
@@ -98,7 +95,6 @@ pub fn run_listen(
     output: PathBuf,
     debug_wav: Option<PathBuf>,
     save_ogg: Option<PathBuf>,
-    no_vad: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -114,15 +110,13 @@ pub fn run_listen(
 
     println!("Loading transcription model...");
     let mut transcriber = Transcriber::new(PARAKEET_MODEL_PATH)?;
-    let mut vad = if no_vad {
-        println!("VAD disabled - using fixed 3s chunks");
-        None
-    } else {
-        Some(
-            VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE)
-                .map_err(|e| format!("Failed to load VAD: {}", e))?,
-        )
-    };
+    
+    println!("Loading VAD model...");
+    let mut vad = Some(
+        VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE)
+            .map_err(|e| format!("Failed to load VAD: {}", e))?,
+    );
+    println!("VAD loaded: {}", vad.as_ref().unwrap().name());
 
     let (tx, rx): (Sender<Vec<f32>>, Receiver<Vec<f32>>) = mpsc::channel();
 
@@ -424,252 +418,6 @@ fn run_screen_capture(
     Ok(())
 }
 
-fn format_timestamp(secs: f32) -> String {
-    let mins = (secs / 60.0) as u32;
-    let secs = secs % 60.0;
-    format!("{:02}:{:05.2}", mins, secs)
-}
-
-struct Paragraph {
-    start: f32,
-    end: f32,
-    text: String,
-}
-
-struct ContinuousTranscriber {
-    committed_words: Vec<(f32, f32, String)>, // (start, end, word)
-    overlap_audio: Vec<f32>,
-    overlap_duration: f32,
-    time_offset: f32,
-    paragraphs: Vec<Paragraph>,               // Recent paragraphs for repaint
-    lines_printed: usize,                     // How many lines to clear on repaint
-}
-
-impl ContinuousTranscriber {
-    fn new() -> Self {
-        Self {
-            committed_words: Vec::new(),
-            overlap_audio: Vec::new(),
-            overlap_duration: 1.0,
-            time_offset: 0.0,
-            paragraphs: Vec::new(),
-            lines_printed: 0,
-        }
-    }
-
-    fn repaint(&self) {
-        // Move up and clear lines
-        for _ in 0..self.lines_printed {
-            print!("\x1b[A\x1b[K");
-        }
-        // Reprint paragraphs
-        for p in &self.paragraphs {
-            println!("[{}-{}] {}", format_timestamp(p.start), format_timestamp(p.end), p.text);
-        }
-        std::io::stdout().flush().ok();
-    }
-
-    fn process_chunk(
-        &mut self,
-        audio: &[f32],
-        transcriber: &mut crate::transcriber::Transcriber,
-    ) -> Option<(String, bool)> { // Returns (output, needs_repaint)
-        let mut full_audio = self.overlap_audio.clone();
-        full_audio.extend_from_slice(audio);
-        
-        let chunk_duration = full_audio.len() as f32 / TARGET_RATE as f32;
-        let overlap_secs = self.overlap_audio.len() as f32 / TARGET_RATE as f32;
-        
-        let text = match transcriber.transcribe(&full_audio) {
-            Ok(t) => t,
-            Err(_) => return None,
-        };
-        
-        let text = text.trim();
-        if text.is_empty() {
-            self.time_offset += audio.len() as f32 / TARGET_RATE as f32;
-            return None;
-        }
-
-        // Use full text, not segments (segments are subword tokens)
-        let start = self.time_offset;
-        let end = self.time_offset + chunk_duration - overlap_secs;
-
-        // Split into words from the full text
-        let new_words: Vec<(f32, f32, String)> = text
-            .split_whitespace()
-            .map(|w| (start, end, w.to_string()))
-            .collect();
-
-        // Find alignment with committed words
-        let correction_window = 5.min(self.committed_words.len());
-        let mut match_idx = 0;
-        let mut correction_needed = false;
-        
-        if correction_window > 0 {
-            let committed_tail: Vec<&str> = self.committed_words[self.committed_words.len() - correction_window..]
-                .iter()
-                .map(|(_, _, w)| w.as_str())
-                .collect();
-            
-            for i in 0..new_words.len().saturating_sub(correction_window - 1) {
-                let check_len = correction_window.min(new_words.len() - i);
-                let new_slice: Vec<&str> = new_words[i..i + check_len]
-                    .iter()
-                    .map(|(_, _, w)| w.as_str())
-                    .collect();
-                
-                // Check for exact match
-                if new_slice == committed_tail[..check_len] {
-                    match_idx = i + check_len;
-                    break;
-                }
-                
-                // Check for partial match with correction
-                if i == 0 && check_len >= 2 {
-                    let matches = new_slice.iter().zip(committed_tail.iter())
-                        .filter(|(a, b)| a == b)
-                        .count();
-                    if matches >= check_len - 2 { // Allow up to 2 word corrections
-                        // Correction detected - update committed words
-                        let correction_start = self.committed_words.len() - correction_window;
-                        for (j, (start, end, word)) in new_words[..check_len].iter().enumerate() {
-                            if correction_start + j < self.committed_words.len() {
-                                self.committed_words[correction_start + j] = (*start, *end, word.clone());
-                            }
-                        }
-                        correction_needed = true;
-                        match_idx = check_len;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Rebuild paragraphs if correction needed
-        if correction_needed {
-            self.rebuild_paragraphs();
-        }
-
-        // Output new words
-        let output_words = &new_words[match_idx..];
-        
-        let result = if !output_words.is_empty() {
-            let start_time = output_words.first().map(|(s, _, _)| *s).unwrap_or(self.time_offset);
-            let end_time = output_words.last().map(|(_, e, _)| *e).unwrap_or(start_time);
-            let text: String = output_words.iter().map(|(_, _, w)| w.as_str()).collect::<Vec<_>>().join(" ");
-            
-            self.committed_words.extend(output_words.iter().cloned());
-            
-            // Add to paragraphs
-            self.paragraphs.push(Paragraph { start: start_time, end: end_time, text: text.clone() });
-            // Keep only last 10 paragraphs for repaint
-            if self.paragraphs.len() > 10 {
-                self.lines_printed = self.lines_printed.saturating_sub(1);
-                self.paragraphs.remove(0);
-            }
-            
-            Some((format!("[{}-{}] {}", format_timestamp(start_time), format_timestamp(end_time), text), correction_needed))
-        } else {
-            if correction_needed {
-                Some((String::new(), true)) // Signal repaint only
-            } else {
-                None
-            }
-        };
-
-        // Keep overlap
-        let overlap_samples = (self.overlap_duration * TARGET_RATE as f32) as usize;
-        if audio.len() > overlap_samples {
-            self.overlap_audio = audio[audio.len() - overlap_samples..].to_vec();
-        } else {
-            self.overlap_audio = audio.to_vec();
-        }
-        
-        self.time_offset += (audio.len() as f32 / TARGET_RATE as f32) - self.overlap_duration;
-        self.time_offset = self.time_offset.max(0.0);
-
-        result
-    }
-
-    fn rebuild_paragraphs(&mut self) {
-        // Rebuild paragraph text from committed words
-        // Group words by their paragraph based on time proximity
-        self.paragraphs.clear();
-        
-        if self.committed_words.is_empty() {
-            return;
-        }
-
-        let mut current_start = self.committed_words[0].0;
-        let mut current_end = self.committed_words[0].1;
-        let mut current_words: Vec<&str> = vec![&self.committed_words[0].2];
-        
-        for (start, end, word) in &self.committed_words[1..] {
-            if *start - current_end > 2.0 { // Gap > 2s = new paragraph
-                self.paragraphs.push(Paragraph {
-                    start: current_start,
-                    end: current_end,
-                    text: current_words.join(" "),
-                });
-                current_start = *start;
-                current_words.clear();
-            }
-            current_end = *end;
-            current_words.push(word);
-        }
-        
-        if !current_words.is_empty() {
-            self.paragraphs.push(Paragraph {
-                start: current_start,
-                end: current_end,
-                text: current_words.join(" "),
-            });
-        }
-
-        // Keep only last 10
-        while self.paragraphs.len() > 10 {
-            self.paragraphs.remove(0);
-        }
-    }
-
-    fn flush(&mut self, audio: &[f32], transcriber: &mut crate::transcriber::Transcriber) -> Option<String> {
-        if audio.is_empty() && self.overlap_audio.is_empty() {
-            return None;
-        }
-        
-        let mut full_audio = self.overlap_audio.clone();
-        full_audio.extend_from_slice(audio);
-        
-        if full_audio.len() < TARGET_RATE / 2 {
-            return None;
-        }
-
-        let text = match transcriber.transcribe(&full_audio) {
-            Ok(t) => t,
-            Err(_) => return None,
-        };
-
-        let committed_text: String = self.committed_words.iter()
-            .map(|(_, _, w)| w.as_str())
-            .collect::<Vec<_>>()
-            .join(" ");
-        
-        let new_text = if text.starts_with(&committed_text) {
-            text[committed_text.len()..].trim()
-        } else {
-            text.trim()
-        };
-
-        if new_text.is_empty() {
-            return None;
-        }
-
-        let end_time = self.time_offset + full_audio.len() as f32 / TARGET_RATE as f32;
-        Some(format!("[{}-{}] {}", format_timestamp(self.time_offset), format_timestamp(end_time), new_text))
-    }
-}
-
 fn process_audio(
     rx: Receiver<Vec<f32>>,
     transcriber: &mut Transcriber,
@@ -679,22 +427,21 @@ fn process_audio(
     debug_samples: Arc<std::sync::Mutex<Vec<f32>>>,
     save_debug: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut speech_buf: Vec<f32> = Vec::new();
-    let mut silence_frames = 0;
     let mut in_speech = false;
-    let mut last_status = String::new();
-    
-    let mut cont = ContinuousTranscriber::new();
-    let mut chunk_buf: Vec<f32> = Vec::new();
-    let chunk_size = TARGET_RATE * 3;
+    let mut speech_buf: Vec<f32> = Vec::new();
+    let mut silence_frames: u32 = 0;
+    let silence_threshold_frames = (SILENCE_THRESHOLD_MS as usize * TARGET_RATE) / (1000 * VAD_FRAME_SAMPLES);
+    let max_samples = 30 * TARGET_RATE; // 30s max
+    let mut vad_buf: Vec<f32> = Vec::new();
+    let mut total_samples: usize = 0;
+    let mut speech_start_sample: usize = 0;
+
+    let vad_engine = vad.as_mut().expect("VAD required");
 
     while running.load(Ordering::SeqCst) {
         let samples = match rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(s) => s,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                print_status("⏳ waiting for audio...", &mut last_status);
-                continue;
-            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(_) => break,
         };
 
@@ -702,77 +449,66 @@ fn process_audio(
             debug_samples.lock().unwrap().extend_from_slice(&samples);
         }
 
-        if let Some(vad_engine) = vad {
-            for chunk in samples.chunks(VAD_FRAME_SAMPLES) {
-                if chunk.len() < VAD_FRAME_SAMPLES {
-                    continue;
+        vad_buf.extend_from_slice(&samples);
+
+        while vad_buf.len() >= VAD_FRAME_SAMPLES {
+            let chunk: Vec<f32> = vad_buf.drain(..VAD_FRAME_SAMPLES).collect();
+            let is_speech = vad_engine.is_speech(&chunk, in_speech);
+
+            if is_speech {
+                if !in_speech {
+                    speech_start_sample = total_samples;
+                    print!("🎤 ");
+                    std::io::stdout().flush().ok();
                 }
-                let is_speech = vad_engine.is_speech(chunk, in_speech);
+                silence_frames = 0;
+                in_speech = true;
+                speech_buf.extend_from_slice(&chunk);
+            } else if in_speech {
+                silence_frames += 1;
+                speech_buf.extend_from_slice(&chunk);
 
-                if is_speech {
-                    silence_frames = 0;
-                    in_speech = true;
-                    speech_buf.extend_from_slice(chunk);
-                    let secs = speech_buf.len() as f32 / TARGET_RATE as f32;
-                    print_status(&format!("🎤 speech [{:.1}s]", secs), &mut last_status);
-                } else if in_speech {
-                    silence_frames += 1;
-                    speech_buf.extend_from_slice(chunk);
-                    print_status(&format!("🔇 silence ({})", silence_frames), &mut last_status);
-
-                    if silence_frames >= 15 {
-                        if speech_buf.len() >= TARGET_RATE / 2 {
-                            print_status("⚙️  transcribing...", &mut last_status);
-                            match transcriber.transcribe(&speech_buf) {
-                                Ok(text) if !text.is_empty() => {
-                                    clear_status();
-                                    println!("> {}", text);
-                                    writeln!(writer, "{}", text)?;
-                                    writer.flush()?;
-                                }
-                                Ok(_) => {}
-                                Err(e) => eprintln!("Transcription error: {}", e),
-                            }
+                // Segment complete on silence or max duration
+                if silence_frames >= silence_threshold_frames as u32 || speech_buf.len() >= max_samples {
+                    let duration = speech_buf.len() as f32 / TARGET_RATE as f32;
+                    println!("[{:.1}s]", duration);
+                    
+                    if let Ok(text) = transcriber.transcribe(&speech_buf) {
+                        let text = text.trim();
+                        if !text.is_empty() {
+                            let start = speech_start_sample as f32 / TARGET_RATE as f32;
+                            let end = start + duration;
+                            let line = format!("[{:.2}-{:.2}] {}", start, end, text);
+                            println!("{}", line);
+                            writeln!(writer, "{}", line)?;
+                            writer.flush()?;
                         }
-                        speech_buf.clear();
-                        in_speech = false;
-                        silence_frames = 0;
                     }
-                } else {
-                    print_status("👂 listening...", &mut last_status);
+                    
+                    speech_buf.clear();
+                    in_speech = false;
+                    silence_frames = 0;
                 }
             }
-        } else {
-            chunk_buf.extend_from_slice(&samples);
-            let secs = chunk_buf.len() as f32 / TARGET_RATE as f32;
-            print_status(&format!("📥 [{:.1}s]", secs), &mut last_status);
+            
+            total_samples += VAD_FRAME_SAMPLES;
+        }
+    }
 
-            if chunk_buf.len() >= chunk_size {
-                print_status("⚙️  transcribing...", &mut last_status);
-                if let Some((output, needs_repaint)) = cont.process_chunk(&chunk_buf, transcriber) {
-                    clear_status();
-                    if needs_repaint {
-                        cont.repaint();
-                    } else if !output.is_empty() {
-                        println!("{}", output);
-                        cont.lines_printed += 1;
-                    }
-                    // Write latest to file (without repaint logic)
-                    if !output.is_empty() {
-                        writeln!(writer, "{}", output)?;
-                        writer.flush()?;
-                    }
-                }
-                chunk_buf.clear();
+    // Flush remaining
+    if !speech_buf.is_empty() && speech_buf.len() >= TARGET_RATE / 2 {
+        let duration = speech_buf.len() as f32 / TARGET_RATE as f32;
+        if let Ok(text) = transcriber.transcribe(&speech_buf) {
+            let text = text.trim();
+            if !text.is_empty() {
+                let start = speech_start_sample as f32 / TARGET_RATE as f32;
+                let line = format!("[{:.2}-{:.2}] {}", start, start + duration, text);
+                println!("{}", line);
+                writeln!(writer, "{}", line)?;
             }
         }
     }
 
-    if let Some(output) = cont.flush(&chunk_buf, transcriber) {
-        clear_status();
-        println!("{}", output);
-        writeln!(writer, "{}", output)?;
-    }
     Ok(())
 }
 

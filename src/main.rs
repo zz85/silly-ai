@@ -75,9 +75,6 @@ enum Command {
         /// Save compressed audio to OGG file (64kbps)
         #[arg(long)]
         save_ogg: Option<PathBuf>,
-        /// Disable VAD, transcribe fixed chunks instead
-        #[arg(long)]
-        no_vad: bool,
     },
     /// Summarize a transcription file using LLM
     #[cfg(feature = "listen")]
@@ -125,7 +122,6 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
             list,
             debug_wav,
             save_ogg,
-            no_vad,
         }) => {
             if *list {
                 return listen::list_apps();
@@ -141,7 +137,6 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 output.clone(),
                 debug_wav.clone(),
                 save_ogg.clone(),
-                *no_vad,
             );
         }
         #[cfg(feature = "listen")]

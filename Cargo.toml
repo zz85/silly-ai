@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.100"
 cpal = "0.17.0"
 crossterm = "0.29"
+ctrlc = "3"
 hotpath = "0.9.2"
 ollama-rs = { version = "0.3.3", features = ["stream"], optional = true }
 rodio = "0.21.1"
@@ -23,6 +24,7 @@ transcribe-rs = { version = "0.2.1", features = ["parakeet"], git = "https://git
 vad-rs = { git = "https://github.com/cjpais/vad-rs", version = "0.1.5", default-features = false }
 hf-hub = { version = "0.4", optional = true }
 unicode-width = "0.2.2"
+screencapturekit = { version = "1", features = ["macos_13_0"], optional = true }
 
 # Kokoro dependencies (optional)
 kokoros = { git = "https://github.com/lucasjinreal/Kokoros", version = "0.1.0", optional = true }
@@ -51,6 +53,7 @@ supertonic = ["ndarray", "ort", "rand", "rand_distr", "regex", "unicode-normaliz
 llama-cpp = ["llama_cpp", "hf-hub"]
 ollama = ["ollama-rs"]
 lm-studio = ["open-agent-sdk"]
+listen = ["screencapturekit"]
 
 [dependencies.open-agent-sdk]
 version = "0.6"

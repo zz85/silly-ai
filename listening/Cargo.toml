@@ -1,0 +1,9 @@
+[package]
+name = "listening"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+screencapturekit = { version = "1", features = ["macos_13_0"] }
+clap = { version = "4", features = ["derive"] }
+ctrlc = "3"

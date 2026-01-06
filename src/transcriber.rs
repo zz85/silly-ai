@@ -1,5 +1,6 @@
 use crate::stats::{SharedStats, StatKind, Timer};
 use std::path::Path;
+pub use transcribe_rs::TranscriptionSegment;
 use transcribe_rs::{
     TranscriptionEngine,
     engines::parakeet::{ParakeetEngine, ParakeetModelParams},
@@ -54,5 +55,17 @@ impl Transcriber {
             t.finish(text.len());
         }
         Ok(text)
+    }
+
+    pub fn transcribe_with_segments(
+        &mut self,
+        samples: &[f32],
+    ) -> Result<(String, Option<Vec<TranscriptionSegment>>), Box<dyn std::error::Error + Send + Sync>>
+    {
+        let result = self
+            .engine
+            .transcribe_samples(samples.to_vec(), None)
+            .map_err(|e| e.to_string())?;
+        Ok((result.text.trim().to_string(), result.segments))
     }
 }

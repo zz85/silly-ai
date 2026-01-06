@@ -1,11 +1,15 @@
 mod audio;
 mod chat;
 mod config;
+#[cfg(feature = "listen")]
+mod listen;
 mod llm;
 mod render;
 mod repl;
 mod session;
 mod stats;
+#[cfg(feature = "listen")]
+mod summarize;
 #[cfg(feature = "supertonic")]
 mod supertonic;
 mod test_ui;
@@ -21,6 +25,7 @@ use repl::TranscriptEvent;
 
 use clap::{Parser, Subcommand};
 use std::error::Error;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -52,6 +57,39 @@ enum Command {
         #[arg(default_value = "all")]
         scene: String,
     },
+    /// Capture and transcribe audio continuously
+    #[cfg(feature = "listen")]
+    Listen {
+        /// Audio source: mic, system, or app name
+        #[arg(short, long)]
+        source: Option<String>,
+        /// Output file for transcription
+        #[arg(short, long, default_value = "transcript.txt")]
+        output: PathBuf,
+        /// List available applications
+        #[arg(long)]
+        list: bool,
+        /// Save raw audio to WAV file for debugging
+        #[arg(long)]
+        debug_wav: Option<PathBuf>,
+        /// Save compressed audio to OGG file (64kbps)
+        #[arg(long)]
+        save_ogg: Option<PathBuf>,
+    },
+    /// Summarize a transcription file using LLM
+    #[cfg(feature = "listen")]
+    Summarize {
+        /// Input transcription file
+        #[arg(short, long)]
+        input: PathBuf,
+    },
+    /// Transcribe a WAV file (for debugging)
+    #[cfg(feature = "listen")]
+    TranscribeWav {
+        /// Input WAV file
+        #[arg(short, long)]
+        input: PathBuf,
+    },
 }
 
 const VAD_MODEL_PATH: &str = "models/silero_vad_v4.onnx";
@@ -59,18 +97,54 @@ const TARGET_RATE: usize = 16000;
 
 #[hotpath::main]
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let cli = Cli::parse();
+
+    // Handle sync commands before starting async runtime
+    #[cfg(feature = "listen")]
+    if let Some(Command::Summarize { input }) = &cli.command {
+        return summarize::run_summarize(input.clone());
+    }
+
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(async_main())
+        .block_on(async_main_with_cli(cli))
 }
 
-async fn async_main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let cli = Cli::parse();
-
+async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync>> {
     match &cli.command {
         Some(Command::Transcribe) => return run_transcribe_mode().await,
         Some(Command::TestUi { scene }) => return test_ui::run(scene).await,
+        #[cfg(feature = "listen")]
+        Some(Command::Listen {
+            source,
+            output,
+            list,
+            debug_wav,
+            save_ogg,
+        }) => {
+            if *list {
+                return listen::list_apps();
+            }
+            let src = match source {
+                Some(s) if s == "mic" => listen::AudioSource::Mic,
+                Some(s) if s == "system" => listen::AudioSource::System,
+                Some(s) => listen::AudioSource::App(s.clone()),
+                None => listen::pick_source_interactive()?,
+            };
+            return listen::run_listen(
+                src,
+                output.clone(),
+                debug_wav.clone(),
+                save_ogg.clone(),
+            );
+        }
+        #[cfg(feature = "listen")]
+        Some(Command::Summarize { .. }) => unreachable!("handled in main()"),
+        #[cfg(feature = "listen")]
+        Some(Command::TranscribeWav { input }) => {
+            return listen::transcribe_wav(input.clone());
+        }
         None => {}
     }
 

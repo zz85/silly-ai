@@ -134,6 +134,23 @@ silly transcribe
 
 # Test UI rendering without audio
 silly test-ui [scene]  # scenes: idle, preview, thinking, speaking, response, all
+
+# Listen mode - continuous audio capture and transcription (requires --features listen)
+silly listen                      # Interactive source picker
+silly listen -s mic               # Microphone input
+silly listen -s system            # System audio (all apps)
+silly listen -s "Safari"          # Specific app audio
+silly listen --list               # List available apps
+silly listen -s mic -o notes.txt  # Custom output file
+
+# Summarize a transcription file
+silly summarize -i transcript.txt
+```
+
+### Building with Listen feature
+
+```bash
+cargo build --release --features listen
 ```
 
 ## Usage

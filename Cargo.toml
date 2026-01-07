@@ -39,13 +39,14 @@ rand = { version = "0.8", optional = true }
 rand_distr = { version = "0.4", optional = true }
 regex = { version = "1.10", optional = true }
 unicode-normalization = { version = "0.1", optional = true }
+encoding_rs = { version = "0.8", optional = true }
 
 # llama.cpp with Metal on macOS
 [target.'cfg(target_os = "macos")'.dependencies]
-llama_cpp = { version = "0.3", features = ["metal"], optional = true }
+llama-cpp-2 = { version = "0.1", features = ["metal"], optional = true }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-llama_cpp = { version = "0.3", optional = true }
+llama-cpp-2 = { version = "0.1", optional = true }
 
 [features]
 default = ["supertonic", "lm-studio"]
@@ -53,7 +54,7 @@ hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
 kokoro = ["kokoros"]
 supertonic = ["ndarray", "ort", "rand", "rand_distr", "regex", "unicode-normalization", "serde_json"]
-llama-cpp = ["llama_cpp", "hf-hub"]
+llama-cpp = ["llama-cpp-2", "hf-hub", "encoding_rs"]
 ollama = ["ollama-rs"]
 lm-studio = ["ureq"]
 listen = ["screencapturekit", "lewton", "ogg", "vorbis_rs"]

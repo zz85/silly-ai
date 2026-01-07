@@ -34,10 +34,17 @@ pub trait LlmBackend: Send {
 #[cfg(feature = "llama-cpp")]
 pub mod llama {
     use super::*;
-    use llama_cpp::{LlamaModel, LlamaParams, SessionParams, standard_sampler::StandardSampler};
+    use llama_cpp_2::context::params::LlamaContextParams;
+    use llama_cpp_2::llama_backend::LlamaBackend;
+    use llama_cpp_2::llama_batch::LlamaBatch;
+    use llama_cpp_2::model::params::LlamaModelParams;
+    use llama_cpp_2::model::{AddBos, LlamaModel, Special};
+    use llama_cpp_2::sampling::LlamaSampler;
     use std::io::Write;
+    use std::num::NonZeroU32;
 
     pub struct LlamaCppBackend {
+        backend: LlamaBackend,
         model: LlamaModel,
         system_prompt: String,
         prompt_format: PromptFormat,
@@ -53,13 +60,17 @@ pub mod llama {
             let path = path.into();
             eprintln!("Loading model from {:?}...", path);
 
-            let mut params = LlamaParams::default();
-            params.n_gpu_layers = 99; // Offload all layers to GPU (Metal on macOS)
+            let backend = LlamaBackend::init()
+                .map_err(|e| format!("Failed to init backend: {:?}", e))?;
 
-            let model = LlamaModel::load_from_file(&path, params)
+            let model_params = LlamaModelParams::default().with_n_gpu_layers(1000);
+            let model_params = std::pin::pin!(model_params);
+
+            let model = LlamaModel::load_from_file(&backend, &path, &model_params)
                 .map_err(|e| format!("Failed to load model: {:?}", e))?;
             eprintln!("Model loaded.");
             Ok(Self {
+                backend,
                 model,
                 system_prompt: system_prompt.to_string(),
                 prompt_format,
@@ -156,14 +167,6 @@ pub mod llama {
             prompt.push_str("<|start_header_id|>assistant<|end_header_id|>\n\n");
             prompt
         }
-
-        fn stop_tokens(&self) -> &[&str] {
-            match self.prompt_format {
-                PromptFormat::ChatML => &["<|im_end|>", "<|im_start|>"],
-                PromptFormat::Mistral => &["</s>", "[INST]"],
-                PromptFormat::Llama3 => &["<|eot_id|>", "<|start_header_id|>"],
-            }
-        }
     }
 
     impl LlmBackend for LlamaCppBackend {
@@ -173,34 +176,59 @@ pub mod llama {
             on_token: &mut dyn FnMut(&str),
         ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
             let prompt = self.format_prompt(messages);
-            let stop_tokens = self.stop_tokens();
 
-            let mut session_params = SessionParams::default();
-            session_params.n_ctx = 4096;
-            session_params.n_batch = 2048;
+            let ctx_params = LlamaContextParams::default()
+                .with_n_ctx(NonZeroU32::new(4096));
+            let mut ctx = self.model.new_context(&self.backend, ctx_params)
+                .map_err(|e| format!("Failed to create context: {:?}", e))?;
 
-            let mut session = self
-                .model
-                .create_session(session_params)
-                .map_err(|e| format!("Failed to create session: {:?}", e))?;
+            let tokens = self.model.str_to_token(&prompt, AddBos::Always)
+                .map_err(|e| format!("Failed to tokenize: {:?}", e))?;
 
-            session
-                .advance_context(&prompt)
-                .map_err(|e| format!("Failed to advance context: {:?}", e))?;
+            let mut batch = LlamaBatch::new(512, 1);
+            let last_idx = (tokens.len() - 1) as i32;
+            for (i, token) in tokens.into_iter().enumerate() {
+                batch.add(token, i as i32, &[0], i as i32 == last_idx)
+                    .map_err(|e| format!("Failed to add token: {:?}", e))?;
+            }
+
+            ctx.decode(&mut batch)
+                .map_err(|e| format!("Failed to decode: {:?}", e))?;
+
+            let mut sampler = LlamaSampler::chain_simple([
+                LlamaSampler::dist(1234),
+                LlamaSampler::greedy(),
+            ]);
 
             let mut full_response = String::new();
-            let completions = session
-                .start_completing_with(StandardSampler::default(), 1024)
-                .map_err(|e| format!("Failed to start completion: {:?}", e))?
-                .into_strings();
+            let mut n_cur = batch.n_tokens();
+            let n_len = 1024i32;
+            let mut decoder = encoding_rs::UTF_8.new_decoder();
 
-            for token in completions {
-                if stop_tokens.iter().any(|s| token.contains(s)) {
+            while n_cur < n_len {
+                let token = sampler.sample(&ctx, batch.n_tokens() - 1);
+                sampler.accept(token);
+
+                if self.model.is_eog_token(token) {
                     break;
                 }
-                on_token(&token);
-                full_response.push_str(&token);
-                let _ = std::io::stdout().flush();
+
+                if let Ok(bytes) = self.model.token_to_bytes(token, Special::Tokenize) {
+                    let mut output = String::with_capacity(32);
+                    let _ = decoder.decode_to_string(&bytes, &mut output, false);
+                    on_token(&output);
+                    full_response.push_str(&output);
+                    let _ = std::io::stdout().flush();
+                }
+
+                batch.clear();
+                batch.add(token, n_cur, &[0], true)
+                    .map_err(|e| format!("Failed to add token: {:?}", e))?;
+
+                ctx.decode(&mut batch)
+                    .map_err(|e| format!("Failed to decode: {:?}", e))?;
+
+                n_cur += 1;
             }
 
             Ok(full_response)

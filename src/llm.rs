@@ -301,10 +301,38 @@ pub mod ollama {
 #[cfg(feature = "lm-studio")]
 pub mod lm_studio {
     use super::{LlmBackend, Message, Role};
-    use open_agent::{ContentBlock, Message as OaMessage, TextBlock, prelude::*};
+    use serde::{Deserialize, Serialize};
+    use std::io::{BufRead, BufReader};
+
+    #[derive(Serialize)]
+    struct ChatRequest {
+        model: String,
+        messages: Vec<ChatMessage>,
+        stream: bool,
+    }
+
+    #[derive(Serialize)]
+    struct ChatMessage {
+        role: String,
+        content: String,
+    }
+
+    #[derive(Deserialize)]
+    struct ChatChunk {
+        choices: Vec<ChunkChoice>,
+    }
+
+    #[derive(Deserialize)]
+    struct ChunkChoice {
+        delta: Delta,
+    }
+
+    #[derive(Deserialize)]
+    struct Delta {
+        content: Option<String>,
+    }
 
     pub struct LmStudioBackend {
-        client: Option<Client>,
         base_url: String,
         model: String,
         system_prompt: String,
@@ -313,26 +341,10 @@ pub mod lm_studio {
     impl LmStudioBackend {
         pub fn new(base_url: &str, model: &str, system_prompt: &str) -> Self {
             Self {
-                client: None,
-                base_url: base_url.to_string(),
+                base_url: base_url.trim_end_matches('/').to_string(),
                 model: model.to_string(),
                 system_prompt: system_prompt.to_string(),
             }
-        }
-
-        fn get_or_create_client(
-            &mut self,
-        ) -> std::result::Result<&mut Client, Box<dyn std::error::Error + Send + Sync>> {
-            if self.client.is_none() {
-                let options = AgentOptions::builder()
-                    .system_prompt(&self.system_prompt)
-                    .model(&self.model)
-                    .base_url(&self.base_url)
-                    .auto_execute_tools(false)
-                    .build()?;
-                self.client = Some(Client::new(options)?);
-            }
-            Ok(self.client.as_mut().unwrap())
         }
     }
 
@@ -342,58 +354,53 @@ pub mod lm_studio {
             messages: &[Message],
             on_token: &mut dyn FnMut(&str),
         ) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync>> {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?;
+            let mut chat_messages = vec![ChatMessage {
+                role: "system".to_string(),
+                content: self.system_prompt.clone(),
+            }];
 
-            let client = self.get_or_create_client()?;
-
-            // Sync history: clear and rebuild from messages (except last user message)
-            client.clear_history();
-            let history = client.history_mut();
-            for msg in messages.iter().take(messages.len().saturating_sub(1)) {
-                let oa_msg = match msg.role {
-                    Role::System => OaMessage::system(&msg.content),
-                    Role::User => OaMessage::user(&msg.content),
-                    Role::Assistant => {
-                        OaMessage::assistant(vec![ContentBlock::Text(TextBlock::new(&msg.content))])
-                    }
+            for msg in messages {
+                let role = match msg.role {
+                    Role::System => "system",
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
                 };
-                history.push(oa_msg);
+                chat_messages.push(ChatMessage {
+                    role: role.to_string(),
+                    content: msg.content.clone(),
+                });
             }
 
-            // Get the last user message
-            let user_msg = messages
-                .last()
-                .filter(|m| matches!(m.role, Role::User))
-                .map(|m| m.content.as_str())
-                .unwrap_or("");
+            let request = ChatRequest {
+                model: self.model.clone(),
+                messages: chat_messages,
+                stream: true,
+            };
 
-            let result = rt.block_on(async {
-                client.send(user_msg).await?;
+            let response = ureq::post(&format!("{}/chat/completions", self.base_url))
+                .send_json(&request)?;
 
-                let mut full_response = String::new();
-                while let Some(block) = client.receive().await? {
-                    match block {
-                        ContentBlock::Text(text) => {
-                            on_token(&text.text);
-                            full_response.push_str(&text.text);
-                        }
-                        ContentBlock::ToolUse(tool) => {
-                            eprintln!("[ToolUse] {}: {}", tool.name(), tool.input());
-                        }
-                        ContentBlock::ToolResult(result) => {
-                            eprintln!("[ToolResult] {}", result.content());
-                        }
-                        ContentBlock::Image(img) => {
-                            eprintln!("[Image] {}", img.url());
+            let reader = BufReader::new(response.into_body().into_reader());
+            let mut full_response = String::new();
+
+            for line in reader.lines() {
+                let line = line?;
+                if line.is_empty() || line == "data: [DONE]" {
+                    continue;
+                }
+                if let Some(json_str) = line.strip_prefix("data: ") {
+                    if let Ok(chunk) = serde_json::from_str::<ChatChunk>(json_str) {
+                        if let Some(choice) = chunk.choices.first() {
+                            if let Some(content) = &choice.delta.content {
+                                on_token(content);
+                                full_response.push_str(content);
+                            }
                         }
                     }
                 }
-                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(full_response)
-            })?;
+            }
 
-            Ok(result)
+            Ok(full_response)
         }
     }
 }

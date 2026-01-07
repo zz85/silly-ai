@@ -55,9 +55,10 @@ kokoro = ["kokoros"]
 supertonic = ["ndarray", "ort", "rand", "rand_distr", "regex", "unicode-normalization", "serde_json"]
 llama-cpp = ["llama_cpp", "hf-hub"]
 ollama = ["ollama-rs"]
-lm-studio = ["open-agent-sdk"]
+lm-studio = ["ureq"]
 listen = ["screencapturekit", "lewton", "ogg", "vorbis_rs"]
 
-[dependencies.open-agent-sdk]
-version = "0.6"
+[dependencies.ureq]
+version = "3"
+features = ["json"]
 optional = true

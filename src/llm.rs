@@ -48,6 +48,7 @@ pub mod llama {
         model: LlamaModel,
         system_prompt: String,
         prompt_format: PromptFormat,
+        ctx_size: u32,
     }
 
     impl LlamaCppBackend {
@@ -56,6 +57,7 @@ pub mod llama {
             path: impl Into<PathBuf>,
             system_prompt: &str,
             prompt_format: PromptFormat,
+            ctx_size: u32,
         ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
             let path = path.into();
             eprintln!("Loading model from {:?}...", path);
@@ -74,6 +76,7 @@ pub mod llama {
                 model,
                 system_prompt: system_prompt.to_string(),
                 prompt_format,
+                ctx_size,
             })
         }
 
@@ -83,9 +86,10 @@ pub mod llama {
             filename: &str,
             system_prompt: &str,
             prompt_format: PromptFormat,
+            ctx_size: u32,
         ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
             let path = download_model(repo, filename)?;
-            Self::from_path(path, system_prompt, prompt_format)
+            Self::from_path(path, system_prompt, prompt_format, ctx_size)
         }
 
         fn format_prompt(&self, messages: &[Message]) -> String {
@@ -178,14 +182,15 @@ pub mod llama {
             let prompt = self.format_prompt(messages);
 
             let ctx_params = LlamaContextParams::default()
-                .with_n_ctx(NonZeroU32::new(4096));
+                .with_n_ctx(NonZeroU32::new(self.ctx_size))
+                .with_n_batch(self.ctx_size);
             let mut ctx = self.model.new_context(&self.backend, ctx_params)
                 .map_err(|e| format!("Failed to create context: {:?}", e))?;
 
-            let tokens = self.model.str_to_token(&prompt, AddBos::Always)
+            let tokens = self.model.str_to_token(&prompt, AddBos::Never)
                 .map_err(|e| format!("Failed to tokenize: {:?}", e))?;
 
-            let mut batch = LlamaBatch::new(512, 1);
+            let mut batch = LlamaBatch::new(self.ctx_size as usize, 1);
             let last_idx = (tokens.len() - 1) as i32;
             for (i, token) in tokens.into_iter().enumerate() {
                 batch.add(token, i as i32, &[0], i as i32 == last_idx)

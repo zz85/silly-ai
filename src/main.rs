@@ -365,15 +365,17 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 hf_repo,
                 hf_file,
                 prompt_format,
+                ctx_size,
             } => {
                 let backend = if let Some(path) = model_path {
-                    llm::llama::LlamaCppBackend::from_path(path, &system_prompt, prompt_format)?
+                    llm::llama::LlamaCppBackend::from_path(path, &system_prompt, prompt_format, ctx_size)?
                 } else {
                     llm::llama::LlamaCppBackend::from_hf(
                         &hf_repo,
                         &hf_file,
                         &system_prompt,
                         prompt_format,
+                        ctx_size,
                     )?
                 };
                 Box::new(backend)

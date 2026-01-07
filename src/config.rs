@@ -87,6 +87,9 @@ pub enum LlmConfig {
         /// Prompt format
         #[serde(default)]
         prompt_format: PromptFormat,
+        /// Context size (default 4096)
+        #[serde(default = "default_ctx_size")]
+        ctx_size: u32,
     },
     #[serde(rename = "ollama")]
     Ollama {
@@ -111,6 +114,7 @@ impl Default for LlmConfig {
                 hf_repo: default_hf_repo(),
                 hf_file: default_hf_file(),
                 prompt_format: PromptFormat::default(),
+                ctx_size: default_ctx_size(),
             }
         }
         #[cfg(all(feature = "ollama", not(feature = "llama-cpp")))]
@@ -132,6 +136,10 @@ fn default_hf_repo() -> String {
 
 fn default_hf_file() -> String {
     "mistral-7b-instruct-v0.2.Q4_K_M.gguf".into()
+}
+
+fn default_ctx_size() -> u32 {
+    4096
 }
 
 fn default_ollama_model() -> String {

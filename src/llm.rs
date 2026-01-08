@@ -180,6 +180,8 @@ pub mod llama {
             on_token: &mut dyn FnMut(&str),
         ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
             let prompt = self.format_prompt(messages);
+            
+            eprintln!("[DEBUG] Prompt length: {} chars, {} tokens (est)", prompt.len(), prompt.len() / 4);
 
             let ctx_params = LlamaContextParams::default()
                 .with_n_ctx(NonZeroU32::new(self.ctx_size))
@@ -189,6 +191,8 @@ pub mod llama {
 
             let tokens = self.model.str_to_token(&prompt, AddBos::Never)
                 .map_err(|e| format!("Failed to tokenize: {:?}", e))?;
+            
+            eprintln!("[DEBUG] Actual tokens: {}", tokens.len());
 
             let mut batch = LlamaBatch::new(self.ctx_size as usize, 1);
             let last_idx = (tokens.len() - 1) as i32;

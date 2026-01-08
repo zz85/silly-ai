@@ -71,14 +71,14 @@ fn chunk_text(text: &str, chunk_size_tokens: usize, overlap_tokens: usize) -> Ve
 pub fn run_summarize(input: PathBuf) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let content = fs::read_to_string(&input)?;
     if content.trim().is_empty() {
-        println!("Input file is empty.");
+        println!("xxxx Input file is empty.");
         return Ok(());
     }
 
     let config = Config::load();
     let total_tokens = rough_token_count(&content);
     
-    println!("Summarizing {} ({} estimated tokens)...\n", input.display(), total_tokens);
+    println!("xxxx Summarizing {} ({} estimated tokens)...\n", input.display(), total_tokens);
 
     let mut backend = create_backend(&config.llm, SUMMARIZE_SYSTEM)?;
 
@@ -96,7 +96,7 @@ pub fn run_summarize(input: PathBuf) -> Result<(), Box<dyn std::error::Error + S
     } else {
         // Multi-level chunking for long transcripts
         let chunks = chunk_text(&content, TOKEN_THRESHOLD - 300, CHUNK_OVERLAP);
-        println!("Processing {} chunks...\n", chunks.len());
+        println!("xxxx Processing {} chunks...\n", chunks.len());
 
         let mut chunk_summaries = Vec::new();
 
@@ -109,17 +109,25 @@ pub fn run_summarize(input: PathBuf) -> Result<(), Box<dyn std::error::Error + S
                 content: format!("{}{}", CHUNK_PROMPT, chunk),
             }];
 
+            println!("xxxx  input: {chunk:?}");
+
             let mut summary = String::new();
+            
+            
+
             backend.generate(&messages, &mut |token| {
+                println!("xxxx  token: {token}");
                 summary.push_str(token);
             })?;
 
+            println!("xxxx  summary: {summary}");
+
             chunk_summaries.push(summary);
-            println!(" done");
+            println!("xxxx  done");
         }
 
         // Combine and produce final summary
-        println!("\nGenerating final summary...\n");
+        println!("xxxx \nGenerating final summary...\n");
         let combined = chunk_summaries.join("\n---\n");
         
         let messages = vec![Message {

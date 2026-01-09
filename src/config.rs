@@ -102,6 +102,12 @@ pub enum LlmConfig {
         base_url: String,
         #[serde(default = "default_lm_studio_model")]
         model: String,
+        #[serde(default = "default_ctx_size")]
+        ctx_size: u32,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        repetition_penalty: Option<f32>,
     },
 }
 

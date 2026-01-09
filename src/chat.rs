@@ -68,6 +68,7 @@ impl Chat {
         &mut self,
         mut on_token: impl FnMut(&str),
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        eprintln!("[DEBUG] Chat history: {} messages", self.history.len());
         self.backend.generate(&self.history, &mut on_token)
     }
 }

@@ -81,6 +81,9 @@ enum Command {
         /// Save compressed audio to OGG file (64kbps)
         #[arg(long)]
         save_ogg: Option<PathBuf>,
+        /// Multi-source mode: capture from two sources with attribution
+        #[arg(long)]
+        multi: bool,
     },
     /// Record audio to OGG file (no transcription)
     #[cfg(feature = "listen")]
@@ -141,9 +144,14 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
             list,
             debug_wav,
             save_ogg,
+            multi,
         }) => {
             if *list {
                 return listen::list_apps();
+            }
+            if *multi {
+                let (src1, src2) = listen::pick_sources_multi()?;
+                return listen::run_multi_source(src1, src2, output.clone());
             }
             let src = match source {
                 Some(s) if s == "mic" => listen::AudioSource::Mic,

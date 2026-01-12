@@ -20,6 +20,7 @@ pub struct Transcript {
     pub start: f32,
     pub end: f32,
     pub text: String,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,11 +30,31 @@ pub enum AudioSource {
     App(String),
 }
 
+impl AudioSource {
+    pub fn label(&self) -> String {
+        match self {
+            AudioSource::Mic => "mic".to_string(),
+            AudioSource::System => "system".to_string(),
+            AudioSource::App(name) => name.clone(),
+        }
+    }
+}
+
 pub fn run_transcriber(
     rx: Receiver<AudioSegment>,
     tx: Sender<Transcript>,
     transcriber: Transcriber,
     running: Arc<AtomicBool>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    run_transcriber_with_source(rx, tx, transcriber, running, None)
+}
+
+pub fn run_transcriber_with_source(
+    rx: Receiver<AudioSegment>,
+    tx: Sender<Transcript>,
+    transcriber: Transcriber,
+    running: Arc<AtomicBool>,
+    source: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut transcriber = transcriber;
 
@@ -47,6 +68,7 @@ pub fn run_transcriber(
                             start: segment.start_secs(),
                             end: segment.start_secs() + segment.duration_secs(),
                             text: text.to_string(),
+                            source: source.clone(),
                         });
                     }
                 }
@@ -65,6 +87,7 @@ pub fn run_transcriber(
                     start: segment.start_secs(),
                     end: segment.start_secs() + segment.duration_secs(),
                     text: text.to_string(),
+                    source: source.clone(),
                 });
             }
         }
@@ -81,10 +104,17 @@ pub fn run_writer(
     let file = File::create(&output)?;
     let mut writer = BufWriter::new(file);
 
+    let format_line = |t: &Transcript| -> String {
+        match &t.source {
+            Some(src) => format!("[{:.2}-{:.2}] [{}] {}", t.start, t.end, src, t.text),
+            None => format!("[{:.2}-{:.2}] {}", t.start, t.end, t.text),
+        }
+    };
+
     while running.load(Ordering::SeqCst) {
         match rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(t) => {
-                let line = format!("[{:.2}-{:.2}] {}", t.start, t.end, t.text);
+                let line = format_line(&t);
                 println!("{}", line);
                 writeln!(writer, "{}", line)?;
                 writer.flush()?;
@@ -96,7 +126,7 @@ pub fn run_writer(
 
     // Drain remaining
     for t in rx.drain() {
-        let line = format!("[{:.2}-{:.2}] {}", t.start, t.end, t.text);
+        let line = format_line(&t);
         println!("{}", line);
         writeln!(writer, "{}", line)?;
     }
@@ -393,5 +423,108 @@ fn capture_system_with_tap(
     }
 
     let _ = stream.stop_capture();
+    Ok(())
+}
+
+/// Run two audio sources in parallel with merged, attributed transcripts
+pub fn run_multi_source(
+    source1: AudioSource,
+    source2: AudioSource,
+    output: PathBuf,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || r.store(false, Ordering::SeqCst))?;
+
+    // Load models (need 2 VADs, 2 transcribers)
+    println!("Loading VAD models...");
+    let vad1 = VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE)?;
+    let vad2 = VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE)?;
+
+    println!("Loading transcriber models...");
+    let transcriber1 = Transcriber::new(PARAKEET_MODEL_PATH)?;
+    let transcriber2 = Transcriber::new(PARAKEET_MODEL_PATH)?;
+
+    // Shared transcript channel (both pipelines write here)
+    let (transcript_tx, transcript_rx) = flume::bounded::<Transcript>(20);
+
+    let label1 = source1.label();
+    let label2 = source2.label();
+
+    // Pipeline 1
+    let (audio_tx1, audio_rx1) = flume::bounded::<Vec<f32>>(100);
+    let (segment_tx1, segment_rx1) = flume::bounded::<AudioSegment>(10);
+    let transcript_tx1 = transcript_tx.clone();
+
+    let running1 = running.clone();
+    let source1_clone = source1.clone();
+    let capture1 = thread::spawn(move || {
+        let result = match source1_clone {
+            AudioSource::Mic => capture_mic_with_tap(audio_tx1, None, running1),
+            AudioSource::System => capture_system_with_tap(audio_tx1, None, running1, None),
+            AudioSource::App(name) => capture_system_with_tap(audio_tx1, None, running1, Some(name)),
+        };
+        if let Err(e) = result {
+            eprintln!("Capture 1 error: {}", e);
+        }
+    });
+
+    let running1_seg = running.clone();
+    let seg1 = thread::spawn(move || {
+        if let Err(e) = run_segmenter(audio_rx1, segment_tx1, vad1, SegmenterConfig::default(), running1_seg) {
+            eprintln!("Segmenter 1 error: {}", e);
+        }
+    });
+
+    let running1_trans = running.clone();
+    let trans1 = thread::spawn(move || {
+        if let Err(e) = run_transcriber_with_source(segment_rx1, transcript_tx1, transcriber1, running1_trans, Some(label1)) {
+            eprintln!("Transcriber 1 error: {}", e);
+        }
+    });
+
+    // Pipeline 2
+    let (audio_tx2, audio_rx2) = flume::bounded::<Vec<f32>>(100);
+    let (segment_tx2, segment_rx2) = flume::bounded::<AudioSegment>(10);
+
+    let running2 = running.clone();
+    let source2_clone = source2.clone();
+    let capture2 = thread::spawn(move || {
+        let result = match source2_clone {
+            AudioSource::Mic => capture_mic_with_tap(audio_tx2, None, running2),
+            AudioSource::System => capture_system_with_tap(audio_tx2, None, running2, None),
+            AudioSource::App(name) => capture_system_with_tap(audio_tx2, None, running2, Some(name)),
+        };
+        if let Err(e) = result {
+            eprintln!("Capture 2 error: {}", e);
+        }
+    });
+
+    let running2_seg = running.clone();
+    let seg2 = thread::spawn(move || {
+        if let Err(e) = run_segmenter(audio_rx2, segment_tx2, vad2, SegmenterConfig::default(), running2_seg) {
+            eprintln!("Segmenter 2 error: {}", e);
+        }
+    });
+
+    let running2_trans = running.clone();
+    let trans2 = thread::spawn(move || {
+        if let Err(e) = run_transcriber_with_source(segment_rx2, transcript_tx, transcriber2, running2_trans, Some(label2)) {
+            eprintln!("Transcriber 2 error: {}", e);
+        }
+    });
+
+    // Writer on main thread
+    println!("Recording from [{}] and [{}]... Press Ctrl+C to stop.\n", source1.label(), source2.label());
+    run_writer(transcript_rx, output, running.clone())?;
+
+    // Wait for threads
+    let _ = capture1.join();
+    let _ = capture2.join();
+    let _ = seg1.join();
+    let _ = seg2.join();
+    let _ = trans1.join();
+    let _ = trans2.join();
+
     Ok(())
 }

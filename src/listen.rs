@@ -1,4 +1,4 @@
-pub use crate::pipeline::{run_pipeline_with_options, AudioSource};
+pub use crate::pipeline::{run_pipeline_with_options, AudioSource, run_multi_source};
 use crate::capture::{resample, TARGET_RATE};
 use crate::transcriber::Transcriber;
 use std::fs::File;
@@ -17,8 +17,10 @@ pub fn list_apps() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 pub fn pick_source_interactive() -> Result<AudioSource, Box<dyn std::error::Error + Send + Sync>> {
-    let apps = crate::capture::list_apps()?;
+    pick_source_with_apps(&crate::capture::list_apps()?)
+}
 
+fn pick_source_with_apps(apps: &[String]) -> Result<AudioSource, Box<dyn std::error::Error + Send + Sync>> {
     println!("\nSelect audio source:\n");
     println!("  [0] System microphone");
     println!("  [1] System audio (all apps)");
@@ -40,6 +42,43 @@ pub fn pick_source_interactive() -> Result<AudioSource, Box<dyn std::error::Erro
         n if n >= 2 && n - 2 < apps.len() => AudioSource::App(apps[n - 2].clone()),
         _ => AudioSource::Mic,
     })
+}
+
+pub fn pick_sources_multi() -> Result<(AudioSource, AudioSource), Box<dyn std::error::Error + Send + Sync>> {
+    let apps = crate::capture::list_apps()?;
+
+    println!("\nSelect TWO audio sources for multi-source transcription.\n");
+    println!("  [0] System microphone");
+    println!("  [1] System audio (all apps)");
+    println!("\nOr pick an application:");
+    for (i, app) in apps.iter().enumerate() {
+        println!("  [{}] {}", i + 2, app);
+    }
+
+    let parse_choice = |choice: usize| -> AudioSource {
+        match choice {
+            0 => AudioSource::Mic,
+            1 => AudioSource::System,
+            n if n >= 2 && n - 2 < apps.len() => AudioSource::App(apps[n - 2].clone()),
+            _ => AudioSource::Mic,
+        }
+    };
+
+    print!("\nFirst source (e.g. mic) [0]: ");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let choice1: usize = input.trim().parse().unwrap_or(0);
+    let source1 = parse_choice(choice1);
+
+    print!("Second source (e.g. app) [1]: ");
+    std::io::stdout().flush()?;
+    input.clear();
+    std::io::stdin().read_line(&mut input)?;
+    let choice2: usize = input.trim().parse().unwrap_or(1);
+    let source2 = parse_choice(choice2);
+
+    Ok((source1, source2))
 }
 
 pub fn run_listen(

@@ -181,7 +181,7 @@ pub mod llama {
         ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
             let prompt = self.format_prompt(messages);
             
-            eprintln!("[DEBUG] Prompt length: {} chars, {} tokens (est)", prompt.len(), prompt.len() / 4);
+            eprintln!("[DEBUG] ctx_size: {}, Prompt length: {} chars, {} tokens (est)", self.ctx_size, prompt.len(), prompt.len() / 4);
 
             let ctx_params = LlamaContextParams::default()
                 .with_n_ctx(NonZeroU32::new(self.ctx_size))
@@ -346,6 +346,14 @@ pub mod lm_studio {
         model: String,
         messages: Vec<ChatMessage>,
         stream: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        temperature: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        top_p: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        top_k: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        repetition_penalty: Option<f32>,
     }
 
     #[derive(Serialize)]
@@ -373,14 +381,30 @@ pub mod lm_studio {
         base_url: String,
         model: String,
         system_prompt: String,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+        top_k: Option<u32>,
+        repetition_penalty: Option<f32>,
     }
 
     impl LmStudioBackend {
-        pub fn new(base_url: &str, model: &str, system_prompt: &str) -> Self {
+        pub fn new(
+            base_url: &str,
+            model: &str,
+            system_prompt: &str,
+            temperature: Option<f32>,
+            top_p: Option<f32>,
+            top_k: Option<u32>,
+            repetition_penalty: Option<f32>,
+        ) -> Self {
             Self {
                 base_url: base_url.trim_end_matches('/').to_string(),
                 model: model.to_string(),
                 system_prompt: system_prompt.to_string(),
+                temperature,
+                top_p,
+                top_k,
+                repetition_penalty,
             }
         }
     }
@@ -408,10 +432,16 @@ pub mod lm_studio {
                 });
             }
 
+            eprintln!("[DEBUG] LM Studio: sending {} messages", chat_messages.len());
+
             let request = ChatRequest {
                 model: self.model.clone(),
                 messages: chat_messages,
                 stream: true,
+                temperature: self.temperature,
+                top_p: self.top_p,
+                top_k: self.top_k,
+                repetition_penalty: self.repetition_penalty,
             };
 
             let response = ureq::post(&format!("{}/chat/completions", self.base_url))

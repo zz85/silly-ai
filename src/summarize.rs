@@ -4,7 +4,6 @@ use std::fs;
 use std::io::{Write, stdout};
 use std::path::PathBuf;
 
-const TOKEN_THRESHOLD: usize = 4000;
 const CHUNK_OVERLAP: usize = 100;
 
 const SUMMARIZE_SYSTEM: &str = "You are a helpful assistant that summarizes transcriptions concisely. Focus on key points, decisions, and action items.";
@@ -76,13 +75,14 @@ pub fn run_summarize(input: PathBuf) -> Result<(), Box<dyn std::error::Error + S
     }
 
     let config = Config::load();
+    let ctx_size = get_ctx_size(&config.llm) as usize;
     let total_tokens = rough_token_count(&content);
     
-    println!("xxxx Summarizing {} ({} estimated tokens)...\n", input.display(), total_tokens);
+    println!("xxxx Summarizing {} ({} estimated tokens, ctx_size {})...\n", input.display(), total_tokens, ctx_size);
 
     let mut backend = create_backend(&config.llm, SUMMARIZE_SYSTEM)?;
 
-    if total_tokens < TOKEN_THRESHOLD {
+    if total_tokens < ctx_size {
         // Single-pass for short transcripts
         let messages = vec![Message {
             role: Role::User,
@@ -95,7 +95,7 @@ pub fn run_summarize(input: PathBuf) -> Result<(), Box<dyn std::error::Error + S
         })?;
     } else {
         // Multi-level chunking for long transcripts
-        let chunks = chunk_text(&content, TOKEN_THRESHOLD - 300, CHUNK_OVERLAP);
+        let chunks = chunk_text(&content, ctx_size - 300, CHUNK_OVERLAP);
         println!("xxxx Processing {} chunks...\n", chunks.len());
 
         let mut chunk_summaries = Vec::new();
@@ -145,6 +145,16 @@ pub fn run_summarize(input: PathBuf) -> Result<(), Box<dyn std::error::Error + S
     Ok(())
 }
 
+fn get_ctx_size(llm_config: &LlmConfig) -> u32 {
+    match llm_config {
+        #[cfg(feature = "llama-cpp")]
+        LlmConfig::LlamaCpp { ctx_size, .. } => *ctx_size,
+        #[cfg(feature = "lm-studio")]
+        LlmConfig::LmStudio { ctx_size, .. } => *ctx_size,
+        _ => 4096,
+    }
+}
+
 fn create_backend(
     llm_config: &LlmConfig,
     system_prompt: &str,
@@ -177,8 +187,8 @@ fn create_backend(
         #[cfg(not(feature = "ollama"))]
         LlmConfig::Ollama { .. } => Err("Ollama not enabled. Build with --features ollama".into()),
         #[cfg(feature = "lm-studio")]
-        LlmConfig::LmStudio { base_url, model } => Ok(Box::new(
-            crate::llm::lm_studio::LmStudioBackend::new(base_url, model, system_prompt),
+        LlmConfig::LmStudio { base_url, model, temperature, top_p, top_k, repetition_penalty, .. } => Ok(Box::new(
+            crate::llm::lm_studio::LmStudioBackend::new(base_url, model, system_prompt, *temperature, *top_p, *top_k, *repetition_penalty),
         )),
         #[cfg(not(feature = "lm-studio"))]
         LlmConfig::LmStudio { .. } => {

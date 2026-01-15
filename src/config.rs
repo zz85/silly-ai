@@ -109,6 +109,12 @@ pub enum LlmConfig {
         top_k: Option<u32>,
         repetition_penalty: Option<f32>,
     },
+    #[serde(rename = "kalosm")]
+    Kalosm {
+        /// Model preset: "phi3", "llama3-8b", "mistral-7b", "qwen-0.5b", "qwen-1.5b"
+        #[serde(default = "default_kalosm_model")]
+        model: String,
+    },
 }
 
 impl Default for LlmConfig {
@@ -158,6 +164,10 @@ fn default_lm_studio_url() -> String {
 
 fn default_lm_studio_model() -> String {
     "default".into()
+}
+
+fn default_kalosm_model() -> String {
+    "qwen-1.5b".into()
 }
 
 // ============================================================================

@@ -408,6 +408,23 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
             LlmConfig::LmStudio { .. } => {
                 panic!("LM Studio not enabled. Build with --features lm-studio");
             }
+            #[cfg(feature = "kalosm")]
+            LlmConfig::Kalosm { ref model } => {
+                use kalosm_llama::LlamaSource;
+                let source = match model.as_str() {
+                    "phi3" => LlamaSource::phi_3_mini_4k_instruct(),
+                    "llama3-8b" => LlamaSource::llama_3_8b_chat(),
+                    "mistral-7b" => LlamaSource::mistral_7b_instruct_2(),
+                    "qwen-0.5b" => LlamaSource::qwen_0_5b_chat(),
+                    "qwen-1.5b" => LlamaSource::qwen_1_5b_chat(),
+                    _ => LlamaSource::qwen_1_5b_chat(),
+                };
+                Box::new(llm::kalosm_backend::KalosmBackend::new_blocking(source, &system_prompt)?)
+            }
+            #[cfg(not(feature = "kalosm"))]
+            LlmConfig::Kalosm { .. } => {
+                panic!("Kalosm not enabled. Build with --features kalosm");
+            }
         };
 
     let llm_chat = chat::Chat::new(llm_backend);

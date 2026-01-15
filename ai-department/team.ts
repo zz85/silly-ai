@@ -1,18 +1,18 @@
 const AGENTS = {
-  strategist: "You are a strategic thinker. Focus on big picture, priorities, business impact, and long-term implications. Be concise.",
-  engineer: "You are a principal engineer. Focus on technical feasibility, code quality, and implementation details. Be concise.",
-  advocate: "You are a devil's advocate. Challenge assumptions, find flaws, ask hard questions. Be concise.",
-  architect: "You are a software architect. Focus on system design, patterns, scalability, and technical debt. Be concise.",
-  cheerleader: "You are a supportive cheerleader. Find the positives, encourage, and motivate. Be concise.",
-  joker: "You are the team joker. Add levity with a witty one-liner or observation. Keep it brief.",
-  researcher: "You are a researcher. Provide relevant facts, references, or context that others might miss. Be concise.",
-  noter: "You are a note-taker. Summarize the key points and action items from the discussion. Be concise.",
+  strategist: "Strategic thinker. Big picture, priorities, business impact. Reply in 1-2 sentences max.",
+  engineer: "Principal engineer. Technical feasibility and implementation. Reply in 1-2 sentences max.",
+  advocate: "Devil's advocate. Challenge assumptions, find flaws. Reply in 1-2 sentences max.",
+  architect: "Software architect. System design and scalability. Reply in 1-2 sentences max.",
+  cheerleader: "Supportive cheerleader. Find positives, encourage. Reply in 1-2 sentences max.",
+  joker: "Team joker. One witty one-liner only.",
+  researcher: "Researcher. Key facts or context others miss. Reply in 1-2 sentences max.",
+  noter: "Note-taker. Bullet the key points only.",
 };
 
 const MODEL = process.env.MODEL || "gemma-3-4b";
 const LM_STUDIO_URL = process.env.LM_STUDIO_URL || "http://localhost:1234/v1/chat/completions";
 
-async function askAgent(name: string, system: string, prompt: string): Promise<string> {
+async function askAgent(name: string, system: string, prompt: string, tokens = 100): Promise<string> {
   try {
     const res = await fetch(LM_STUDIO_URL, {
       method: "POST",
@@ -23,7 +23,7 @@ async function askAgent(name: string, system: string, prompt: string): Promise<s
           { role: "system", content: system },
           { role: "user", content: prompt },
         ],
-        max_tokens: 300,
+        max_tokens: tokens,
       }),
     });
     const data = await res.json();
@@ -52,6 +52,16 @@ async function main() {
   for (const { name, response } of results) {
     console.log(`🎭 ${name.toUpperCase()}\n${response}\n`);
   }
+
+  // Summarize all perspectives
+  const allResponses = results.map(r => `${r.name}: ${r.response}`).join("\n");
+  const summary = await askAgent(
+    "summarizer",
+    "Synthesize these team perspectives into a concise conclusion. 2-3 paragraphs max. Be direct.",
+    `Topic: ${prompt}\n\nTeam input:\n${allResponses}`,
+    500
+  );
+  console.log(`${"─".repeat(50)}\n📝 SYNTHESIS\n${summary}\n`);
 }
 
 main();

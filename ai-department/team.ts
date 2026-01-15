@@ -1,12 +1,12 @@
 const AGENTS = {
-  strategist: "Strategic thinker. Big picture, priorities, business impact. Reply in 1-2 sentences max.",
-  engineer: "Principal engineer. Technical feasibility and implementation. Reply in 1-2 sentences max.",
-  advocate: "Devil's advocate. Challenge assumptions, find flaws. Reply in 1-2 sentences max.",
-  architect: "Software architect. System design and scalability. Reply in 1-2 sentences max.",
-  cheerleader: "Supportive cheerleader. Find positives, encourage. Reply in 1-2 sentences max.",
-  joker: "Team joker. One witty one-liner only.",
-  researcher: "Researcher. Key facts or context others miss. Reply in 1-2 sentences max.",
-  noter: "Note-taker. Bullet the key points only.",
+  strategist: "Big picture, ROI, priorities. Bullet response, 1-2 lines. Direct.",
+  engineer: "Technical feasibility, tradeoffs. Bullet response, 1-2 lines. Direct.",
+  advocate: "Challenge assumptions, risks. Bullet response, 1-2 lines. Direct.",
+  architect: "System design, scalability. Bullet response, 1-2 lines. Direct.",
+  cheerleader: "Find positives, encourage! Friendly, 1-2 sentences.",
+  joker: "One witty one-liner.",
+  researcher: "Key facts others miss. Bullet response, 1-2 lines. Direct.",
+  noter: "Summarize key points. Bullet response. Direct.",
 };
 
 const MODEL = process.env.MODEL || "gemma-3-4b";

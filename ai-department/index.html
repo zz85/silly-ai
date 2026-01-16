@@ -10,7 +10,9 @@
     body.dark { background: #1a1a1a; color: #e0e0e0; }
     body.light { background: #f5f5f5; color: #222; }
     .input-row { display: flex; gap: 8px; margin-bottom: 12px; }
-    #prompt { flex: 1; padding: 10px; border-radius: 6px; font-size: 14px; transition: background 0.2s, border-color 0.2s, color 0.2s; }
+    .prompt-wrapper { flex: 1; position: relative; }
+    #prompt { width: 100%; padding: 10px; border-radius: 6px; font-size: 14px; transition: background 0.2s, border-color 0.2s, color 0.2s; }
+    .suggestion { position: absolute; left: 10px; top: 10px; font-size: 14px; color: #999; pointer-events: none; white-space: pre; }
     .dark #prompt { border: 1px solid #333; background: #252525; color: #e0e0e0; }
     .light #prompt { border: 1px solid #ccc; background: #fff; color: #222; }
     button { padding: 10px 20px; border: none; border-radius: 6px; background: #4a9eff; color: #fff; cursor: pointer; font-size: 14px; }
@@ -41,44 +43,59 @@
     .status { font-size: 11px; color: #888; margin-top: 12px; text-align: right; }
   </style>
 </head>
-<body class="dark">
+<body class="light">
   <div class="settings">
     <label>LM Studio: <input type="text" id="url" value="http://localhost:3000/v1/chat/completions"></label>
     <label>Model: <input type="text" id="model" value="unsloth/lfm2.5-1.2b-instruct"></label>
     <label>Detail: <select id="detail">
       <option value="1-2">1-2 lines</option>
-      <option value="2-3">2-3 lines</option>
+      <option value="2-3" selected>2-3 lines</option>
       <option value="4-5">4-5 lines</option>
       <option value="6-8">6-8 lines</option>
       <option value="10+">10+ lines</option>
     </select></label>
-    <label>Tokens: <input type="range" id="tokens" min="50" max="500" value="100"> <span id="tokensVal">100</span></label>
-    <span class="settings-right"><button class="theme-toggle" id="theme">☀️ Light</button></span>
+    <label>Tokens: <input type="range" id="tokens" min="50" max="500" value="200"> <span id="tokensVal">200</span></label>
+    <span class="settings-right"><button class="theme-toggle" id="theme">🌙 Dark</button></span>
   </div>
+  <div class="settings advanced" id="advanced" style="display:none;">
+    <label>Autocomplete prompt: <input type="text" id="autocomplete-prompt" value="User is typing a question or topic. Complete their sentence. Reply with ONLY the completion on a single line. No quotes, no explanation. 1 sentence. 2-12 words max." style="width:500px;"></label>
+  </div>
+  <div style="margin-bottom:8px;"><a href="#" id="toggle-advanced" style="font-size:11px;color:#888;">Advanced options</a></div>
   <div class="input-row">
-    <input type="text" id="prompt" placeholder="Enter topic or question..." autofocus>
+    <div class="prompt-wrapper">
+      <input type="text" id="prompt" placeholder="Enter topic or question..." autofocus>
+      <span class="suggestion" id="suggestion"></span>
+    </div>
     <button id="go">Ask Team</button>
   </div>
   <div class="grid" id="grid"></div>
   <div class="status" id="status"></div>
 
   <script>
+    const STYLE = "Concise and direct.";
     const AGENTS = {
-      strategist: "Big picture, ROI, priorities. Bullet response, {detail} lines. Direct.",
-      engineer: "Technical feasibility, tradeoffs. Bullet response, {detail} lines. Direct.",
-      advocate: "Challenge assumptions, risks. Bullet response, {detail} lines. Direct.",
-      architect: "System design, scalability. Bullet response, {detail} lines. Direct.",
+      strategist: `Big picture, ROI, priorities. Bullet response, {detail} lines. ${STYLE}`,
+      engineer: `Technical feasibility, tradeoffs. Bullet response, {detail} lines. ${STYLE}`,
+      advocate: `Challenge assumptions, risks. Bullet response, {detail} lines. ${STYLE}`,
+      architect: `System design, scalability. Bullet response, {detail} lines. ${STYLE}`,
       cheerleader: "Find positives, encourage! Friendly, {detail} sentences.",
       joker: "One witty one-liner.",
-      researcher: "Key facts others miss. Bullet response, {detail} lines. Direct.",
-      noter: "Summarize key points. Bullet response. Direct.",
+      researcher: `Key facts others miss. Bullet response, {detail} lines. ${STYLE}`,
+      noter: `Summarize key points. Bullet response. ${STYLE}`,
       teacher: "Explain the topic simply. Teach key concepts. {detail} sentences.",
-      editor: "Improve clarity, grammar, phrasing. Suggest rewrites if needed. Direct.",
+      editor: `Improve clarity, grammar, phrasing. Suggest rewrites if needed. ${STYLE}`,
       therapist: "Ask probing questions to explore deeper. {detail} questions.",
+      critic: `Find flaws, weaknesses, opposing views. Harsh but fair. {detail} lines. ${STYLE}`,
     };
 
     const grid = document.getElementById('grid');
     const cards = {};
+
+    document.getElementById('toggle-advanced').onclick = (e) => {
+      e.preventDefault();
+      const adv = document.getElementById('advanced');
+      adv.style.display = adv.style.display === 'none' ? 'flex' : 'none';
+    };
 
     document.getElementById('theme').onclick = () => {
       const body = document.body;
@@ -97,6 +114,7 @@
     };
 
     document.getElementById('prompt').onfocus = () => {
+      clearSuggestion();
       document.getElementById('prompt').select();
     };
 
@@ -118,6 +136,8 @@
       return template.replace(/{detail}/g, detail);
     }
 
+    let totalTokens = 0;
+
     async function ask(name, system, prompt, tokens) {
       const url = document.getElementById('url').value;
       const model = document.getElementById('model').value;
@@ -132,6 +152,7 @@
           }),
         });
         const data = await res.json();
+        if (data.usage?.completion_tokens) totalTokens += data.usage.completion_tokens;
         return data.choices?.[0]?.message?.content || '(no response)';
       } catch (e) {
         return `(error: ${e.message})`;
@@ -141,9 +162,12 @@
     document.getElementById('go').onclick = async () => {
       const prompt = document.getElementById('prompt').value.trim();
       if (!prompt) return;
+      clearTimeout(autocompleteTimer);
+      clearSuggestion();
       document.getElementById('prompt').blur();
       const tokens = parseInt(document.getElementById('tokens').value);
       const start = Date.now();
+      totalTokens = 0;
       document.getElementById('status').textContent = 'Working...';
 
       Object.values(cards).forEach(({ card, body }) => {
@@ -171,12 +195,73 @@
       cards.synthesis.card.classList.remove('loading');
 
       const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-      document.getElementById('status').textContent = `Completed in ${elapsed}s`;
+      const tokensPerSec = totalTokens > 0 ? (totalTokens / parseFloat(elapsed)).toFixed(1) : '?';
+      document.getElementById('status').textContent = `Completed in ${elapsed}s • ${totalTokens} tokens • ${tokensPerSec} tok/s`;
     };
 
     document.getElementById('prompt').onkeydown = (e) => {
-      if (e.key === 'Enter') document.getElementById('go').click();
+      if (e.key === 'Enter') {
+        clearTimeout(autocompleteTimer);
+        clearSuggestion();
+        document.getElementById('go').click();
+      }
+      if (e.key === 'Tab' && currentSuggestion) {
+        e.preventDefault();
+        document.getElementById('prompt').value += currentSuggestion;
+        clearSuggestion();
+        fetchSuggestion(document.getElementById('prompt').value);
+      }
     };
+
+    // Autocomplete
+    let autocompleteTimer = null;
+    let currentSuggestion = '';
+    const promptEl = document.getElementById('prompt');
+    const suggestionEl = document.getElementById('suggestion');
+
+    function clearSuggestion() {
+      currentSuggestion = '';
+      suggestionEl.textContent = '';
+    }
+
+    promptEl.oninput = () => {
+      clearSuggestion();
+      clearTimeout(autocompleteTimer);
+      const text = promptEl.value;
+      if (text.length < 1) return;
+      autocompleteTimer = setTimeout(() => fetchSuggestion(text), 200);
+    };
+
+    async function fetchSuggestion(text) {
+      try {
+        const res = await fetch(document.getElementById('url').value, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: document.getElementById('model').value,
+            messages: [
+              { role: 'system', content: document.getElementById('autocomplete-prompt').value },
+              { role: 'user', content: `Complete the question starting with "${text}"...` }
+            ],
+            max_tokens: 20,
+          }),
+        });
+        const data = await res.json();
+        let completion = data.choices?.[0]?.message?.content?.trim().split('\n')[0] || '';
+        // Only show suggestion if response contains original text
+        if (!completion.toLowerCase().includes(text.toLowerCase())) return;
+        // Remove the input text from completion if it starts with it
+        if (completion.toLowerCase().startsWith(text.toLowerCase())) {
+          completion = completion.slice(text.length);
+        }
+        if (completion && promptEl.value === text) {
+          currentSuggestion = completion;
+          suggestionEl.innerHTML = `<span style="visibility:hidden">${text}</span>${completion}`;
+        }
+      } catch (e) {}
+    }
+
+    promptEl.onblur = clearSuggestion;
   </script>
 </body>
 </html>

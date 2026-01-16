@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Department</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #1a1a1a; color: #e0e0e0; padding: 12px; }
+    .input-row { display: flex; gap: 8px; margin-bottom: 12px; }
+    #prompt { flex: 1; padding: 10px; border: 1px solid #333; border-radius: 6px; background: #252525; color: #e0e0e0; font-size: 14px; }
+    button { padding: 10px 20px; border: none; border-radius: 6px; background: #4a9eff; color: #fff; cursor: pointer; font-size: 14px; }
+    button:hover { background: #3a8eef; }
+    button:disabled { background: #555; cursor: not-allowed; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+    .card { background: #252525; border-radius: 6px; padding: 10px; border-left: 3px solid #4a9eff; min-height: 80px; }
+    .card-header { font-size: 11px; font-weight: 600; text-transform: uppercase; color: #888; margin-bottom: 6px; }
+    .card-body { font-size: 13px; line-height: 1.4; white-space: pre-wrap; }
+    .card-body:empty::after { content: "..."; color: #555; }
+    .card.loading { opacity: 0.6; }
+    .synthesis { grid-column: 1 / -1; border-left-color: #9b59b6; background: #2a2535; }
+    .settings { font-size: 12px; color: #666; margin-bottom: 8px; }
+    .settings input { background: #252525; border: 1px solid #333; color: #e0e0e0; padding: 4px 8px; border-radius: 4px; width: 200px; }
+    .settings select { background: #252525; border: 1px solid #333; color: #e0e0e0; padding: 4px 8px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="settings">
+    <label>LM Studio: <input type="text" id="url" value="http://localhost:3000/v1/chat/completions"></label>
+    <label>Model: <input type="text" id="model" value="unsloth/lfm2.5-1.2b-instruct"></label>
+  </div>
+  <div class="input-row">
+    <input type="text" id="prompt" placeholder="Enter topic or question..." autofocus>
+    <button id="go">Ask Team</button>
+  </div>
+  <div class="grid" id="grid"></div>
+
+  <script>
+    const AGENTS = {
+      strategist: "Big picture, ROI, priorities. Bullet response, 1-2 lines. Direct.",
+      engineer: "Technical feasibility, tradeoffs. Bullet response, 1-2 lines. Direct.",
+      advocate: "Challenge assumptions, risks. Bullet response, 1-2 lines. Direct.",
+      architect: "System design, scalability. Bullet response, 1-2 lines. Direct.",
+      cheerleader: "Find positives, encourage! Friendly, 1-2 sentences.",
+      joker: "One witty one-liner.",
+      researcher: "Key facts others miss. Bullet response, 1-2 lines. Direct.",
+      noter: "Summarize key points. Bullet response. Direct.",
+      teacher: "Explain the topic simply. Teach key concepts. 1-2 sentences.",
+      editor: "Improve clarity, grammar, phrasing. Suggest rewrites if needed. Direct.",
+      therapist: "Ask probing questions to explore deeper. 1-2 questions.",
+    };
+
+    const grid = document.getElementById('grid');
+    const cards = {};
+
+    // Create cards
+    Object.keys(AGENTS).forEach(name => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `<div class="card-header">${name}</div><div class="card-body" id="body-${name}"></div>`;
+      grid.appendChild(card);
+      cards[name] = { card, body: card.querySelector('.card-body') };
+    });
+    // Synthesis card
+    const synthCard = document.createElement('div');
+    synthCard.className = 'card synthesis';
+    synthCard.innerHTML = `<div class="card-header">synthesis</div><div class="card-body" id="body-synthesis"></div>`;
+    grid.appendChild(synthCard);
+    cards.synthesis = { card: synthCard, body: synthCard.querySelector('.card-body') };
+
+    async function ask(name, system, prompt, tokens = 100) {
+      const url = document.getElementById('url').value;
+      const model = document.getElementById('model').value;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
+            max_tokens: tokens,
+          }),
+        });
+        const data = await res.json();
+        return data.choices?.[0]?.message?.content || '(no response)';
+      } catch (e) {
+        return `(error: ${e.message})`;
+      }
+    }
+
+    document.getElementById('go').onclick = async () => {
+      const prompt = document.getElementById('prompt').value.trim();
+      if (!prompt) return;
+
+      // Reset
+      Object.values(cards).forEach(({ card, body }) => {
+        body.textContent = '';
+        card.classList.add('loading');
+      });
+
+      // Ask all agents in parallel
+      const results = await Promise.all(
+        Object.entries(AGENTS).map(async ([name, system]) => {
+          const response = await ask(name, system, prompt);
+          cards[name].body.textContent = response;
+          cards[name].card.classList.remove('loading');
+          return { name, response };
+        })
+      );
+
+      // Synthesize
+      const allResponses = results.map(r => `${r.name}: ${r.response}`).join('\n');
+      const synthesis = await ask(
+        'synthesis',
+        'Synthesize these team perspectives into a concise conclusion. 2-3 paragraphs max. Be direct.',
+        `Topic: ${prompt}\n\nTeam input:\n${allResponses}`,
+        500
+      );
+      cards.synthesis.body.textContent = synthesis;
+      cards.synthesis.card.classList.remove('loading');
+    };
+
+    document.getElementById('prompt').onkeydown = (e) => {
+      if (e.key === 'Enter') document.getElementById('go').click();
+    };
+  </script>
+</body>
+</html>

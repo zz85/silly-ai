@@ -6,54 +6,100 @@
   <title>AI Department</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: system-ui, sans-serif; background: #1a1a1a; color: #e0e0e0; padding: 12px; }
+    body { font-family: system-ui, sans-serif; padding: 12px; transition: background 0.2s, color 0.2s; }
+    body.dark { background: #1a1a1a; color: #e0e0e0; }
+    body.light { background: #f5f5f5; color: #222; }
     .input-row { display: flex; gap: 8px; margin-bottom: 12px; }
-    #prompt { flex: 1; padding: 10px; border: 1px solid #333; border-radius: 6px; background: #252525; color: #e0e0e0; font-size: 14px; }
+    #prompt { flex: 1; padding: 10px; border-radius: 6px; font-size: 14px; transition: background 0.2s, border-color 0.2s, color 0.2s; }
+    .dark #prompt { border: 1px solid #333; background: #252525; color: #e0e0e0; }
+    .light #prompt { border: 1px solid #ccc; background: #fff; color: #222; }
     button { padding: 10px 20px; border: none; border-radius: 6px; background: #4a9eff; color: #fff; cursor: pointer; font-size: 14px; }
     button:hover { background: #3a8eef; }
     button:disabled { background: #555; cursor: not-allowed; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
-    .card { background: #252525; border-radius: 6px; padding: 10px; border-left: 3px solid #4a9eff; min-height: 80px; }
+    .card { border-radius: 6px; padding: 10px; border-left: 3px solid #4a9eff; min-height: 80px; transition: background 0.2s; }
+    .dark .card { background: #252525; }
+    .light .card { background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
     .card-header { font-size: 11px; font-weight: 600; text-transform: uppercase; color: #888; margin-bottom: 6px; }
     .card-body { font-size: 13px; line-height: 1.4; white-space: pre-wrap; }
-    .card-body:empty::after { content: "..."; color: #555; }
+    .dark .card-body:empty::after { content: "..."; color: #555; }
+    .light .card-body:empty::after { content: "..."; color: #bbb; }
     .card.loading { opacity: 0.6; }
-    .synthesis { grid-column: 1 / -1; border-left-color: #9b59b6; background: #2a2535; }
-    .settings { font-size: 12px; color: #666; margin-bottom: 8px; }
-    .settings input { background: #252525; border: 1px solid #333; color: #e0e0e0; padding: 4px 8px; border-radius: 4px; width: 200px; }
-    .settings select { background: #252525; border: 1px solid #333; color: #e0e0e0; padding: 4px 8px; border-radius: 4px; }
+    .synthesis { grid-column: 1 / -1; border-left-color: #9b59b6; }
+    .dark .synthesis { background: #2a2535; }
+    .light .synthesis { background: #f3eef8; }
+    .settings { font-size: 12px; color: #666; margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    .settings-right { margin-left: auto; }
+    .settings input[type="text"] { padding: 4px 8px; border-radius: 4px; width: 200px; transition: background 0.2s, border-color 0.2s, color 0.2s; }
+    .dark .settings input[type="text"] { background: #252525; border: 1px solid #333; color: #e0e0e0; }
+    .light .settings input[type="text"] { background: #fff; border: 1px solid #ccc; color: #222; }
+    .settings input[type="range"] { width: 80px; }
+    .settings select { padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+    .dark .settings select { background: #252525; border: 1px solid #333; color: #e0e0e0; }
+    .light .settings select { background: #fff; border: 1px solid #ccc; color: #222; }
+    .theme-toggle { cursor: pointer; padding: 4px 8px; border-radius: 4px; border: 1px solid #666; background: transparent; color: inherit; font-size: 12px; }
+    .status { font-size: 11px; color: #888; margin-top: 12px; text-align: right; }
   </style>
 </head>
-<body>
+<body class="dark">
   <div class="settings">
     <label>LM Studio: <input type="text" id="url" value="http://localhost:3000/v1/chat/completions"></label>
     <label>Model: <input type="text" id="model" value="unsloth/lfm2.5-1.2b-instruct"></label>
+    <label>Detail: <select id="detail">
+      <option value="1-2">1-2 lines</option>
+      <option value="2-3">2-3 lines</option>
+      <option value="4-5">4-5 lines</option>
+      <option value="6-8">6-8 lines</option>
+      <option value="10+">10+ lines</option>
+    </select></label>
+    <label>Tokens: <input type="range" id="tokens" min="50" max="500" value="100"> <span id="tokensVal">100</span></label>
+    <span class="settings-right"><button class="theme-toggle" id="theme">☀️ Light</button></span>
   </div>
   <div class="input-row">
     <input type="text" id="prompt" placeholder="Enter topic or question..." autofocus>
     <button id="go">Ask Team</button>
   </div>
   <div class="grid" id="grid"></div>
+  <div class="status" id="status"></div>
 
   <script>
     const AGENTS = {
-      strategist: "Big picture, ROI, priorities. Bullet response, 1-2 lines. Direct.",
-      engineer: "Technical feasibility, tradeoffs. Bullet response, 1-2 lines. Direct.",
-      advocate: "Challenge assumptions, risks. Bullet response, 1-2 lines. Direct.",
-      architect: "System design, scalability. Bullet response, 1-2 lines. Direct.",
-      cheerleader: "Find positives, encourage! Friendly, 1-2 sentences.",
+      strategist: "Big picture, ROI, priorities. Bullet response, {detail} lines. Direct.",
+      engineer: "Technical feasibility, tradeoffs. Bullet response, {detail} lines. Direct.",
+      advocate: "Challenge assumptions, risks. Bullet response, {detail} lines. Direct.",
+      architect: "System design, scalability. Bullet response, {detail} lines. Direct.",
+      cheerleader: "Find positives, encourage! Friendly, {detail} sentences.",
       joker: "One witty one-liner.",
-      researcher: "Key facts others miss. Bullet response, 1-2 lines. Direct.",
+      researcher: "Key facts others miss. Bullet response, {detail} lines. Direct.",
       noter: "Summarize key points. Bullet response. Direct.",
-      teacher: "Explain the topic simply. Teach key concepts. 1-2 sentences.",
+      teacher: "Explain the topic simply. Teach key concepts. {detail} sentences.",
       editor: "Improve clarity, grammar, phrasing. Suggest rewrites if needed. Direct.",
-      therapist: "Ask probing questions to explore deeper. 1-2 questions.",
+      therapist: "Ask probing questions to explore deeper. {detail} questions.",
     };
 
     const grid = document.getElementById('grid');
     const cards = {};
 
-    // Create cards
+    document.getElementById('theme').onclick = () => {
+      const body = document.body;
+      const btn = document.getElementById('theme');
+      if (body.classList.contains('dark')) {
+        body.classList.replace('dark', 'light');
+        btn.textContent = '🌙 Dark';
+      } else {
+        body.classList.replace('light', 'dark');
+        btn.textContent = '☀️ Light';
+      }
+    };
+
+    document.getElementById('tokens').oninput = (e) => {
+      document.getElementById('tokensVal').textContent = e.target.value;
+    };
+
+    document.getElementById('prompt').onfocus = () => {
+      document.getElementById('prompt').select();
+    };
+
     Object.keys(AGENTS).forEach(name => {
       const card = document.createElement('div');
       card.className = 'card';
@@ -61,14 +107,18 @@
       grid.appendChild(card);
       cards[name] = { card, body: card.querySelector('.card-body') };
     });
-    // Synthesis card
     const synthCard = document.createElement('div');
     synthCard.className = 'card synthesis';
     synthCard.innerHTML = `<div class="card-header">synthesis</div><div class="card-body" id="body-synthesis"></div>`;
     grid.appendChild(synthCard);
     cards.synthesis = { card: synthCard, body: synthCard.querySelector('.card-body') };
 
-    async function ask(name, system, prompt, tokens = 100) {
+    function getSystem(template) {
+      const detail = document.getElementById('detail').value;
+      return template.replace(/{detail}/g, detail);
+    }
+
+    async function ask(name, system, prompt, tokens) {
       const url = document.getElementById('url').value;
       const model = document.getElementById('model').value;
       try {
@@ -91,24 +141,25 @@
     document.getElementById('go').onclick = async () => {
       const prompt = document.getElementById('prompt').value.trim();
       if (!prompt) return;
+      document.getElementById('prompt').blur();
+      const tokens = parseInt(document.getElementById('tokens').value);
+      const start = Date.now();
+      document.getElementById('status').textContent = 'Working...';
 
-      // Reset
       Object.values(cards).forEach(({ card, body }) => {
         body.textContent = '';
         card.classList.add('loading');
       });
 
-      // Ask all agents in parallel
       const results = await Promise.all(
-        Object.entries(AGENTS).map(async ([name, system]) => {
-          const response = await ask(name, system, prompt);
+        Object.entries(AGENTS).map(async ([name, template]) => {
+          const response = await ask(name, getSystem(template), prompt, tokens);
           cards[name].body.textContent = response;
           cards[name].card.classList.remove('loading');
           return { name, response };
         })
       );
 
-      // Synthesize
       const allResponses = results.map(r => `${r.name}: ${r.response}`).join('\n');
       const synthesis = await ask(
         'synthesis',
@@ -118,6 +169,9 @@
       );
       cards.synthesis.body.textContent = synthesis;
       cards.synthesis.card.classList.remove('loading');
+
+      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+      document.getElementById('status').textContent = `Completed in ${elapsed}s`;
     };
 
     document.getElementById('prompt').onkeydown = (e) => {

@@ -7,6 +7,9 @@ const AGENTS = {
   joker: "One witty one-liner.",
   researcher: "Key facts others miss. Bullet response, 1-2 lines. Direct.",
   noter: "Summarize key points. Bullet response. Direct.",
+  teacher: "Explain the topic simply. Teach key concepts. 1-2 sentences.",
+  editor: "Improve clarity, grammar, phrasing. Suggest rewrites if needed. Direct.",
+  therapist: "Ask probing questions to explore deeper. 1-2 questions.",
 };
 
 const MODEL = process.env.MODEL || "gemma-3-4b";

@@ -45,7 +45,7 @@
 </head>
 <body class="light">
   <div class="settings">
-    <label>LM Studio: <input type="text" id="url" value="http://localhost:3000/v1/chat/completions"></label>
+    <label>LM Studio: <input type="text" id="url" value="http://localhost:3000"></label>
     <label>Model: <input type="text" id="model" value="unsloth/lfm2.5-1.2b-instruct"></label>
     <label>Detail: <select id="detail">
       <option value="1-2">1-2 lines</option>
@@ -58,7 +58,9 @@
     <span class="settings-right"><button class="theme-toggle" id="theme">🌙 Dark</button></span>
   </div>
   <div class="settings advanced" id="advanced" style="display:none;">
+    <label>Models: <select id="model-select"><option value="">-- Load models --</option></select> <button id="load-models" style="padding:4px 8px;font-size:11px;">Refresh</button></label>
     <label>Autocomplete prompt: <input type="text" id="autocomplete-prompt" value="User is typing a question or topic. Complete their sentence. Reply with ONLY the completion on a single line. No quotes, no explanation. 1 sentence. 2-12 words max." style="width:500px;"></label>
+    <label><input type="checkbox" id="stream" checked> Stream responses</label>
   </div>
   <div style="margin-bottom:8px;"><a href="#" id="toggle-advanced" style="font-size:11px;color:#888;">Advanced options</a></div>
   <div class="input-row">
@@ -138,22 +140,53 @@
 
     let totalTokens = 0;
 
-    async function ask(name, system, prompt, tokens) {
-      const url = document.getElementById('url').value;
+    async function ask(name, system, prompt, tokens, onChunk) {
+      const baseUrl = document.getElementById('url').value.replace(/\/$/, '');
       const model = document.getElementById('model').value;
+      const useStream = document.getElementById('stream').checked;
       try {
-        const res = await fetch(url, {
+        const res = await fetch(`${baseUrl}/v1/chat/completions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model,
             messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
             max_tokens: tokens,
+            stream: useStream,
           }),
         });
-        const data = await res.json();
-        if (data.usage?.completion_tokens) totalTokens += data.usage.completion_tokens;
-        return data.choices?.[0]?.message?.content || '(no response)';
+        
+        if (!useStream) {
+          const data = await res.json();
+          if (data.usage?.completion_tokens) totalTokens += data.usage.completion_tokens;
+          return data.choices?.[0]?.message?.content || '(no response)';
+        }
+        
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let content = '';
+        let buffer = '';
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              const delta = data.choices?.[0]?.delta?.content;
+              if (delta) {
+                content += delta;
+                totalTokens++;
+                if (onChunk) onChunk(content);
+              }
+            } catch {}
+          }
+        }
+        return content || '(no response)';
       } catch (e) {
         return `(error: ${e.message})`;
       }
@@ -177,7 +210,9 @@
 
       const results = await Promise.all(
         Object.entries(AGENTS).map(async ([name, template]) => {
-          const response = await ask(name, getSystem(template), prompt, tokens);
+          const response = await ask(name, getSystem(template), prompt, tokens, (chunk) => {
+            cards[name].body.textContent = chunk;
+          });
           cards[name].body.textContent = response;
           cards[name].card.classList.remove('loading');
           return { name, response };
@@ -189,7 +224,8 @@
         'synthesis',
         'Synthesize these team perspectives into a concise conclusion. 2-3 paragraphs max. Be direct.',
         `Topic: ${prompt}\n\nTeam input:\n${allResponses}`,
-        500
+        500,
+        (chunk) => { cards.synthesis.body.textContent = chunk; }
       );
       cards.synthesis.body.textContent = synthesis;
       cards.synthesis.card.classList.remove('loading');
@@ -234,7 +270,8 @@
 
     async function fetchSuggestion(text) {
       try {
-        const res = await fetch(document.getElementById('url').value, {
+        const baseUrl = document.getElementById('url').value.replace(/\/$/, '');
+        const res = await fetch(`${baseUrl}/v1/chat/completions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -262,6 +299,31 @@
     }
 
     promptEl.onblur = clearSuggestion;
+
+    // Load models
+    async function loadModels() {
+      const baseUrl = document.getElementById('url').value.replace(/\/$/, '');
+      const select = document.getElementById('model-select');
+      try {
+        const res = await fetch(`${baseUrl}/v1/models`);
+        const data = await res.json();
+        select.innerHTML = '<option value="">-- Select model --</option>';
+        (data.data || []).forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = m.id;
+          if (m.id === document.getElementById('model').value) opt.selected = true;
+          select.appendChild(opt);
+        });
+      } catch (e) {
+        select.innerHTML = '<option value="">(failed to load)</option>';
+      }
+    }
+
+    document.getElementById('load-models').onclick = loadModels;
+    document.getElementById('model-select').onchange = (e) => {
+      if (e.target.value) document.getElementById('model').value = e.target.value;
+    };
   </script>
 </body>
 </html>

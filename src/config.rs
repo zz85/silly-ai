@@ -72,6 +72,7 @@ pub enum PromptFormat {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "backend")]
+#[allow(dead_code)]
 pub enum LlmConfig {
     #[serde(rename = "llama-cpp")]
     LlamaCpp {
@@ -176,6 +177,7 @@ fn default_kalosm_model() -> String {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "engine")]
+#[allow(dead_code)]
 pub enum TtsConfig {
     #[serde(rename = "kokoro")]
     Kokoro {

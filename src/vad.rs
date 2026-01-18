@@ -63,12 +63,14 @@ impl VadEngine {
         }
     }
 
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         if let VadEngine::Silero(vad) = self {
             vad.reset();
         }
     }
 
+    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self {
             VadEngine::Silero(_) => "Silero",

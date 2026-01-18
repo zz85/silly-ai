@@ -1,5 +1,6 @@
 /// Wake word detection - checks if transcribed text starts with wake phrase
 pub struct WakeWord {
+    #[allow(dead_code)]
     phrase: String,
     words: Vec<String>,
 }
@@ -38,6 +39,7 @@ impl WakeWord {
         Some(rest)
     }
 
+    #[allow(dead_code)]
     pub fn phrase(&self) -> &str {
         &self.phrase
     }

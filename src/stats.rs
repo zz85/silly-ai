@@ -29,7 +29,7 @@ impl InferenceStats {
         let mut out = String::new();
 
         if !self.transcription.is_empty() {
-            let (avg, min, max, total) = Self::calc_duration(&self.transcription);
+            let (avg, min, max, _total) = Self::calc_duration(&self.transcription);
             let avg_samples: f64 = self
                 .transcription
                 .iter()

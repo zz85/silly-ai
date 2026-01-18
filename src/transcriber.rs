@@ -62,6 +62,7 @@ impl Transcriber {
         Ok(text)
     }
 
+    #[allow(dead_code)]
     pub fn transcribe_with_segments(
         &mut self,
         samples: &[f32],

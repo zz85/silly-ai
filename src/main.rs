@@ -31,6 +31,7 @@ use repl::TranscriptEvent;
 
 use clap::{Parser, Subcommand};
 use std::error::Error;
+#[cfg(feature = "listen")]
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

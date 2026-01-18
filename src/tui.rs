@@ -92,6 +92,7 @@ impl Tui {
     }
 
     /// Move cursor to start of status area
+    #[allow(dead_code)]
     fn goto_status_start(&self) -> io::Result<()> {
         let mut out = stdout();
         if self.status_drawn && self.last_drawn_lines > 0 {
@@ -419,6 +420,7 @@ impl Tui {
         Ok(pending_submit)
     }
 
+    #[allow(dead_code)]
     pub fn set_input(&mut self, text: &str) {
         self.input = text.to_string();
         self.cursor_pos = self.char_count();

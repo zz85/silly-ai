@@ -100,6 +100,7 @@ pub struct Tts {
 }
 
 impl Tts {
+    #[allow(dead_code)]
     pub fn new(engine: Box<dyn TtsEngine>) -> Self {
         Self {
             engine,
@@ -114,6 +115,7 @@ impl Tts {
         }
     }
 
+    #[allow(dead_code)]
     pub fn speak(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
         let (audio, sample_rate) = self.engine.synthesize(text)?;
         let stream = OutputStreamBuilder::open_default_stream()?;

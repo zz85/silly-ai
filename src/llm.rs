@@ -1,6 +1,8 @@
 //! LLM backends - llama.cpp (default) and Ollama (optional)
 
+#[cfg(feature = "llama-cpp")]
 use crate::config::PromptFormat;
+#[cfg(feature = "llama-cpp")]
 use std::path::PathBuf;
 
 /// Chat message for conversation history
@@ -11,6 +13,7 @@ pub struct Message {
 }
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 pub enum Role {
     System,
     User,

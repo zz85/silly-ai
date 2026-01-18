@@ -21,6 +21,7 @@ impl VadEngine {
             }
             Err(e) => {
                 eprintln!("VAD: CoreML failed, using CPU: {}", e);
+                // Try to load with CPU fallback
                 Vad::new(model_path, sample_rate)
                     .map(VadEngine::Silero)
                     .map_err(|e| e.to_string())

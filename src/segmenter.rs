@@ -1,8 +1,8 @@
 use crate::vad::VadEngine;
 use flume::{Receiver, Sender};
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const VAD_FRAME_SAMPLES: usize = 480;
 const TARGET_RATE: usize = 16000;
@@ -96,7 +96,7 @@ pub fn run_segmenter(
                 {
                     let duration = speech_buf.len() as f32 / TARGET_RATE as f32;
                     println!("[{:.1}s]", duration);
-                    
+
                     let segment = AudioSegment {
                         samples: std::mem::take(&mut speech_buf),
                         start_sample: speech_start_sample,

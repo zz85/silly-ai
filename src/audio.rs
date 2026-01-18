@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::vad::VadEngine;
 
-const TARGET_RATE: usize = 16000;
+const TARGET_RATE: usize = 16000; // 16khz
 const CHUNK_SECONDS: f32 = 3.0;
 const PREVIEW_INTERVAL: Duration = Duration::from_millis(500);
 const RESAMPLE_CHUNK: usize = 1024;
@@ -21,6 +21,7 @@ const VAD_MAX_SPEECH_SECONDS: f32 = 10.0;
 const VAD_SILENCE_FRAMES_TO_END: usize = 15;
 const VAD_PREFILL_FRAMES: usize = 10;
 const VAD_ONSET_FRAMES: usize = 3;
+const MAX_SPEECH_BUFFER_SIZE: usize = (TARGET_RATE as f32 * VAD_MAX_SPEECH_SECONDS) as usize; // 10s
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum VadState {
@@ -176,8 +177,7 @@ pub fn run_vad_processor(
     level_tx: Sender<crate::DisplayEvent>,
 ) {
     let mut state = VadState::Idle;
-    let mut speech_buf: Vec<f32> =
-        Vec::with_capacity((TARGET_RATE as f32 * VAD_MAX_SPEECH_SECONDS) as usize);
+    let mut speech_buf: Vec<f32> = Vec::with_capacity(MAX_SPEECH_BUFFER_SIZE);
     let mut prefill = PrefillRing::new(VAD_FRAME_SAMPLES, VAD_PREFILL_FRAMES);
     let mut last_preview = Instant::now();
     let mut last_level = Instant::now();
@@ -265,6 +265,7 @@ fn process_vad_frame(
                 }
             } else {
                 *state = VadState::Idle;
+                speech_buf.clear(); // Clear buffer on onset failure
             }
         }
         VadState::Speaking(silence_count) => {
@@ -277,11 +278,10 @@ fn process_vad_frame(
         }
     }
 
-    // Check emit
+    // Check emit - add memory limit check
     let should_emit = match state {
         VadState::Speaking(silence) => {
-            *silence >= VAD_SILENCE_FRAMES_TO_END
-                || speech_buf.len() >= (TARGET_RATE as f32 * VAD_MAX_SPEECH_SECONDS) as usize
+            *silence >= VAD_SILENCE_FRAMES_TO_END || speech_buf.len() >= MAX_SPEECH_BUFFER_SIZE
         }
         _ => false,
     };
@@ -289,6 +289,7 @@ fn process_vad_frame(
     if should_emit {
         if speech_buf.len() >= VAD_MIN_SPEECH_SAMPLES {
             let samples: Arc<[f32]> = std::mem::take(speech_buf).into();
+            // Emit samples
             let _ = final_tx.send(samples);
         } else {
             speech_buf.clear();

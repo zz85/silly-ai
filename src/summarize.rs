@@ -70,15 +70,20 @@ fn chunk_text(text: &str, chunk_size_tokens: usize, overlap_tokens: usize) -> Ve
 pub fn run_summarize(input: PathBuf) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let content = fs::read_to_string(&input)?;
     if content.trim().is_empty() {
-        println!("xxxx Input file is empty.");
+        eprintln!("Input file is empty.");
         return Ok(());
     }
 
     let config = Config::load();
     let ctx_size = get_ctx_size(&config.llm) as usize;
     let total_tokens = rough_token_count(&content);
-    
-    println!("xxxx Summarizing {} ({} estimated tokens, ctx_size {})...\n", input.display(), total_tokens, ctx_size);
+
+    println!(
+        "Summarizing {} ({} estimated tokens, ctx_size {})...\n",
+        input.display(),
+        total_tokens,
+        ctx_size
+    );
 
     let mut backend = create_backend(&config.llm, SUMMARIZE_SYSTEM)?;
 
@@ -103,33 +108,25 @@ pub fn run_summarize(input: PathBuf) -> Result<(), Box<dyn std::error::Error + S
         for (i, chunk) in chunks.iter().enumerate() {
             print!("Chunk {}/{}...", i + 1, chunks.len());
             let _ = stdout().flush();
-            
+
             let messages = vec![Message {
                 role: Role::User,
                 content: format!("{}{}", CHUNK_PROMPT, chunk),
             }];
 
-            println!("xxxx  input: {chunk:?}");
-
             let mut summary = String::new();
-            
-            
 
             backend.generate(&messages, &mut |token| {
-                println!("xxxx  token: {token}");
                 summary.push_str(token);
             })?;
 
-            println!("xxxx  summary: {summary}");
-
             chunk_summaries.push(summary);
-            println!("xxxx  done");
         }
 
         // Combine and produce final summary
-        println!("xxxx \nGenerating final summary...\n");
+        println!("Generating final summary...\n");
         let combined = chunk_summaries.join("\n---\n");
-        
+
         let messages = vec![Message {
             role: Role::User,
             content: format!("{}{}", COMBINE_PROMPT, combined),
@@ -169,9 +166,20 @@ fn create_backend(
             ctx_size,
         } => {
             let backend = if let Some(path) = model_path {
-                crate::llm::llama::LlamaCppBackend::from_path(path, system_prompt, *prompt_format, *ctx_size)?
+                crate::llm::llama::LlamaCppBackend::from_path(
+                    path,
+                    system_prompt,
+                    *prompt_format,
+                    *ctx_size,
+                )?
             } else {
-                crate::llm::llama::LlamaCppBackend::from_hf(hf_repo, hf_file, system_prompt, *prompt_format, *ctx_size)?
+                crate::llm::llama::LlamaCppBackend::from_hf(
+                    hf_repo,
+                    hf_file,
+                    system_prompt,
+                    *prompt_format,
+                    *ctx_size,
+                )?
             };
             Ok(Box::new(backend))
         }
@@ -187,9 +195,23 @@ fn create_backend(
         #[cfg(not(feature = "ollama"))]
         LlmConfig::Ollama { .. } => Err("Ollama not enabled. Build with --features ollama".into()),
         #[cfg(feature = "lm-studio")]
-        LlmConfig::LmStudio { base_url, model, temperature, top_p, top_k, repetition_penalty, .. } => Ok(Box::new(
-            crate::llm::lm_studio::LmStudioBackend::new(base_url, model, system_prompt, *temperature, *top_p, *top_k, *repetition_penalty),
-        )),
+        LlmConfig::LmStudio {
+            base_url,
+            model,
+            temperature,
+            top_p,
+            top_k,
+            repetition_penalty,
+            ..
+        } => Ok(Box::new(crate::llm::lm_studio::LmStudioBackend::new(
+            base_url,
+            model,
+            system_prompt,
+            *temperature,
+            *top_p,
+            *top_k,
+            *repetition_penalty,
+        ))),
         #[cfg(not(feature = "lm-studio"))]
         LlmConfig::LmStudio { .. } => {
             Err("LM Studio not enabled. Build with --features lm-studio".into())

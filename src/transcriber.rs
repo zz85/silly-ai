@@ -42,6 +42,11 @@ impl Transcriber {
         &mut self,
         samples: &[f32],
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        // Check for empty samples to prevent transcription errors
+        if samples.is_empty() {
+            return Ok(String::new());
+        }
+
         let timer = self
             .stats
             .as_ref()

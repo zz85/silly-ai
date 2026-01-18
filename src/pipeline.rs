@@ -1,5 +1,5 @@
-use crate::capture::{capture_mic, capture_system, TARGET_RATE};
-use crate::segmenter::{run_segmenter, AudioSegment, SegmenterConfig};
+use crate::capture::{TARGET_RATE, capture_mic, capture_system};
+use crate::segmenter::{AudioSegment, SegmenterConfig, run_segmenter};
 use crate::transcriber::Transcriber;
 use crate::vad::VadEngine;
 use flume::{Receiver, Sender};
@@ -7,8 +7,8 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::num::NonZero;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use vorbis_rs::VorbisEncoderBuilder;
 
@@ -157,16 +157,28 @@ pub fn run_record_only(
     let running_capture = running.clone();
     let capture_handle = thread::spawn(move || {
         let result = match source {
-            AudioSource::Mic => capture_mic_with_tap(flume::bounded(1).0, Some(ogg_tx), running_capture),
-            AudioSource::System => capture_system_with_tap(flume::bounded(1).0, Some(ogg_tx), running_capture, None),
-            AudioSource::App(name) => capture_system_with_tap(flume::bounded(1).0, Some(ogg_tx), running_capture, Some(name)),
+            AudioSource::Mic => {
+                capture_mic_with_tap(flume::bounded(1).0, Some(ogg_tx), running_capture)
+            }
+            AudioSource::System => {
+                capture_system_with_tap(flume::bounded(1).0, Some(ogg_tx), running_capture, None)
+            }
+            AudioSource::App(name) => capture_system_with_tap(
+                flume::bounded(1).0,
+                Some(ogg_tx),
+                running_capture,
+                Some(name),
+            ),
         };
         if let Err(e) = result {
             eprintln!("Capture error: {}", e);
         }
     });
 
-    println!("Recording to {}... Press Ctrl+C to stop.\n", ogg_path.display());
+    println!(
+        "Recording to {}... Press Ctrl+C to stop.\n",
+        ogg_path.display()
+    );
     run_ogg_writer(ogg_rx, ogg_path, running)?;
 
     let _ = capture_handle.join();
@@ -206,8 +218,12 @@ pub fn run_pipeline_with_options(
     let capture_handle = thread::spawn(move || {
         let result = match source {
             AudioSource::Mic => capture_mic_with_tap(audio_tx, ogg_sender, running_capture),
-            AudioSource::System => capture_system_with_tap(audio_tx, ogg_sender, running_capture, None),
-            AudioSource::App(name) => capture_system_with_tap(audio_tx, ogg_sender, running_capture, Some(name)),
+            AudioSource::System => {
+                capture_system_with_tap(audio_tx, ogg_sender, running_capture, None)
+            }
+            AudioSource::App(name) => {
+                capture_system_with_tap(audio_tx, ogg_sender, running_capture, Some(name))
+            }
         };
         if let Err(e) = result {
             eprintln!("Capture error: {}", e);
@@ -295,11 +311,16 @@ fn run_ogg_writer(
     }
 
     encoder.finish()?;
-    
+
     let duration = total_samples as f32 / TARGET_RATE as f32;
     let size = std::fs::metadata(&path)?.len();
-    println!("OGG saved: {} ({:.1}s, {:.1} KB)", path.display(), duration, size as f64 / 1024.0);
-    
+    println!(
+        "OGG saved: {} ({:.1}s, {:.1} KB)",
+        path.display(),
+        duration,
+        size as f64 / 1024.0
+    );
+
     Ok(())
 }
 
@@ -308,8 +329,8 @@ fn capture_mic_with_tap(
     ogg_tx: Option<Sender<Vec<f32>>>,
     running: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use crate::capture::resample;
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
     let host = cpal::default_host();
     let device = host.default_input_device().ok_or("No input device")?;
@@ -353,8 +374,8 @@ fn capture_system_with_tap(
     running: Arc<AtomicBool>,
     app_filter: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use screencapturekit::prelude::*;
     use crate::capture::resample;
+    use screencapturekit::prelude::*;
 
     const CAPTURE_SAMPLE_RATE: usize = 48000;
 
@@ -462,7 +483,9 @@ pub fn run_multi_source(
         let result = match source1_clone {
             AudioSource::Mic => capture_mic_with_tap(audio_tx1, None, running1),
             AudioSource::System => capture_system_with_tap(audio_tx1, None, running1, None),
-            AudioSource::App(name) => capture_system_with_tap(audio_tx1, None, running1, Some(name)),
+            AudioSource::App(name) => {
+                capture_system_with_tap(audio_tx1, None, running1, Some(name))
+            }
         };
         if let Err(e) = result {
             eprintln!("Capture 1 error: {}", e);
@@ -471,14 +494,26 @@ pub fn run_multi_source(
 
     let running1_seg = running.clone();
     let seg1 = thread::spawn(move || {
-        if let Err(e) = run_segmenter(audio_rx1, segment_tx1, vad1, SegmenterConfig::default(), running1_seg) {
+        if let Err(e) = run_segmenter(
+            audio_rx1,
+            segment_tx1,
+            vad1,
+            SegmenterConfig::default(),
+            running1_seg,
+        ) {
             eprintln!("Segmenter 1 error: {}", e);
         }
     });
 
     let running1_trans = running.clone();
     let trans1 = thread::spawn(move || {
-        if let Err(e) = run_transcriber_with_source(segment_rx1, transcript_tx1, transcriber1, running1_trans, Some(label1)) {
+        if let Err(e) = run_transcriber_with_source(
+            segment_rx1,
+            transcript_tx1,
+            transcriber1,
+            running1_trans,
+            Some(label1),
+        ) {
             eprintln!("Transcriber 1 error: {}", e);
         }
     });
@@ -493,7 +528,9 @@ pub fn run_multi_source(
         let result = match source2_clone {
             AudioSource::Mic => capture_mic_with_tap(audio_tx2, None, running2),
             AudioSource::System => capture_system_with_tap(audio_tx2, None, running2, None),
-            AudioSource::App(name) => capture_system_with_tap(audio_tx2, None, running2, Some(name)),
+            AudioSource::App(name) => {
+                capture_system_with_tap(audio_tx2, None, running2, Some(name))
+            }
         };
         if let Err(e) = result {
             eprintln!("Capture 2 error: {}", e);
@@ -502,20 +539,36 @@ pub fn run_multi_source(
 
     let running2_seg = running.clone();
     let seg2 = thread::spawn(move || {
-        if let Err(e) = run_segmenter(audio_rx2, segment_tx2, vad2, SegmenterConfig::default(), running2_seg) {
+        if let Err(e) = run_segmenter(
+            audio_rx2,
+            segment_tx2,
+            vad2,
+            SegmenterConfig::default(),
+            running2_seg,
+        ) {
             eprintln!("Segmenter 2 error: {}", e);
         }
     });
 
     let running2_trans = running.clone();
     let trans2 = thread::spawn(move || {
-        if let Err(e) = run_transcriber_with_source(segment_rx2, transcript_tx, transcriber2, running2_trans, Some(label2)) {
+        if let Err(e) = run_transcriber_with_source(
+            segment_rx2,
+            transcript_tx,
+            transcriber2,
+            running2_trans,
+            Some(label2),
+        ) {
             eprintln!("Transcriber 2 error: {}", e);
         }
     });
 
     // Writer on main thread
-    println!("Recording from [{}] and [{}]... Press Ctrl+C to stop.\n", source1.label(), source2.label());
+    println!(
+        "Recording from [{}] and [{}]... Press Ctrl+C to stop.\n",
+        source1.label(),
+        source2.label()
+    );
     run_writer(transcript_rx, output, running.clone())?;
 
     // Wait for threads

@@ -159,12 +159,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 Some(s) => listen::AudioSource::App(s.clone()),
                 None => listen::pick_source_interactive()?,
             };
-            return listen::run_listen(
-                src,
-                output.clone(),
-                debug_wav.clone(),
-                save_ogg.clone(),
-            );
+            return listen::run_listen(src, output.clone(), debug_wav.clone(), save_ogg.clone());
         }
         #[cfg(feature = "listen")]
         Some(Command::Record {
@@ -274,15 +269,30 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
             Some(VadEngine::energy())
         };
 
-        audio::run_vad_processor(
-            audio_rx,
-            final_tx,
-            preview_tx,
-            vad,
-            tts_playing_vad,
-            mic_muted_vad,
-            display_tx_audio,
-        );
+        // Handle VAD processor errors gracefully
+        if let Some(vad_engine) = vad {
+            audio::run_vad_processor(
+                audio_rx,
+                final_tx,
+                preview_tx,
+                Some(vad_engine),
+                tts_playing_vad,
+                mic_muted_vad,
+                display_tx_audio,
+            );
+        } else {
+            eprintln!("Failed to initialize VAD engine");
+            // Continue with energy-based VAD as fallback
+            audio::run_vad_processor(
+                audio_rx,
+                final_tx,
+                preview_tx,
+                Some(VadEngine::energy()),
+                tts_playing_vad,
+                mic_muted_vad,
+                display_tx_audio,
+            );
+        }
     });
 
     // Preview transcription thread
@@ -344,7 +354,27 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         }
         #[cfg(not(feature = "kokoro"))]
         TtsConfig::Kokoro { .. } => {
-            panic!("Kokoro not enabled. Build with --features kokoro");
+            eprintln!("Warning: Kokoro not enabled. Build with --features kokoro");
+            // Fallback to Supertonic if available
+            #[cfg(feature = "supertonic")]
+            {
+                eprintln!("Falling back to Supertonic TTS");
+                let engine = tts::SupertonicEngine::new(
+                    "models/supertonic/onnx",
+                    "models/supertonic/voice_styles/M1.json",
+                    1.1,
+                    use_gpu_tts,
+                )
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to initialize Supertonic TTS: {}", e);
+                    panic!("No working TTS engine available");
+                });
+                tts::Tts::with_stats(Box::new(engine), stats_tts)
+            }
+            #[cfg(not(feature = "supertonic"))]
+            {
+                panic!("Kokoro not enabled. Build with --features kokoro");
+            }
         }
         #[cfg(feature = "supertonic")]
         TtsConfig::Supertonic {
@@ -354,78 +384,118 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         } => {
             eprintln!("TTS: Supertonic (speed: {}, GPU: {})", speed, use_gpu_tts);
             let engine = tts::SupertonicEngine::new(&onnx_dir, &voice_style, speed, use_gpu_tts)
-                .expect("Failed to load Supertonic");
+                .map_err(|e| {
+                    eprintln!("Failed to load Supertonic TTS: {}", e);
+                    "Supertonic TTS initialization failed"
+                })?;
             tts::Tts::with_stats(Box::new(engine), stats_tts)
         }
         #[cfg(not(feature = "supertonic"))]
         TtsConfig::Supertonic { .. } => {
-            panic!("Supertonic not enabled. Build with --features supertonic");
+            eprintln!("Warning: Supertonic not enabled. Build with --features supertonic");
+            // Fallback to Kokoro if available
+            #[cfg(feature = "kokoro")]
+            {
+                eprintln!("Falling back to Kokoro TTS");
+                let engine = tts::KokoroEngine::new(
+                    "models/kokoro-v1.0.onnx",
+                    "models/voices-v1.0.bin",
+                    1.1,
+                )
+                .await;
+                tts::Tts::with_stats(Box::new(engine), stats_tts)
+            }
+            #[cfg(not(feature = "kokoro"))]
+            {
+                panic!("Supertonic not enabled. Build with --features supertonic");
+            }
         }
     };
 
     // Initialize LLM backend
     let system_prompt = chat::system_prompt(&config.name);
-    let llm_backend: Box<dyn llm::LlmBackend> =
-        match config.llm {
-            #[cfg(feature = "llama-cpp")]
-            LlmConfig::LlamaCpp {
-                model_path,
-                hf_repo,
-                hf_file,
-                prompt_format,
-                ctx_size,
-            } => {
-                let backend = if let Some(path) = model_path {
-                    llm::llama::LlamaCppBackend::from_path(path, &system_prompt, prompt_format, ctx_size)?
-                } else {
-                    llm::llama::LlamaCppBackend::from_hf(
-                        &hf_repo,
-                        &hf_file,
-                        &system_prompt,
-                        prompt_format,
-                        ctx_size,
-                    )?
-                };
-                Box::new(backend)
-            }
-            #[cfg(not(feature = "llama-cpp"))]
-            LlmConfig::LlamaCpp { .. } => {
-                panic!("llama-cpp not enabled. Build with --features llama-cpp");
-            }
-            #[cfg(feature = "ollama")]
-            LlmConfig::Ollama { model } => {
-                Box::new(llm::ollama::OllamaBackend::new(&model, &system_prompt))
-            }
-            #[cfg(not(feature = "ollama"))]
-            LlmConfig::Ollama { .. } => {
-                panic!("Ollama not enabled. Build with --features ollama");
-            }
-            #[cfg(feature = "lm-studio")]
-            LlmConfig::LmStudio { ref base_url, ref model, temperature, top_p, top_k, repetition_penalty, .. } => Box::new(
-                llm::lm_studio::LmStudioBackend::new(base_url, model, &system_prompt, temperature, top_p, top_k, repetition_penalty),
-            ),
-            #[cfg(not(feature = "lm-studio"))]
-            LlmConfig::LmStudio { .. } => {
-                panic!("LM Studio not enabled. Build with --features lm-studio");
-            }
-            #[cfg(feature = "kalosm")]
-            LlmConfig::Kalosm { ref model } => {
-                use kalosm_llama::LlamaSource;
-                let source = match model.as_str() {
-                    "phi3" => LlamaSource::phi_3_mini_4k_instruct(),
-                    "llama3-8b" => LlamaSource::llama_3_8b_chat(),
-                    "mistral-7b" => LlamaSource::mistral_7b_instruct_2(),
-                    "qwen-0.5b" => LlamaSource::qwen_0_5b_chat(),
-                    "qwen-1.5b" => LlamaSource::qwen_1_5b_chat(),
-                    _ => LlamaSource::qwen_1_5b_chat(),
-                };
-                Box::new(llm::kalosm_backend::KalosmBackend::new_blocking(source, &system_prompt)?)
-            }
-            #[cfg(not(feature = "kalosm"))]
-            LlmConfig::Kalosm { .. } => {
-                panic!("Kalosm not enabled. Build with --features kalosm");
-            }
-        };
+    let llm_backend: Box<dyn llm::LlmBackend> = match config.llm {
+        #[cfg(feature = "llama-cpp")]
+        LlmConfig::LlamaCpp {
+            model_path,
+            hf_repo,
+            hf_file,
+            prompt_format,
+            ctx_size,
+        } => {
+            let backend = if let Some(path) = model_path {
+                llm::llama::LlamaCppBackend::from_path(
+                    path,
+                    &system_prompt,
+                    prompt_format,
+                    ctx_size,
+                )?
+            } else {
+                llm::llama::LlamaCppBackend::from_hf(
+                    &hf_repo,
+                    &hf_file,
+                    &system_prompt,
+                    prompt_format,
+                    ctx_size,
+                )?
+            };
+            Box::new(backend)
+        }
+        #[cfg(not(feature = "llama-cpp"))]
+        LlmConfig::LlamaCpp { .. } => {
+            panic!("llama-cpp not enabled. Build with --features llama-cpp");
+        }
+        #[cfg(feature = "ollama")]
+        LlmConfig::Ollama { model } => {
+            Box::new(llm::ollama::OllamaBackend::new(&model, &system_prompt))
+        }
+        #[cfg(not(feature = "ollama"))]
+        LlmConfig::Ollama { .. } => {
+            panic!("Ollama not enabled. Build with --features ollama");
+        }
+        #[cfg(feature = "lm-studio")]
+        LlmConfig::LmStudio {
+            ref base_url,
+            ref model,
+            temperature,
+            top_p,
+            top_k,
+            repetition_penalty,
+            ..
+        } => Box::new(llm::lm_studio::LmStudioBackend::new(
+            base_url,
+            model,
+            &system_prompt,
+            temperature,
+            top_p,
+            top_k,
+            repetition_penalty,
+        )),
+        #[cfg(not(feature = "lm-studio"))]
+        LlmConfig::LmStudio { .. } => {
+            panic!("LM Studio not enabled. Build with --features lm-studio");
+        }
+        #[cfg(feature = "kalosm")]
+        LlmConfig::Kalosm { ref model } => {
+            use kalosm_llama::LlamaSource;
+            let source = match model.as_str() {
+                "phi3" => LlamaSource::phi_3_mini_4k_instruct(),
+                "llama3-8b" => LlamaSource::llama_3_8b_chat(),
+                "mistral-7b" => LlamaSource::mistral_7b_instruct_2(),
+                "qwen-0.5b" => LlamaSource::qwen_0_5b_chat(),
+                "qwen-1.5b" => LlamaSource::qwen_1_5b_chat(),
+                _ => LlamaSource::qwen_1_5b_chat(),
+            };
+            Box::new(llm::kalosm_backend::KalosmBackend::new_blocking(
+                source,
+                &system_prompt,
+            )?)
+        }
+        #[cfg(not(feature = "kalosm"))]
+        LlmConfig::Kalosm { .. } => {
+            panic!("Kalosm not enabled. Build with --features kalosm");
+        }
+    };
 
     let llm_chat = chat::Chat::new(llm_backend);
     let wake_word = wake::WakeWord::new(&config.wake_word);

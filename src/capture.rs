@@ -1,6 +1,6 @@
 use flume::Sender;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const TARGET_RATE: usize = 16000;
 const CAPTURE_SAMPLE_RATE: usize = 48000;

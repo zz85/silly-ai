@@ -1,5 +1,5 @@
-pub use crate::pipeline::{run_pipeline_with_options, AudioSource, run_multi_source};
-use crate::capture::{resample, TARGET_RATE};
+use crate::capture::{TARGET_RATE, resample};
+pub use crate::pipeline::{AudioSource, run_multi_source, run_pipeline_with_options};
 use crate::transcriber::Transcriber;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -20,7 +20,9 @@ pub fn pick_source_interactive() -> Result<AudioSource, Box<dyn std::error::Erro
     pick_source_with_apps(&crate::capture::list_apps()?)
 }
 
-fn pick_source_with_apps(apps: &[String]) -> Result<AudioSource, Box<dyn std::error::Error + Send + Sync>> {
+fn pick_source_with_apps(
+    apps: &[String],
+) -> Result<AudioSource, Box<dyn std::error::Error + Send + Sync>> {
     println!("\nSelect audio source:\n");
     println!("  [0] System microphone");
     println!("  [1] System audio (all apps)");
@@ -44,7 +46,8 @@ fn pick_source_with_apps(apps: &[String]) -> Result<AudioSource, Box<dyn std::er
     })
 }
 
-pub fn pick_sources_multi() -> Result<(AudioSource, AudioSource), Box<dyn std::error::Error + Send + Sync>> {
+pub fn pick_sources_multi()
+-> Result<(AudioSource, AudioSource), Box<dyn std::error::Error + Send + Sync>> {
     let apps = crate::capture::list_apps()?;
 
     println!("\nSelect TWO audio sources for multi-source transcription.\n");
@@ -135,7 +138,9 @@ pub fn transcribe_wav(path: PathBuf) -> Result<(), Box<dyn std::error::Error + S
     Ok(())
 }
 
-fn load_wav_file(path: &PathBuf) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error + Send + Sync>> {
+fn load_wav_file(
+    path: &PathBuf,
+) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error + Send + Sync>> {
     let mut file = File::open(path)?;
     let mut header = [0u8; 44];
     file.read_exact(&mut header)?;
@@ -162,7 +167,9 @@ fn load_wav_file(path: &PathBuf) -> Result<(Vec<f32>, u32), Box<dyn std::error::
     Ok((samples, sample_rate))
 }
 
-fn load_ogg_file(path: &PathBuf) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error + Send + Sync>> {
+fn load_ogg_file(
+    path: &PathBuf,
+) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error + Send + Sync>> {
     use lewton::inside_ogg::OggStreamReader;
 
     let file = File::open(path)?;
@@ -174,7 +181,8 @@ fn load_ogg_file(path: &PathBuf) -> Result<(Vec<f32>, u32), Box<dyn std::error::
     let mut samples = Vec::new();
     while let Some(packet) = reader.read_dec_packet_itl()? {
         for chunk in packet.chunks(channels) {
-            let mono: f32 = chunk.iter().map(|&s| s as f32 / 32768.0).sum::<f32>() / channels as f32;
+            let mono: f32 =
+                chunk.iter().map(|&s| s as f32 / 32768.0).sum::<f32>() / channels as f32;
             samples.push(mono);
         }
     }

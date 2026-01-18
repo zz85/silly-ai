@@ -62,8 +62,8 @@ pub mod llama {
             let path = path.into();
             eprintln!("Loading model from {:?}...", path);
 
-            let backend = LlamaBackend::init()
-                .map_err(|e| format!("Failed to init backend: {:?}", e))?;
+            let backend =
+                LlamaBackend::init().map_err(|e| format!("Failed to init backend: {:?}", e))?;
 
             let model_params = LlamaModelParams::default().with_n_gpu_layers(1000);
             let model_params = std::pin::pin!(model_params);
@@ -180,34 +180,42 @@ pub mod llama {
             on_token: &mut dyn FnMut(&str),
         ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
             let prompt = self.format_prompt(messages);
-            
-            eprintln!("[DEBUG] ctx_size: {}, Prompt length: {} chars, {} tokens (est)", self.ctx_size, prompt.len(), prompt.len() / 4);
+
+            eprintln!(
+                "[DEBUG] ctx_size: {}, Prompt length: {} chars, {} tokens (est)",
+                self.ctx_size,
+                prompt.len(),
+                prompt.len() / 4
+            );
 
             let ctx_params = LlamaContextParams::default()
                 .with_n_ctx(NonZeroU32::new(self.ctx_size))
                 .with_n_batch(self.ctx_size);
-            let mut ctx = self.model.new_context(&self.backend, ctx_params)
+            let mut ctx = self
+                .model
+                .new_context(&self.backend, ctx_params)
                 .map_err(|e| format!("Failed to create context: {:?}", e))?;
 
-            let tokens = self.model.str_to_token(&prompt, AddBos::Never)
+            let tokens = self
+                .model
+                .str_to_token(&prompt, AddBos::Never)
                 .map_err(|e| format!("Failed to tokenize: {:?}", e))?;
-            
+
             eprintln!("[DEBUG] Actual tokens: {}", tokens.len());
 
             let mut batch = LlamaBatch::new(self.ctx_size as usize, 1);
             let last_idx = (tokens.len() - 1) as i32;
             for (i, token) in tokens.into_iter().enumerate() {
-                batch.add(token, i as i32, &[0], i as i32 == last_idx)
+                batch
+                    .add(token, i as i32, &[0], i as i32 == last_idx)
                     .map_err(|e| format!("Failed to add token: {:?}", e))?;
             }
 
             ctx.decode(&mut batch)
                 .map_err(|e| format!("Failed to decode: {:?}", e))?;
 
-            let mut sampler = LlamaSampler::chain_simple([
-                LlamaSampler::dist(1234),
-                LlamaSampler::greedy(),
-            ]);
+            let mut sampler =
+                LlamaSampler::chain_simple([LlamaSampler::dist(1234), LlamaSampler::greedy()]);
 
             let mut full_response = String::new();
             let mut n_cur = batch.n_tokens();
@@ -231,7 +239,8 @@ pub mod llama {
                 }
 
                 batch.clear();
-                batch.add(token, n_cur, &[0], true)
+                batch
+                    .add(token, n_cur, &[0], true)
                     .map_err(|e| format!("Failed to add token: {:?}", e))?;
 
                 ctx.decode(&mut batch)
@@ -432,7 +441,10 @@ pub mod lm_studio {
                 });
             }
 
-            eprintln!("[DEBUG] LM Studio: sending {} messages", chat_messages.len());
+            eprintln!(
+                "[DEBUG] LM Studio: sending {} messages",
+                chat_messages.len()
+            );
 
             let request = ChatRequest {
                 model: self.model.clone(),
@@ -444,8 +456,8 @@ pub mod lm_studio {
                 repetition_penalty: self.repetition_penalty,
             };
 
-            let response = ureq::post(&format!("{}/chat/completions", self.base_url))
-                .send_json(&request)?;
+            let response =
+                ureq::post(&format!("{}/chat/completions", self.base_url)).send_json(&request)?;
 
             let reader = BufReader::new(response.into_body().into_reader());
             let mut full_response = String::new();
@@ -472,7 +484,6 @@ pub mod lm_studio {
     }
 }
 
-
 // ============================================================================
 // Kalosm (Floneum) backend
 // ============================================================================
@@ -480,9 +491,9 @@ pub mod lm_studio {
 #[cfg(feature = "kalosm")]
 pub mod kalosm_backend {
     use super::*;
-    use kalosm_llama::{Llama, LlamaSource};
-    use kalosm_llama::prelude::TextCompletionModelExt;
     use futures_util::StreamExt;
+    use kalosm_llama::prelude::TextCompletionModelExt;
+    use kalosm_llama::{Llama, LlamaSource};
 
     pub struct KalosmBackend {
         model: Llama,
@@ -490,31 +501,37 @@ pub mod kalosm_backend {
     }
 
     impl KalosmBackend {
-        pub fn new_blocking(source: LlamaSource, system_prompt: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        pub fn new_blocking(
+            source: LlamaSource,
+            system_prompt: &str,
+        ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
             let system_prompt = system_prompt.to_string();
             let handle = std::thread::spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()?;
-                
+
                 println!("Loading Kalosm model...");
-                let model = rt.block_on(async {
-                    Llama::builder()
-                        .with_source(source)
-                        .build()
-                        .await
-                })?;
+                let model =
+                    rt.block_on(async { Llama::builder().with_source(source).build().await })?;
                 println!("Model loaded.");
-                
-                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(Self { model, system_prompt })
+
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(Self {
+                    model,
+                    system_prompt,
+                })
             });
-            
+
             handle.join().map_err(|_| "Thread panicked")?
         }
     }
 
     impl LlmBackend for KalosmBackend {
-        fn generate(&mut self, messages: &[Message], on_token: &mut dyn FnMut(&str)) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        fn generate(
+            &mut self,
+            messages: &[Message],
+            on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
             let mut prompt = format!("System: {}\n\n", self.system_prompt);
             for msg in messages {
                 let role = match msg.role {
@@ -525,11 +542,11 @@ pub mod kalosm_backend {
                 prompt.push_str(&format!("{}: {}\n", role, msg.content));
             }
             prompt.push_str("Assistant: ");
-            
+
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
-            
+
             let result = rt.block_on(async {
                 let mut stream = self.model.complete(&prompt);
                 let mut full_response = String::new();
@@ -540,7 +557,7 @@ pub mod kalosm_backend {
                 }
                 full_response
             });
-            
+
             Ok(result)
         }
     }

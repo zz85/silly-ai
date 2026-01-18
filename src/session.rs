@@ -106,17 +106,32 @@ impl SessionManager {
             full_response.push_str(token);
             buffer.push_str(token);
 
-            // Queue complete sentences to TTS
-            while let Some(pos) = buffer.find(|c| c == '.' || c == '!' || c == '?') {
-                let sentence = buffer[..=pos].trim().to_string();
-                if !sentence.is_empty() && tts_enabled.load(Ordering::SeqCst) {
+            // Queue complete sentences to TTS - improved sentence detection
+            let mut start_pos = 0;
+            while let Some(pos) = buffer[start_pos..].find(|c| c == '.' || c == '!' || c == '?') {
+                let actual_pos = start_pos + pos;
+                // Check if this is a sentence ending or just punctuation in the middle of text
+                let sentence_end = actual_pos + 1;
+                let sentence_content = &buffer[start_pos..sentence_end].trim();
+
+                // Skip if it's just a single character (e.g., "U.S.A." or "Dr.")
+                if sentence_content
+                    .chars()
+                    .all(|c| c.is_ascii_alphabetic() || c == '.')
+                {
+                    start_pos = sentence_end;
+                    continue;
+                }
+
+                if !sentence_content.is_empty() && tts_enabled.load(Ordering::SeqCst) {
                     if !speaking_sent {
                         let _ = event_tx.send(SessionEvent::Speaking);
                         speaking_sent = true;
                     }
-                    let _ = self.tts.queue(&sentence, &sink);
+                    let _ = self.tts.queue(sentence_content, &sink);
                 }
-                buffer = buffer[pos + 1..].to_string();
+                buffer = buffer[sentence_end..].to_string();
+                start_pos = 0;
             }
         });
 

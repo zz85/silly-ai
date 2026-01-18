@@ -68,7 +68,12 @@ impl Chat {
         &mut self,
         mut on_token: impl FnMut(&str),
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        eprintln!("[DEBUG] Chat history: {} messages", self.history.len());
         self.backend.generate(&self.history, &mut on_token)
+    }
+
+    /// Get number of messages in history
+    #[allow(dead_code)]
+    pub fn history_len(&self) -> usize {
+        self.history.len()
     }
 }

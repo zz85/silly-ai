@@ -2,6 +2,7 @@ mod audio;
 #[cfg(feature = "listen")]
 mod capture;
 mod chat;
+mod command;
 mod config;
 #[cfg(feature = "listen")]
 mod listen;
@@ -13,6 +14,7 @@ mod repl;
 #[cfg(feature = "listen")]
 mod segmenter;
 mod session;
+mod state;
 mod stats;
 #[cfg(feature = "listen")]
 mod summarize;
@@ -25,9 +27,11 @@ mod tui;
 mod vad;
 mod wake;
 
+use command::{CommandProcessor, CommandResult};
 use config::{Config, LlmConfig, TtsConfig};
 use render::Ui;
 use repl::TranscriptEvent;
+use state::RuntimeState;
 
 use clap::{Parser, Subcommand};
 use std::error::Error;
@@ -191,25 +195,35 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     // Load config early for acceleration settings
     let config = Config::load();
 
+    // Create shared runtime state
+    let runtime_state = RuntimeState::new(&config);
+    
+    // Apply CLI flags to runtime state
+    if cli.no_stt {
+        runtime_state.mic_muted.store(true, Ordering::SeqCst);
+        runtime_state.wake_enabled.store(false, Ordering::SeqCst);
+    }
+    if cli.no_tts {
+        runtime_state.tts_enabled.store(false, Ordering::SeqCst);
+    }
+
+    // Create command processor
+    let command_processor = CommandProcessor::new(&config);
+
     // Shared stats for performance tracking
     let stats = stats::new_shared();
     let stats_transcribe = Arc::clone(&stats);
     let stats_tts = Arc::clone(&stats);
     let stats_session = Arc::clone(&stats);
 
-    // Flag to mute VAD during TTS playback
+    // Legacy flags for backward compatibility with audio.rs
+    // TODO: Refactor audio.rs to use RuntimeState directly
     let tts_playing = Arc::new(AtomicBool::new(false));
     let tts_playing_vad = Arc::clone(&tts_playing);
-
-    // Flag to mute microphone input
     let mic_muted = Arc::new(AtomicBool::new(cli.no_stt));
     let mic_muted_vad = Arc::clone(&mic_muted);
-
-    // Flag to disable TTS output
     let tts_enabled = Arc::new(AtomicBool::new(!cli.no_tts));
     let tts_enabled_session = Arc::clone(&tts_enabled);
-
-    // Flag to require wake word (disabled when --no-stt)
     let wake_enabled = Arc::new(AtomicBool::new(!cli.no_stt));
 
     // Channel: audio -> VAD processor
@@ -640,37 +654,90 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                 should_break = true;
                                 break;
                             }
-                            if line == "/mute" || line == "/mic" {
-                                let muted = !mic_muted.load(Ordering::SeqCst);
-                                mic_muted.store(muted, Ordering::SeqCst);
-                                tui.set_mic_muted(muted);
-                                keypress_mute_until = None; // Cancel auto-unmute
+                            
+                            // Check for slash commands first
+                            if let Some(cmd_result) = command::process_slash_command(&line, &runtime_state) {
+                                match cmd_result {
+                                    CommandResult::Handled(Some(msg)) => {
+                                        tui.show_message(&msg);
+                                    }
+                                    CommandResult::Handled(None) => {}
+                                    CommandResult::Stop => {
+                                        let _ = session_tx.send(session::SessionCommand::Cancel);
+                                    }
+                                    CommandResult::Shutdown => {
+                                        should_break = true;
+                                        break;
+                                    }
+                                    CommandResult::ModeChange { mode, announcement } => {
+                                        runtime_state.set_mode(mode);
+                                        if let Some(msg) = announcement {
+                                            tui.show_message(&msg);
+                                        }
+                                    }
+                                    CommandResult::PassThrough(_) => {}
+                                }
+                                // Sync legacy flags with runtime state
+                                mic_muted.store(runtime_state.mic_muted.load(Ordering::SeqCst), Ordering::SeqCst);
+                                tts_enabled.store(runtime_state.tts_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
+                                wake_enabled.store(runtime_state.wake_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
+                                tui.set_mic_muted(runtime_state.mic_muted.load(Ordering::SeqCst));
+                                tui.set_tts_enabled(runtime_state.tts_enabled.load(Ordering::SeqCst));
+                                tui.set_wake_enabled(runtime_state.wake_enabled.load(Ordering::SeqCst));
+                                keypress_mute_until = None;
                                 continue;
                             }
-                            if line == "/speak" || line == "/tts" {
-                                let enabled = !tts_enabled.load(Ordering::SeqCst);
-                                tts_enabled.store(enabled, Ordering::SeqCst);
-                                tui.set_tts_enabled(enabled);
-                                continue;
-                            }
-                            if line == "/wake" {
-                                let enabled = !wake_enabled.load(Ordering::SeqCst);
-                                wake_enabled.store(enabled, Ordering::SeqCst);
-                                tui.set_wake_enabled(enabled);
-                                continue;
-                            }
+                            
+                            // Handle /stats separately (not in command module)
                             if line == "/stats" {
                                 let summary = stats.lock().unwrap().summary();
                                 tui.show_message(&summary);
                                 continue;
                             }
-                            // Cancel auto-submit on manual submit
-                            auto_submit_deadline = None;
-                            // Cancel any in-progress response
-                            let _ = session_tx.send(session::SessionCommand::Cancel);
-                            ui.show_final(&line);
-                            let _ = session_tx.send(session::SessionCommand::UserInput(line));
-                            break;
+                            
+                            // Process through command processor for voice-style commands
+                            let cmd_result = command_processor.process(&line, &runtime_state);
+                            match cmd_result {
+                                CommandResult::Stop => {
+                                    let _ = session_tx.send(session::SessionCommand::Cancel);
+                                    continue;
+                                }
+                                CommandResult::Shutdown => {
+                                    should_break = true;
+                                    break;
+                                }
+                                CommandResult::Handled(Some(msg)) => {
+                                    tui.show_message(&msg);
+                                    // Sync legacy flags
+                                    mic_muted.store(runtime_state.mic_muted.load(Ordering::SeqCst), Ordering::SeqCst);
+                                    tts_enabled.store(runtime_state.tts_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
+                                    wake_enabled.store(runtime_state.wake_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
+                                    continue;
+                                }
+                                CommandResult::Handled(None) => {
+                                    // Sync legacy flags
+                                    mic_muted.store(runtime_state.mic_muted.load(Ordering::SeqCst), Ordering::SeqCst);
+                                    tts_enabled.store(runtime_state.tts_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
+                                    wake_enabled.store(runtime_state.wake_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
+                                    continue;
+                                }
+                                CommandResult::ModeChange { mode, announcement } => {
+                                    runtime_state.set_mode(mode);
+                                    if let Some(msg) = announcement {
+                                        tui.show_message(&msg);
+                                    }
+                                    continue;
+                                }
+                                CommandResult::PassThrough(text) => {
+                                    // Cancel auto-submit on manual submit
+                                    auto_submit_deadline = None;
+                                    // Cancel any in-progress response
+                                    let _ = session_tx.send(session::SessionCommand::Cancel);
+                                    ui.show_final(&text);
+                                    let _ = session_tx.send(session::SessionCommand::UserInput(text));
+                                    break;
+                                }
+                            }
                         }
                     }
                 }

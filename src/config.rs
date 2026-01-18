@@ -16,6 +16,10 @@ pub struct Config {
     pub llm: LlmConfig,
     #[serde(default)]
     pub acceleration: AccelerationConfig,
+    #[serde(default)]
+    pub interaction: InteractionConfig,
+    #[serde(default)]
+    pub commands: CommandsConfig,
 }
 
 impl Default for Config {
@@ -27,8 +31,92 @@ impl Default for Config {
             tts: TtsConfig::default(),
             llm: LlmConfig::default(),
             acceleration: AccelerationConfig::default(),
+            interaction: InteractionConfig::default(),
+            commands: CommandsConfig::default(),
         }
     }
+}
+
+// ============================================================================
+// Interaction Config
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct InteractionConfig {
+    /// Enable processing input while TTS is playing (can be toggled at runtime)
+    #[serde(default = "default_crosstalk")]
+    pub crosstalk: bool,
+
+    /// Volume level when user speaks during TTS (0.0-1.0)
+    /// Used in Phase 2 (TTS Controller) and Phase 3 (Crosstalk)
+    #[serde(default = "default_duck_volume")]
+    #[allow(dead_code)]
+    pub duck_volume: f32,
+}
+
+impl Default for InteractionConfig {
+    fn default() -> Self {
+        Self {
+            crosstalk: default_crosstalk(),
+            duck_volume: default_duck_volume(),
+        }
+    }
+}
+
+fn default_crosstalk() -> bool {
+    false
+}
+
+fn default_duck_volume() -> f32 {
+    0.2
+}
+
+// ============================================================================
+// Commands Config
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct CommandsConfig {
+    /// Enable built-in commands
+    #[serde(default = "default_enable_builtin")]
+    pub enable_builtin: bool,
+
+    /// Phrases that stop TTS but don't go to LLM
+    #[serde(default = "default_stop_phrases")]
+    pub stop_phrases: Vec<String>,
+
+    /// Custom command mappings
+    #[serde(default)]
+    pub custom: Vec<CustomCommand>,
+}
+
+impl Default for CommandsConfig {
+    fn default() -> Self {
+        Self {
+            enable_builtin: default_enable_builtin(),
+            stop_phrases: default_stop_phrases(),
+            custom: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CustomCommand {
+    pub phrase: String,
+    pub action: String,
+}
+
+fn default_enable_builtin() -> bool {
+    true
+}
+
+fn default_stop_phrases() -> Vec<String> {
+    vec![
+        "stop".to_string(),
+        "quiet".to_string(),
+        "shut up".to_string(),
+        "enough".to_string(),
+    ]
 }
 
 #[derive(Debug, Deserialize, Default)]

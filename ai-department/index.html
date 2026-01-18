@@ -59,8 +59,14 @@
   </div>
   <div class="settings advanced" id="advanced" style="display:none;">
     <label>Models: <select id="model-select"><option value="">-- Load models --</option></select> <button id="load-models" style="padding:4px 8px;font-size:11px;">Refresh</button></label>
-    <label>Autocomplete prompt: <input type="text" id="autocomplete-prompt" value="User is typing a question or topic. Complete their sentence. Reply with ONLY the completion on a single line. No quotes, no explanation. 1 sentence. 2-12 words max." style="width:500px;"></label>
+    <label>Thinking: <select id="thinking">
+      <option value="off" selected>Off</option>
+      <option value="low">Low</option>
+      <option value="medium">Medium</option>
+      <option value="high">High</option>
+    </select></label>
     <label><input type="checkbox" id="stream" checked> Stream responses</label>
+    <label>Autocomplete prompt: <input type="text" id="autocomplete-prompt" value="User is typing a question or topic. Complete their sentence. Reply with ONLY the completion on a single line. No quotes, no explanation. 1 sentence. 2-12 words max." style="width:500px;"></label>
   </div>
   <div style="margin-bottom:8px;"><a href="#" id="toggle-advanced" style="font-size:11px;color:#888;">Advanced options</a></div>
   <div class="input-row">
@@ -140,6 +146,12 @@
 
     let totalTokens = 0;
 
+    function getThinkingConfig() {
+      const level = document.getElementById('thinking').value;
+      if (level === 'off') return {};
+      return { reasoning_effort: level };
+    }
+
     async function ask(name, system, prompt, tokens, onChunk) {
       const baseUrl = document.getElementById('url').value.replace(/\/$/, '');
       const model = document.getElementById('model').value;
@@ -153,6 +165,7 @@
             messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
             max_tokens: tokens,
             stream: useStream,
+            ...getThinkingConfig(),
           }),
         });
         

@@ -497,6 +497,7 @@ Wake word: Say wake phrase when paused to resume"
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::state::RuntimeState;
 
     fn test_state() -> SharedState {
         RuntimeState::new(&Config::default())

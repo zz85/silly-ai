@@ -371,46 +371,10 @@ struct Orb {
     secondary_audio: f64,
     smooth_secondary: f64,
     shade_pattern: ShadePattern,
-    random_positions: Vec<(f64, f64, f64)>, // Pre-generated random sphere positions
 }
 
 impl Orb {
     fn new(style: OrbStyle) -> Self {
-        // Generate random particles on sphere surface using hash-based pseudo-randomness
-        let mut random_positions = Vec::new();
-        let max_particles = 300; // Generate enough for the highest particle count (256) with some buffer
-        
-        for i in 0..max_particles {
-            // Use hash function to generate pseudo-random values for each particle
-            let seed = i as f64;
-            
-            // Generate random spherical coordinates using hash
-            let u1 = hash(seed, 12.34, 56.78); // Random value [0,1]
-            let u2 = hash(seed + 100.0, 78.90, 23.45); // Another random value [0,1]
-            let u3 = hash(seed + 200.0, 34.56, 89.12); // Third random value for clustering
-            
-            // Add some clustering to make distribution more natural (not perfectly uniform)
-            let cluster_strength = 0.15; // How much clustering to apply
-            let cluster_u1 = u1 + (u3 - 0.5) * cluster_strength;
-            let cluster_u2 = u2 + (hash(seed + 300.0, 45.67, 12.89) - 0.5) * cluster_strength;
-            
-            // Clamp to [0,1] range
-            let final_u1 = cluster_u1.clamp(0.0, 1.0);
-            let final_u2 = cluster_u2.clamp(0.0, 1.0);
-            
-            // Convert uniform random values to spherical coordinates
-            // This ensures good distribution on sphere surface with natural clustering
-            let theta = final_u1 * TAU; // Azimuthal angle [0, 2π]
-            let phi = (2.0 * final_u2 - 1.0).acos(); // Polar angle [0, π] with proper distribution
-            
-            // Convert spherical to Cartesian coordinates
-            let x = phi.sin() * theta.cos();
-            let y = phi.sin() * theta.sin();
-            let z = phi.cos();
-            
-            random_positions.push((x, y, z));
-        }
-        
         Self {
             state: OrbState::Idle,
             target_state: OrbState::Idle,
@@ -425,7 +389,6 @@ impl Orb {
             secondary_audio: 0.0,
             smooth_secondary: 0.0,
             shade_pattern: ShadePattern::Particles,
-            random_positions,
         }
     }
 
@@ -864,195 +827,321 @@ impl Orb {
         (intensity, glow)
     }
 
-    // Simple wireframe sphere renderer - minimal particles at key positions
+    // Efficient raycast-based sphere renderer with noise displacement and sparse rendering
     fn sample_sphere(&self, x: f64, y: f64, max_r: f64) -> (f64, f64, f64) {
         let freq = self.current_frequency();
         let time_scale = self.time * freq;
         
-        // SPHERE-SPECIFIC SCALING: Make sphere larger but keep particles visible
-        let sphere_scale = 3.0;  // Reduced from 20x to 3x for better visibility
-        let x_scaled = x / sphere_scale;  // Scale down coordinates = camera further away
+        // SPHERE-SPECIFIC SCALING: Make sphere bigger for more screen coverage
+        let sphere_scale = 2.0; // Increased from 2.5 for bigger sphere
+        let x_scaled = x / sphere_scale;
         let y_scaled = y / sphere_scale;
         let max_r_scaled = max_r / sphere_scale;
         
-        // Normalize coordinates for true sphere (using scaled values)
+        // Normalize coordinates for raycast
         let x_norm = x_scaled / max_r_scaled;
         let y_norm = y_scaled / max_r_scaled;
         let screen_dist = (x_norm * x_norm + y_norm * y_norm).sqrt();
         
-        // Early exit for points outside sphere (adjusted for larger sphere)
-        if screen_dist > 0.9 {
+        // Early exit for points far outside sphere
+        if screen_dist > 1.2 {
             return (0.0, 0.0, 0.0);
         }
         
-        let mut intensity = 0.0;
-        let mut glow = 0.0;
-        let mut secondary_intensity = 0.0;
+        // ENHANCED SPARSE RENDERING: More particles, bigger size
+        let pixel_hash = hash(x_norm * 1200.0, y_norm * 1200.0, (time_scale * 12.0).floor());
         
-        // Use pre-generated random positions for natural distribution
-        let key_positions = &self.random_positions;
-        
-        let particle_count = match self.target_state {
-            OrbState::Idle => 80,        // Reduced slightly for stability
-            OrbState::Listening => 120,  // Reduced slightly
-            OrbState::Thinking => 180,   // Reduced slightly
-            OrbState::Speaking => 140,   // Reduced slightly
-            OrbState::Error => 200,      // Reduced from 256 to 200
+        // Significantly increased particle density - much more particles
+        let sparsity_threshold = match self.target_state {
+            OrbState::Idle => 0.45,      // 55% of pixels - increased from 30%
+            OrbState::Listening => 0.35, // 65% of pixels - increased from 40%
+            OrbState::Thinking => 0.20,  // 80% of pixels - increased from 55%
+            OrbState::Speaking => 0.30,  // 70% of pixels - increased from 45%
+            OrbState::Error => 0.15,     // 85% of pixels - increased from 65%
         };
         
-        // Render only the first N positions based on state
-        for i in 0..particle_count.min(key_positions.len()) {
-            let (base_x, base_y, base_z) = key_positions[i];
-            
-            // ORGANIC ANIMATION - Based on vertex displacement techniques from Three.js examples
-            
-            // Use particle's world position as noise coordinates for consistent organic movement
-            let world_pos_x = base_x;
-            let world_pos_y = base_y;
-            let world_pos_z = base_z;
-            
-            // Time-based noise evolution for flowing animation
-            let time_offset = time_scale * 0.5;
-            
-            // Multi-octave noise for complex organic movement
-            let noise_scale_1 = 1.5;  // Primary frequency
-            let noise_scale_2 = 3.0;  // Secondary frequency
-            let noise_scale_3 = 6.0;  // Detail frequency
-            
-            // Sample noise at different frequencies (like shader vertex displacement)
-            let noise_1 = fbm(
-                world_pos_x * noise_scale_1 + time_offset,
-                world_pos_y * noise_scale_1 + time_offset,
-                world_pos_z * noise_scale_1 + time_offset,
-                4, 0.5
-            );
-            
-            let noise_2 = fbm(
-                world_pos_x * noise_scale_2 + time_offset * 1.3,
-                world_pos_y * noise_scale_2 + time_offset * 1.3,
-                world_pos_z * noise_scale_2 + time_offset * 1.3,
-                3, 0.6
-            );
-            
-            let noise_3 = fbm(
-                world_pos_x * noise_scale_3 + time_offset * 0.7,
-                world_pos_y * noise_scale_3 + time_offset * 0.7,
-                world_pos_z * noise_scale_3 + time_offset * 0.7,
-                2, 0.4
-            );
-            
-            // Combine noise layers for complex organic movement with turbulence
-            let combined_noise = noise_1 * 0.6 + noise_2 * 0.3 + noise_3 * 0.1;
-            
-            // Add turbulence for more organic, flowing movement
-            let turbulence_x = fbm(
-                world_pos_y * 2.0 + time_offset * 0.8,
-                world_pos_z * 2.0 + time_offset * 0.8,
-                world_pos_x * 2.0 + time_offset * 0.8,
-                2, 0.5
-            ).clamp(-1.0, 1.0) * 0.15;
-            
-            let turbulence_y = fbm(
-                world_pos_z * 2.0 + time_offset * 1.1,
-                world_pos_x * 2.0 + time_offset * 1.1,
-                world_pos_y * 2.0 + time_offset * 1.1,
-                2, 0.5
-            ).clamp(-1.0, 1.0) * 0.15;
-            
-            let turbulence_z = fbm(
-                world_pos_x * 2.0 + time_offset * 0.9,
-                world_pos_y * 2.0 + time_offset * 0.9,
-                world_pos_z * 2.0 + time_offset * 0.9,
-                2, 0.5
-            ).clamp(-1.0, 1.0) * 0.15;
-            
-            // State-dependent noise amplitude
-            let noise_amplitude = match self.target_state {
-                OrbState::Idle => 0.08,
-                OrbState::Listening => 0.15,
-                OrbState::Thinking => 0.25,
-                OrbState::Speaking => 0.18,
-                OrbState::Error => 0.35,
-            };
-            
-            // Apply noise as radial displacement (like vertex shader displacement)
-            let displacement = (combined_noise * noise_amplitude).clamp(-0.5, 0.5); // Clamp displacement
-            
-            // Audio-reactive enhancement
-            let audio_band = i % 6;
-            let audio_displacement = (self.smooth_freqs[audio_band] * 0.12).clamp(-0.2, 0.2); // Clamp audio displacement
-            
-            // Breathing effect with organic variation
-            let breathing_base = (time_scale * 1.2).sin() * 0.04;
-            let breathing_variation = (time_scale * 2.1 + i as f64 * 0.4).sin() * 0.02;
-            let breathing = breathing_base + breathing_variation;
-            
-            // Final organic radius calculation
-            let base_radius = 1.0;
-            let organic_radius = base_radius + displacement + audio_displacement + breathing;
-            let final_radius = organic_radius.max(0.2); // Prevent collapse
-            
-            // Apply organic displacement to particle position with turbulence
-            let organic_x = world_pos_x + turbulence_x * noise_amplitude;
-            let organic_y = world_pos_y + turbulence_y * noise_amplitude;
-            let organic_z = world_pos_z + turbulence_z * noise_amplitude;
-            
-            // Normalize to maintain sphere shape while allowing organic deformation
-            let organic_length = (organic_x * organic_x + organic_y * organic_y + organic_z * organic_z).sqrt();
-            
-            // Prevent division by zero
-            let safe_length = if organic_length < 0.001 { 1.0 } else { organic_length };
-            
-            let normalized_x = organic_x / safe_length;
-            let normalized_y = organic_y / safe_length;
-            let normalized_z = organic_z / safe_length;
-            
-            let particle_x = normalized_x * final_radius;
-            let particle_y = normalized_y * final_radius;
-            let particle_z = normalized_z * final_radius;
-            
-            // Project to 2D (no aspect distortion)
-            let proj_x = particle_x;
-            let proj_y = particle_y;
-            
-            // Distance from current pixel to particle
-            let particle_dist = ((x_norm - proj_x).powi(2) + (y_norm - proj_y).powi(2)).sqrt();
-            
-            // Particle size based on depth and state - 20x SMALLER particles for distant viewing
-            let depth_factor = (particle_z + 1.0) * 0.5; // Normalize z to [0,1]
-            let size_factor = 0.6 + depth_factor * 0.8; // Closer = larger
-            let brightness_factor = 0.3 + depth_factor * 0.7;
-            
-            let base_size = match self.target_state {
-                OrbState::Idle => 0.018,       // Slightly smaller for denser appearance
-                OrbState::Listening => 0.016,   
-                OrbState::Thinking => 0.013,     
-                OrbState::Speaking => 0.020,    
-                OrbState::Error => 0.022,        
-            };
-            
-            let dynamic_size = base_size * size_factor * (1.0 + self.smooth_audio * 0.2);
-            
-            // Only render if we're close enough to the particle
-            if particle_dist <= dynamic_size {
-                // Gaussian falloff for smooth particle edges
-                let falloff = -(particle_dist * particle_dist) / (2.0 * dynamic_size * dynamic_size * 0.5);
-                let particle_intensity = falloff.exp() * brightness_factor;
-                
-                intensity += particle_intensity * 0.8;
-                glow += particle_intensity * 0.3;
-                
-                // Secondary color for dual-state rendering
-                if self.composite.secondary.is_some() && i % 2 == 0 {
-                    secondary_intensity += particle_intensity * 0.6 * self.composite.blend;
-                }
-            }
+        // Skip this pixel if hash value is above threshold
+        if pixel_hash > sparsity_threshold {
+            return (0.0, 0.0, 0.0);
         }
         
-        // No central core - pure particle sphere approach
-        // No outer glow - clean particle-only rendering
+        // RAYCAST TO SPHERE: Calculate intersection with unit sphere
+        let ray_origin = (x_norm, y_norm, -2.0); // Camera position
+        let ray_dir = (0.0, 0.0, 1.0); // Ray direction (towards sphere)
         
-        (intensity.min(1.0), glow.min(1.0), secondary_intensity.min(1.0))
+        // Sphere intersection math: |ray_origin + t * ray_dir|² = 1
+        // Solving quadratic equation for t
+        let a = ray_dir.0 * ray_dir.0 + ray_dir.1 * ray_dir.1 + ray_dir.2 * ray_dir.2; // Should be 1.0
+        let b = 2.0 * (ray_origin.0 * ray_dir.0 + ray_origin.1 * ray_dir.1 + ray_origin.2 * ray_dir.2);
+        let c = ray_origin.0 * ray_origin.0 + ray_origin.1 * ray_origin.1 + ray_origin.2 * ray_origin.2 - 1.0;
+        
+        let discriminant = b * b - 4.0 * a * c;
+        
+        // No intersection with sphere
+        if discriminant < 0.0 {
+            return (0.0, 0.0, 0.0);
+        }
+        
+        // Calculate intersection point (use closer intersection)
+        let t = (-b - discriminant.sqrt()) / (2.0 * a);
+        
+        // Skip if intersection is behind camera
+        if t < 0.0 {
+            return (0.0, 0.0, 0.0);
+        }
+        
+        // Calculate 3D position on sphere surface
+        let hit_x = ray_origin.0 + t * ray_dir.0;
+        let hit_y = ray_origin.1 + t * ray_dir.1;
+        let hit_z = ray_origin.2 + t * ray_dir.2;
+        
+        // DISPLACEMENT MAPPING: Enhanced particle animation with distance-based movement
+        let time_offset = time_scale * 0.3; // Slower base animation
+        
+        // Calculate distance from center for particle animation
+        let center_distance = (hit_x * hit_x + hit_y * hit_y + hit_z * hit_z).sqrt();
+        
+        // DISTANCE-BASED ANIMATION: Particles animate based on distance to center
+        let distance_phase = center_distance * 8.0 + time_offset * 2.0;
+        let distance_wave = (distance_phase).sin() * 0.15;
+        
+        // Multi-octave noise for surface displacement with enhanced randomness
+        let noise_scale_1 = 3.0;  // Primary surface features - increased for more variation
+        let noise_scale_2 = 6.0;  // Secondary detail - increased
+        let noise_scale_3 = 12.0; // Fine detail - increased
+        
+        // Enhanced random positioning using multiple hash layers
+        let pos_hash_1 = hash(hit_x * 47.3, hit_y * 83.7, hit_z * 29.1);
+        let pos_hash_2 = hash(hit_x * 127.1, hit_y * 311.7, hit_z * 74.7);
+        let random_offset = (pos_hash_1 - 0.5) * 0.3 + (pos_hash_2 - 0.5) * 0.2;
+        
+        // Sample noise at hit position with random offsets for non-uniform distribution
+        let noise_1 = fbm(
+            hit_x * noise_scale_1 + time_offset + random_offset,
+            hit_y * noise_scale_1 + time_offset + random_offset,
+            hit_z * noise_scale_1 + time_offset + random_offset,
+            4, 0.5
+        );
+        
+        let noise_2 = fbm(
+            hit_x * noise_scale_2 + time_offset * 1.3 + random_offset * 2.0,
+            hit_y * noise_scale_2 + time_offset * 1.3 + random_offset * 2.0,
+            hit_z * noise_scale_2 + time_offset * 1.3 + random_offset * 2.0,
+            3, 0.6
+        );
+        
+        let noise_3 = fbm(
+            hit_x * noise_scale_3 + time_offset * 0.7 + random_offset * 3.0,
+            hit_y * noise_scale_3 + time_offset * 0.7 + random_offset * 3.0,
+            hit_z * noise_scale_3 + time_offset * 0.7 + random_offset * 3.0,
+            2, 0.4
+        );
+        
+        // Combine noise layers with distance-based animation
+        let surface_noise = noise_1 * 0.5 + noise_2 * 0.3 + noise_3 * 0.2 + distance_wave;
+        
+        // ENHANCED DISPLACEMENT HEIGHT - More dramatic displacement with particle-like behavior
+        let displacement_amplitude = match self.target_state {
+            OrbState::Idle => 1.2,       // Increased further for more particle-like movement
+            OrbState::Listening => 1.6,  // Increased
+            OrbState::Thinking => 2.4,   // Increased significantly
+            OrbState::Speaking => 1.8,   // Increased
+            OrbState::Error => 2.8,      // Maximum displacement for dramatic effect
+        };
+        
+        // Apply displacement with enhanced particle behavior
+        let displacement = surface_noise.clamp(-1.0, 1.0) * displacement_amplitude;
+        
+        // Enhanced audio-reactive displacement with distance modulation
+        let audio_displacement = self.smooth_audio * 0.8 * (1.0 + center_distance * 0.5);
+        
+        // Particle clustering effect - particles tend to cluster and separate organically
+        let cluster_noise = fbm(
+            hit_x * 20.0 + time_offset * 0.5,
+            hit_y * 20.0 + time_offset * 0.5,
+            hit_z * 20.0 + time_offset * 0.5,
+            2, 0.7
+        );
+        let cluster_effect = cluster_noise * 0.4;
+        
+        // Final surface displacement with all effects combined
+        let total_displacement = displacement + audio_displacement + cluster_effect;
+        
+        // Calculate displaced surface position (for potential future use)
+        let base_normal = (hit_x, hit_y, hit_z); // Unit sphere normal
+        let _displaced_pos = (
+            hit_x + base_normal.0 * total_displacement,
+            hit_y + base_normal.1 * total_displacement,
+            hit_z + base_normal.2 * total_displacement,
+        );
+        
+        // PROPER 3D LIGHTING: Calculate surface normal and apply realistic lighting
+        
+        // Calculate displaced surface normal using gradient approximation
+        let epsilon = 0.01;
+        
+        // Sample displacement at nearby points to calculate gradient
+        let dx_pos = fbm(
+            (hit_x + epsilon) * noise_scale_1 + time_offset,
+            hit_y * noise_scale_1 + time_offset,
+            hit_z * noise_scale_1 + time_offset,
+            4, 0.5
+        ) * displacement_amplitude;
+        
+        let dx_neg = fbm(
+            (hit_x - epsilon) * noise_scale_1 + time_offset,
+            hit_y * noise_scale_1 + time_offset,
+            hit_z * noise_scale_1 + time_offset,
+            4, 0.5
+        ) * displacement_amplitude;
+        
+        let dy_pos = fbm(
+            hit_x * noise_scale_1 + time_offset,
+            (hit_y + epsilon) * noise_scale_1 + time_offset,
+            hit_z * noise_scale_1 + time_offset,
+            4, 0.5
+        ) * displacement_amplitude;
+        
+        let dy_neg = fbm(
+            hit_x * noise_scale_1 + time_offset,
+            (hit_y - epsilon) * noise_scale_1 + time_offset,
+            hit_z * noise_scale_1 + time_offset,
+            4, 0.5
+        ) * displacement_amplitude;
+        
+        let dz_pos = fbm(
+            hit_x * noise_scale_1 + time_offset,
+            hit_y * noise_scale_1 + time_offset,
+            (hit_z + epsilon) * noise_scale_1 + time_offset,
+            4, 0.5
+        ) * displacement_amplitude;
+        
+        let dz_neg = fbm(
+            hit_x * noise_scale_1 + time_offset,
+            hit_y * noise_scale_1 + time_offset,
+            (hit_z - epsilon) * noise_scale_1 + time_offset,
+            4, 0.5
+        ) * displacement_amplitude;
+        
+        // Calculate gradient (surface tangent)
+        let gradient_x = (dx_pos - dx_neg) / (2.0 * epsilon);
+        let gradient_y = (dy_pos - dy_neg) / (2.0 * epsilon);
+        let gradient_z = (dz_pos - dz_neg) / (2.0 * epsilon);
+        
+        // Calculate perturbed surface normal
+        let base_normal = (hit_x, hit_y, hit_z); // Original sphere normal
+        let perturbed_normal = (
+            base_normal.0 + gradient_x * 0.5,
+            base_normal.1 + gradient_y * 0.5,
+            base_normal.2 + gradient_z * 0.5,
+        );
+        
+        // Normalize the perturbed normal
+        let normal_length = (perturbed_normal.0 * perturbed_normal.0 + 
+                           perturbed_normal.1 * perturbed_normal.1 + 
+                           perturbed_normal.2 * perturbed_normal.2).sqrt();
+        
+        let normal = if normal_length > 0.001 {
+            (perturbed_normal.0 / normal_length,
+             perturbed_normal.1 / normal_length,
+             perturbed_normal.2 / normal_length)
+        } else {
+            base_normal
+        };
+        
+        // LIGHTING SETUP: Multiple light sources for realistic shading
+        
+        // Primary light (key light) - from upper front left
+        let light1_dir = (0.5, -0.3, -0.8);
+        let light1_intensity = 1.0;
+        let light1_color = 1.0;
+        
+        // Secondary light (fill light) - from lower right
+        let light2_dir = (-0.3, 0.4, -0.6);
+        let light2_intensity = 0.4;
+        let light2_color = 0.8;
+        
+        // Rim light - from behind
+        let light3_dir = (0.0, 0.0, 1.0);
+        let light3_intensity = 0.3;
+        let light3_color = 0.6;
+        
+        // DIFFUSE LIGHTING: Lambert's cosine law
+        let diffuse1 = (normal.0 * light1_dir.0 + normal.1 * light1_dir.1 + normal.2 * light1_dir.2)
+            .max(0.0) * light1_intensity * light1_color;
+        
+        let diffuse2 = (normal.0 * light2_dir.0 + normal.1 * light2_dir.1 + normal.2 * light2_dir.2)
+            .max(0.0) * light2_intensity * light2_color;
+        
+        let diffuse3 = (normal.0 * light3_dir.0 + normal.1 * light3_dir.1 + normal.2 * light3_dir.2)
+            .max(0.0) * light3_intensity * light3_color;
+        
+        // SPECULAR LIGHTING: Blinn-Phong reflection
+        let view_dir = (0.0, 0.0, -1.0); // Camera looking down -Z
+        
+        // Calculate half-vector for Blinn-Phong
+        let half1 = (
+            (light1_dir.0 + view_dir.0) * 0.5,
+            (light1_dir.1 + view_dir.1) * 0.5,
+            (light1_dir.2 + view_dir.2) * 0.5,
+        );
+        let half1_len = (half1.0 * half1.0 + half1.1 * half1.1 + half1.2 * half1.2).sqrt();
+        let half1_norm = if half1_len > 0.001 {
+            (half1.0 / half1_len, half1.1 / half1_len, half1.2 / half1_len)
+        } else {
+            (0.0, 0.0, -1.0)
+        };
+        
+        let specular_power = 32.0; // Shininess
+        let specular1 = (normal.0 * half1_norm.0 + normal.1 * half1_norm.1 + normal.2 * half1_norm.2)
+            .max(0.0).powf(specular_power) * light1_intensity * 0.5;
+        
+        // AMBIENT LIGHTING: Base illumination
+        let ambient = 0.15;
+        
+        // COMBINE LIGHTING: Realistic lighting model
+        let total_diffuse = diffuse1 + diffuse2 + diffuse3 + ambient;
+        let total_specular = specular1;
+        
+        // SURFACE DETAIL: Add high-frequency detail for texture with bigger particles
+        let surface_detail = fbm(
+            hit_x * 12.0 + time_offset * 0.5,  // Reduced from 20.0 for bigger particles
+            hit_y * 12.0 + time_offset * 0.5,
+            hit_z * 12.0 + time_offset * 0.5,
+            3, 0.4
+        );
+        
+        // PARTICLE THRESHOLD: Create bigger, more visible particles
+        let particle_threshold = match self.target_state {
+            OrbState::Idle => 0.05,      // Much lower threshold = bigger particles
+            OrbState::Listening => 0.0,  // Even lower for more particles
+            OrbState::Thinking => -0.1,  // Negative threshold for maximum particles
+            OrbState::Speaking => 0.02,
+            OrbState::Error => -0.05,    // Very low for dense particle field
+        };
+        
+        // Only render if surface detail exceeds threshold (creates particle effect)
+        let particle_mask = if surface_detail > particle_threshold { 1.0 } else { 0.0 };
+        
+        // FINAL SHADING: Combine all lighting components with enhanced brightness
+        let base_intensity = (total_diffuse * 0.9 + total_specular * 0.3) * particle_mask; // Increased from 0.8 and 0.2
+        
+        // Enhanced glow from specular highlights with more intensity
+        let glow_intensity = (total_specular * 1.2 + (total_diffuse - 0.4).max(0.0) * 0.5) * particle_mask; // Increased multipliers
+        
+        // Audio-reactive brightness modulation with higher boost
+        let audio_boost = 1.0 + self.smooth_audio * 0.6; // Increased from 0.4
+        let final_intensity = (base_intensity * audio_boost).clamp(0.0, 1.0);
+        
+        // Secondary intensity for dual-color effects
+        let secondary_intensity = if self.composite.secondary.is_some() {
+            let sec_lighting = (diffuse2 + diffuse3) * self.composite.blend * particle_mask;
+            sec_lighting.clamp(0.0, 1.0) * 0.7
+        } else {
+            0.0
+        };
+        
+        (final_intensity, glow_intensity, secondary_intensity)
     }
 
     fn render(&self, width: usize, height: usize) -> Vec<Vec<(char, Color)>> {
@@ -1709,7 +1798,7 @@ mod tests {
     /// Test individual orb rendering without UI setup
     #[test]
     fn test_orb_rendering() {
-        let mut orb = Orb::new(OrbStyle::Rings2);
+        let mut orb = Orb::new(OrbStyle::Sphere);
         
         // Test all states
         for state in [OrbState::Idle, OrbState::Listening, OrbState::Thinking, OrbState::Speaking, OrbState::Error] {
@@ -1734,7 +1823,7 @@ mod tests {
     /// Test all orb styles
     #[test]
     fn test_orb_styles() {
-        for style in [OrbStyle::Ring, OrbStyle::Orbs, OrbStyle::Blob] {
+        for style in [OrbStyle::Ring, OrbStyle::Orbs, OrbStyle::Blob, OrbStyle::Sphere] {
             let mut orb = Orb::new(style);
             orb.set_state(OrbState::Thinking);
             orb.set_audio(0.7);

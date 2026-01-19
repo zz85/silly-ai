@@ -57,13 +57,13 @@ pub enum UiModeConfig {
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum OrbStyleConfig {
-    /// Concentric glowing rings (default)
-    Rings1,
+    /// Simple rotating ring
+    Ring,
     /// Volumetric noise blob
     #[default]
     Blob,
-    /// Simple circular ring
-    Rings2,
+    /// Concentric glowing orbs
+    Orbs,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,7 +71,7 @@ pub struct UiConfig {
     /// UI mode: "text" or "graphical"
     #[serde(default)]
     pub mode: UiModeConfig,
-    /// Visual style for graphical mode: "rings", "blob", "classic", or "ring"
+    /// Visual style for graphical mode: "ring", "blob", or "orbs"
     #[serde(default)]
     pub orb_style: OrbStyleConfig,
 }

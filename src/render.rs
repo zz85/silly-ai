@@ -34,10 +34,10 @@ pub enum OrbStyle {
     /// Volumetric noise blob
     #[default]
     Blob,
-    /// Concentric glowing rings (horizontal ellipses)
-    Rings1,
-    /// Simple circular ring (from main-ring.rs)
-    Rings2,
+    /// Simple rotating ring
+    Ring,
+    /// Concentric glowing orbs (horizontal ellipses)
+    Orbs,
 }
 
 /// Trait for UI renderers - allows swapping between text and graphical UI

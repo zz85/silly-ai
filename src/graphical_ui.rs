@@ -52,34 +52,34 @@ impl OrbState {
     fn palette(&self) -> Palette {
         match self {
             OrbState::Idle => Palette {
-                core: hsl(210.0, 0.7, 0.75),
-                mid: hsl(220.0, 0.8, 0.55),
-                edge: hsl(230.0, 0.9, 0.35),
-                glow: hsl(200.0, 0.6, 0.25),
+                core: hsl(200.0, 0.85, 0.88),   // Soft sky blue core
+                mid: hsl(210.0, 0.90, 0.72),    // Bright blue
+                edge: hsl(220.0, 0.95, 0.58),   // Deep blue
+                glow: hsl(195.0, 0.75, 0.42),   // Ocean blue glow
             },
             OrbState::Listening => Palette {
-                core: hsl(160.0, 0.9, 0.7),
-                mid: hsl(170.0, 0.85, 0.5),
-                edge: hsl(180.0, 0.8, 0.35),
-                glow: hsl(165.0, 0.7, 0.2),
+                core: hsl(150.0, 0.95, 0.85),   // Bright mint core
+                mid: hsl(165.0, 0.90, 0.68),    // Vibrant teal
+                edge: hsl(175.0, 0.85, 0.52),   // Deep cyan
+                glow: hsl(160.0, 0.80, 0.38),   // Forest green glow
             },
             OrbState::Thinking => Palette {
-                core: hsl(280.0, 0.8, 0.75),
-                mid: hsl(270.0, 0.85, 0.55),
-                edge: hsl(260.0, 0.9, 0.4),
-                glow: hsl(275.0, 0.7, 0.25),
+                core: hsl(290.0, 0.90, 0.88),   // Bright lavender core
+                mid: hsl(280.0, 0.95, 0.72),    // Vibrant purple
+                edge: hsl(270.0, 0.95, 0.58),   // Deep purple
+                glow: hsl(285.0, 0.85, 0.42),   // Royal purple glow
             },
             OrbState::Speaking => Palette {
-                core: hsl(40.0, 1.0, 0.7),
-                mid: hsl(30.0, 1.0, 0.55),
-                edge: hsl(20.0, 0.95, 0.4),
-                glow: hsl(25.0, 0.8, 0.25),
+                core: hsl(50.0, 1.0, 0.85),     // Bright golden core
+                mid: hsl(40.0, 1.0, 0.72),      // Vibrant gold
+                edge: hsl(30.0, 0.95, 0.58),    // Deep orange
+                glow: hsl(35.0, 0.90, 0.42),    // Amber glow
             },
             OrbState::Error => Palette {
-                core: hsl(0.0, 1.0, 0.7),
-                mid: hsl(0.0, 0.9, 0.5),
-                edge: hsl(0.0, 0.8, 0.35),
-                glow: hsl(0.0, 0.7, 0.2),
+                core: hsl(5.0, 1.0, 0.85),      // Bright coral core
+                mid: hsl(0.0, 0.95, 0.68),      // Vibrant red
+                edge: hsl(355.0, 0.90, 0.52),   // Deep crimson
+                glow: hsl(10.0, 0.85, 0.38),    // Dark red glow
             },
         }
     }
@@ -747,8 +747,7 @@ impl Orb {
         let cx = width as f64 / 2.0;
         let cy = height as f64 / 2.0;
 
-        let shades: &[char] = &[' ', '.', ':', '-', '=', '+', '*', '#', '@'];
-        // let shades: &[char] = &[' ', '·', ':', '∘', '○', '●', '◉', '█', '█'];
+        let shades: &[char] = &[' ', '·', ':', '∘', '○', '●', '◉', '█', '█'];
 
         for row in 0..height {
             for col in 0..width {
@@ -760,11 +759,11 @@ impl Orb {
                         let (a, b) = self.sample_blob(x, y, max_r);
                         (a, b, 0.0)
                     },
-                    OrbStyle::Rings1 => {
+                    OrbStyle::Ring => {
                         let (a, b) = self.sample_rings1(x, y, max_r);
                         (a, b, 0.0)
                     },
-                    OrbStyle::Rings2 => self.sample_rings2(x, y, max_r),
+                    OrbStyle::Orbs => self.sample_rings2(x, y, max_r),
                 };
 
                 // Skip pixels with minimal contribution
@@ -786,18 +785,18 @@ impl Orb {
                     base_color
                 };
 
-                // Improved brightness calculation with better dynamic range
-                let brightness = intensity * 0.8 + glow * 0.4 + secondary * 0.6;
-                final_color = final_color.scale(0.2 + brightness * 0.8);
+                // Enhanced brightness calculation with more vibrant colors
+                let brightness = intensity * 1.0 + glow * 0.6 + secondary * 0.8;
+                final_color = final_color.scale(0.4 + brightness * 0.6);
 
-                // Enhanced highlight system with smoother transitions
+                // Enhanced highlight system with more vibrant highlights
                 let combined = intensity + secondary * 0.8;
-                if combined > 0.6 {
-                    let highlight_strength = ((combined - 0.6) / 0.4).min(1.0);
+                if combined > 0.5 {
+                    let highlight_strength = ((combined - 0.5) / 0.5).min(1.0);
                     let highlight = Rgb(
-                        highlight_strength * 0.3,
-                        highlight_strength * 0.3,
-                        highlight_strength * 0.3
+                        highlight_strength * 0.4,
+                        highlight_strength * 0.4,
+                        highlight_strength * 0.4
                     );
                     final_color = final_color.add(highlight);
                 }
@@ -857,7 +856,7 @@ impl GraphicalUi {
         )?;
 
         Ok(Self {
-            orb: Orb::new(OrbStyle::Rings2),
+            orb: Orb::new(OrbStyle::Orbs),
             last_frame: Instant::now(),
             status: "Loading...".to_string(),
             preview: String::new(),
@@ -1026,9 +1025,9 @@ impl UiRenderer for GraphicalUi {
         );
 
         let style_name = match self.orb.style {
-            OrbStyle::Rings2 => "Rings",
+            OrbStyle::Orbs => "Orbs",
             OrbStyle::Blob => "Blob",
-            OrbStyle::Rings1 => "Ring",
+            OrbStyle::Ring => "Ring",
         };
 
         out.push_str(&format!(
@@ -1086,9 +1085,9 @@ impl UiRenderer for GraphicalUi {
                 // Tab to cycle through visual styles
                 if key.code == KeyCode::Tab {
                     let new_style = match self.orb.style {
-                        OrbStyle::Rings2 => OrbStyle::Blob,
-                        OrbStyle::Blob => OrbStyle::Rings1,
-                        OrbStyle::Rings1 => OrbStyle::Rings2,
+                        OrbStyle::Orbs => OrbStyle::Blob,
+                        OrbStyle::Blob => OrbStyle::Ring,
+                        OrbStyle::Ring => OrbStyle::Orbs,
                     };
                     self.orb.set_style(new_style);
                     continue;
@@ -1302,9 +1301,9 @@ mod tests {
         ];
 
         let styles = [
-            (OrbStyle::Rings2, "Rings2 - Horizontal elliptical rings"),
+            (OrbStyle::Orbs, "Orbs - Concentric glowing orbs"),
             (OrbStyle::Blob, "Blob - Organic noise blob"),
-            (OrbStyle::Rings1, "Rings1 - Single rotating ring"),
+            (OrbStyle::Ring, "Ring - Single rotating ring"),
         ];
 
         let mut frame_count = 0;
@@ -1400,7 +1399,7 @@ mod tests {
     /// Test all orb styles
     #[test]
     fn test_orb_styles() {
-        for style in [OrbStyle::Rings1, OrbStyle::Rings2, OrbStyle::Blob] {
+        for style in [OrbStyle::Ring, OrbStyle::Orbs, OrbStyle::Blob] {
             let mut orb = Orb::new(style);
             orb.set_state(OrbState::Thinking);
             orb.set_audio(0.7);
@@ -1420,7 +1419,7 @@ mod tests {
     #[test]
     #[ignore]
     fn benchmark_rendering() {
-        let mut orb = Orb::new(OrbStyle::Rings2);
+        let mut orb = Orb::new(OrbStyle::Orbs);
         orb.set_state(OrbState::Thinking);
         orb.set_audio(0.5);
         

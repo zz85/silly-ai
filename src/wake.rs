@@ -1,3 +1,5 @@
+use crate::fuzzy::fuzzy_match;
+
 /// Wake word detection - checks if transcribed text starts with wake phrase
 pub struct WakeWord {
     #[allow(dead_code)]
@@ -43,36 +45,4 @@ impl WakeWord {
     pub fn phrase(&self) -> &str {
         &self.phrase
     }
-}
-
-/// Fuzzy match using Levenshtein distance, allows ~30% errors
-fn fuzzy_match(expected: &str, actual: &str) -> bool {
-    if expected == actual {
-        return true;
-    }
-    let max_dist = (expected.len() / 3).max(1);
-    levenshtein(expected, actual) <= max_dist
-}
-
-fn levenshtein(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let mut dp = vec![vec![0; b.len() + 1]; a.len() + 1];
-
-    for i in 0..=a.len() {
-        dp[i][0] = i;
-    }
-    for j in 0..=b.len() {
-        dp[0][j] = j;
-    }
-
-    for i in 1..=a.len() {
-        for j in 1..=b.len() {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            dp[i][j] = (dp[i - 1][j] + 1)
-                .min(dp[i][j - 1] + 1)
-                .min(dp[i - 1][j - 1] + cost);
-        }
-    }
-    dp[a.len()][b.len()]
 }

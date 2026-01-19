@@ -1,5 +1,6 @@
 //! REPL input handling - keyboard and voice input processing
 
+use crate::command::{CommandProcessor, CommandResult};
 use crate::render::Ui;
 use crate::state::{AppMode, SharedState};
 use crate::wake::WakeWord;
@@ -19,8 +20,17 @@ pub enum TranscriptResult {
     TranscribeOnly(String),
     /// Text should be appended to notes
     AppendNote(String),
-    /// Text is a command (process as command)
-    Command(String),
+    /// Command was handled (with optional response message)
+    CommandHandled(Option<String>),
+    /// Stop command (cancel TTS)
+    Stop,
+    /// Mode change command
+    ModeChange {
+        mode: AppMode,
+        announcement: Option<String>,
+    },
+    /// Shutdown requested
+    Shutdown,
     /// No action needed
     None,
 }
@@ -79,6 +89,7 @@ pub fn handle_transcript_with_mode(
     last_interaction: Option<Instant>,
     wake_timeout: Duration,
     state: &SharedState,
+    command_processor: &CommandProcessor,
     ui: &Ui,
 ) -> TranscriptResult {
     let mode = state.mode();
@@ -96,44 +107,61 @@ pub fn handle_transcript_with_mode(
                 return TranscriptResult::None;
             }
 
-            match mode {
-                AppMode::Idle => {
-                    // Idle mode: requires wake word unless in conversation
-                    let in_conversation = last_interaction
-                        .map(|t| t.elapsed() < wake_timeout)
-                        .unwrap_or(false);
-
-                    let command = if !wake_enabled || in_conversation {
-                        text
-                    } else {
-                        match wake_word.detect(&text) {
-                            Some(cmd) => cmd,
-                            None => return TranscriptResult::None,
-                        }
-                    };
-
-                    if command.is_empty() {
-                        return TranscriptResult::None;
+            // First, check if this is a command (in all modes except Transcribe/NoteTaking)
+            let should_check_commands = !matches!(mode, AppMode::Transcribe | AppMode::NoteTaking);
+            
+            if should_check_commands {
+                let cmd_result = command_processor.process(&text, state);
+                match cmd_result {
+                    CommandResult::Stop => return TranscriptResult::Stop,
+                    CommandResult::Shutdown => return TranscriptResult::Shutdown,
+                    CommandResult::Handled(msg) => return TranscriptResult::CommandHandled(msg),
+                    CommandResult::ModeChange { mode, announcement } => {
+                        return TranscriptResult::ModeChange { mode, announcement };
                     }
+                    CommandResult::PassThrough(text) => {
+                        // Not a command, continue with mode-specific handling
+                        match mode {
+                            AppMode::Idle => {
+                                // Idle mode: requires wake word unless in conversation
+                                let in_conversation = last_interaction
+                                    .map(|t| t.elapsed() < wake_timeout)
+                                    .unwrap_or(false);
 
-                    TranscriptResult::SendToLlm(command)
+                                let command = if !wake_enabled || in_conversation {
+                                    text
+                                } else {
+                                    match wake_word.detect(&text) {
+                                        Some(cmd) => cmd,
+                                        None => return TranscriptResult::None,
+                                    }
+                                };
+
+                                if command.is_empty() {
+                                    return TranscriptResult::None;
+                                }
+
+                                TranscriptResult::SendToLlm(command)
+                            }
+                            AppMode::Chat => {
+                                // Chat mode: no wake word needed, always send to LLM
+                                state.update_last_interaction();
+                                TranscriptResult::SendToLlm(text)
+                            }
+                            AppMode::Command => {
+                                // Command mode: if not a command, show message
+                                TranscriptResult::CommandHandled(Some(format!("[Not a command] {}", text)))
+                            }
+                            _ => TranscriptResult::None,
+                        }
+                    }
                 }
-                AppMode::Chat => {
-                    // Chat mode: no wake word needed, always send to LLM
-                    state.update_last_interaction();
-                    TranscriptResult::SendToLlm(text)
-                }
-                AppMode::Transcribe => {
-                    // Transcribe mode: STT only, no LLM
-                    TranscriptResult::TranscribeOnly(text)
-                }
-                AppMode::NoteTaking => {
-                    // Note-taking mode: append to notes
-                    TranscriptResult::AppendNote(text)
-                }
-                AppMode::Command => {
-                    // Command mode: only process commands, no LLM
-                    TranscriptResult::Command(text)
+            } else {
+                // Transcribe and NoteTaking modes don't process commands
+                match mode {
+                    AppMode::Transcribe => TranscriptResult::TranscribeOnly(text),
+                    AppMode::NoteTaking => TranscriptResult::AppendNote(text),
+                    _ => TranscriptResult::None,
                 }
             }
         }

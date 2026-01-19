@@ -7,6 +7,7 @@
 //! 4. Pass-through - send to LLM for processing
 
 use crate::config::Config;
+use crate::fuzzy::{clean_for_matching, fuzzy_match};
 use crate::state::{AppMode, SharedState};
 
 /// Result of command processing
@@ -122,9 +123,14 @@ impl CommandProcessor {
         CommandResult::PassThrough(text.to_string())
     }
 
-    /// Check if text is a stop command
+    /// Check if text is a stop command (with fuzzy matching)
     fn is_stop_command(&self, text: &str) -> bool {
-        self.stop_phrases.iter().any(|p| text == p)
+        let text_clean = clean_for_matching(text);
+        self.stop_phrases.iter().any(|phrase| {
+            let phrase_clean = clean_for_matching(phrase);
+            // Exact match or fuzzy match
+            text_clean == phrase_clean || fuzzy_match(&phrase_clean, &text_clean)
+        })
     }
 
     /// Check built-in commands

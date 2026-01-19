@@ -4,6 +4,7 @@ mod capture;
 mod chat;
 mod command;
 mod config;
+mod fuzzy;
 #[cfg(feature = "listen")]
 mod listen;
 mod llm;
@@ -618,6 +619,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                             last_interaction,
                             wake_timeout,
                             &runtime_state,
+                            &command_processor,
                             &ui,
                         );
                         // Preview always returns None, but we still cancel auto-submit
@@ -633,6 +635,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                             last_interaction,
                             wake_timeout,
                             &runtime_state,
+                            &command_processor,
                             &ui,
                         );
                         
@@ -654,31 +657,30 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                     tui.show_message(&format!("[Note saved] {}", text));
                                 }
                             }
-                            TranscriptResult::Command(text) => {
-                                // Command mode: process as command only
-                                let cmd_result = command_processor.process(&text, &runtime_state);
-                                match cmd_result {
-                                    CommandResult::Handled(Some(msg)) => {
-                                        tui.show_message(&msg);
-                                    }
-                                    CommandResult::Handled(None) => {}
-                                    CommandResult::Stop => {
-                                        let _ = session_tx.send(session::SessionCommand::Cancel);
-                                    }
-                                    CommandResult::Shutdown => {
-                                        break;
-                                    }
-                                    CommandResult::ModeChange { mode, announcement } => {
-                                        runtime_state.set_mode(mode);
-                                        tui.set_mode(mode);
-                                        if let Some(msg) = announcement {
-                                            tui.show_message(&msg);
-                                        }
-                                    }
-                                    CommandResult::PassThrough(_) => {
-                                        // In command mode, non-commands are ignored
-                                        tui.show_message(&format!("[Not a command] {}", text));
-                                    }
+                            TranscriptResult::CommandHandled(msg) => {
+                                // Command was handled
+                                if let Some(m) = msg {
+                                    tui.show_message(&m);
+                                }
+                                // Sync legacy flags with runtime state
+                                mic_muted.store(runtime_state.mic_muted.load(Ordering::SeqCst), Ordering::SeqCst);
+                                tts_enabled.store(runtime_state.tts_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
+                                wake_enabled.store(runtime_state.wake_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
+                                tui.set_mic_muted(runtime_state.mic_muted.load(Ordering::SeqCst));
+                                tui.set_tts_enabled(runtime_state.tts_enabled.load(Ordering::SeqCst));
+                                tui.set_wake_enabled(runtime_state.wake_enabled.load(Ordering::SeqCst));
+                            }
+                            TranscriptResult::Stop => {
+                                let _ = session_tx.send(session::SessionCommand::Cancel);
+                            }
+                            TranscriptResult::Shutdown => {
+                                break;
+                            }
+                            TranscriptResult::ModeChange { mode, announcement } => {
+                                runtime_state.set_mode(mode);
+                                tui.set_mode(mode);
+                                if let Some(msg) = announcement {
+                                    tui.show_message(&msg);
                                 }
                             }
                             TranscriptResult::None => {

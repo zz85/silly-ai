@@ -1,7 +1,7 @@
 //! Graphical orb UI for the voice assistant
 //!
 //! Provides a visual representation of the assistant's state using animated
-//! ASCII art orbs. Supports two visual styles: Rings and Blob.
+//! ASCII art orbs. Supports multiple visual styles: Rings, Blob, Classic, and Ring.
 
 use crate::render::{OrbStyle, UiEvent, UiMode, UiRenderer};
 use crate::state::AppMode;
@@ -24,15 +24,26 @@ pub enum OrbState {
     Listening,
     Thinking,
     Speaking,
+    Error,
 }
 
 impl OrbState {
+    /// Animation frequency multiplier for each state.
+    /// Higher values = faster animation.
+    ///
+    /// BPM reference (assuming base animation cycle is ~1 second):
+    /// - Idle:      0.4 Hz = ~24 BPM (calm, slow breathing)
+    /// - Listening: 0.7 Hz = ~42 BPM (attentive, moderate pace)
+    /// - Thinking:  1.4 Hz = ~84 BPM (active processing)
+    /// - Speaking:  1.0 Hz = ~60 BPM (natural speech rhythm)
+    /// - Error:     2.0 Hz = ~120 BPM (urgent, attention-grabbing)
     fn frequency(&self) -> f64 {
         match self {
-            OrbState::Idle => 0.35,
-            OrbState::Listening => 0.9,
-            OrbState::Thinking => 1.4,
-            OrbState::Speaking => 1.0,
+            OrbState::Idle => 0.4,      // ~24 BPM - slow, calm breathing
+            OrbState::Listening => 0.7, // ~42 BPM - attentive, not too fast
+            OrbState::Thinking => 1.4,  // ~84 BPM - active, processing
+            OrbState::Speaking => 1.0,  // ~60 BPM - natural speech rhythm
+            OrbState::Error => 2.0,     // ~120 BPM - urgent flashing
         }
     }
 
@@ -61,6 +72,44 @@ impl OrbState {
                 mid: hsl(30.0, 1.0, 0.55),
                 edge: hsl(20.0, 0.95, 0.4),
                 glow: hsl(25.0, 0.8, 0.25),
+            },
+            OrbState::Error => Palette {
+                core: hsl(0.0, 1.0, 0.7),
+                mid: hsl(0.0, 0.9, 0.5),
+                edge: hsl(0.0, 0.8, 0.35),
+                glow: hsl(0.0, 0.7, 0.2),
+            },
+        }
+    }
+
+    /// Classic color scheme from basic (simpler, more saturated)
+    fn classic_color(&self, intensity: f32) -> Color {
+        let t = intensity;
+        match self {
+            OrbState::Idle => Color::Rgb {
+                r: (100.0 + t * 100.0) as u8,
+                g: (150.0 + t * 80.0) as u8,
+                b: (200.0 + t * 55.0) as u8,
+            },
+            OrbState::Listening => Color::Rgb {
+                r: (100.0 + t * 155.0) as u8,
+                g: (180.0 + t * 75.0) as u8,
+                b: 255,
+            },
+            OrbState::Thinking => Color::Rgb {
+                r: (180.0 + t * 75.0) as u8,
+                g: (100.0 + t * 80.0) as u8,
+                b: 255,
+            },
+            OrbState::Speaking => Color::Rgb {
+                r: 255,
+                g: (180.0 + t * 75.0) as u8,
+                b: (100.0 + t * 155.0) as u8,
+            },
+            OrbState::Error => Color::Rgb {
+                r: 255,
+                g: (50.0 + (intensity * 50.0)) as u8,
+                b: 50,
             },
         }
     }
@@ -286,7 +335,7 @@ impl Orb {
         self.state.frequency() + (self.target_state.frequency() - self.state.frequency()) * t
     }
 
-    // Ring style renderer
+    // Ring style renderer - horizontal elliptical rings
     fn sample_rings(&self, x: f64, y: f64, max_r: f64) -> (f64, f64) {
         let freq = self.current_frequency();
         let x_squash = 0.4;
@@ -311,10 +360,15 @@ impl Orb {
         let mut intensity = 0.0;
         let mut glow = 0.0;
 
-        // Central core
+        // Central core - size affected by smooth_secondary when Speaking
         let core_dist = ((x * x_squash).powi(2) + (y * 0.8).powi(2)).sqrt() / max_r;
         let core_pulse = 1.0 + 0.15 * (self.time * freq * TAU).sin();
-        let core_size = (0.04 + self.smooth_audio * 0.02) * core_pulse;
+        let speaking_boost = if self.target_state == OrbState::Speaking {
+            self.smooth_secondary * 0.03
+        } else {
+            0.0
+        };
+        let core_size = (0.04 + self.smooth_audio * 0.02 + speaking_boost) * core_pulse;
         let core = (-(core_dist * core_dist) / (2.0 * core_size * core_size)).exp();
         intensity += core * 0.9;
         glow += core * 1.2;
@@ -325,10 +379,17 @@ impl Orb {
             OrbState::Listening => 4,
             OrbState::Thinking => 5,
             OrbState::Speaking => 4,
+            OrbState::Error => 3,
         };
 
-        let inner_r = 0.20;
-        let outer_r = 0.38;
+        // Ring radius range - affected by smooth_secondary when Speaking
+        let speaking_expansion = if self.target_state == OrbState::Speaking {
+            self.smooth_secondary * 0.05
+        } else {
+            0.0
+        };
+        let inner_r = 0.20 + speaking_expansion * 0.3;
+        let outer_r = 0.38 + speaking_expansion;
 
         for i in 0..ring_count {
             let ring_phase = i as f64 / (ring_count - 1).max(1) as f64;
@@ -374,7 +435,7 @@ impl Orb {
         w
     }
 
-    // Blob style renderer
+    // Blob style renderer - volumetric noise blob
     fn sample_blob(&self, x: f64, y: f64, max_r: f64) -> (f64, f64) {
         let dist = (x * x + y * y).sqrt();
         let angle = y.atan2(x);
@@ -392,11 +453,13 @@ impl Orb {
             OrbState::Listening => 2.0,
             OrbState::Thinking => 3.0,
             OrbState::Speaking => 2.2,
+            OrbState::Error => 3.5,
         };
 
         let octaves = match self.target_state {
             OrbState::Idle => 3,
             OrbState::Thinking => 5,
+            OrbState::Error => 4,
             _ => 4,
         };
 
@@ -406,7 +469,13 @@ impl Orb {
 
         let noise = fbm(nx, ny, nz, octaves, 0.5);
 
-        let base_radius = 0.55 + self.smooth_audio * 0.15;
+        // Base radius - affected by smooth_secondary when Speaking
+        let speaking_expansion = if self.target_state == OrbState::Speaking {
+            self.smooth_secondary * 0.15
+        } else {
+            0.0
+        };
+        let base_radius = 0.55 + self.smooth_audio * 0.15 + speaking_expansion;
         let deform = (noise - 0.5) * 0.35;
         let mut blob_radius = base_radius + deform;
 
@@ -437,6 +506,85 @@ impl Orb {
         (interior.min(1.0), (surface_glow + atmo).min(1.0))
     }
 
+    // Classic style renderer - simple circular orb with basic colors
+    // Uses simpler, more saturated colors and block characters
+    fn sample_classic(&self, x: f64, y: f64, max_r: f64) -> (f64, Color) {
+        let dist = (x * x + y * y).sqrt();
+        let r = dist / max_r;
+
+        if r > 1.0 {
+            return (0.0, Color::Reset);
+        }
+
+        let freq = self.current_frequency();
+
+        // Noise for organic movement
+        let noise = (self.time * freq + dist * 1.5 + (x * y) * 0.2).sin() * 0.05;
+        let value = (r + noise).clamp(0.0, 1.0);
+
+        // Intensity falls off from center
+        let mut intensity = (1.0 - value) * (self.smooth_audio * 0.5 + 0.5);
+
+        // Speaking expansion based on smooth_secondary
+        if self.target_state == OrbState::Speaking {
+            let expansion = self.smooth_secondary * 0.3;
+            intensity *= 1.0 + expansion;
+        }
+
+        let color = self.target_state.classic_color(intensity as f32);
+
+        (intensity, color)
+    }
+
+    // Ring style renderer - simple circular ring from main-ring.rs
+    // Single glowing ring that pulses with audio
+    fn sample_ring(&self, x: f64, y: f64, max_r: f64) -> (f64, f64) {
+        let dist = (x * x + y * y).sqrt();
+        let r = dist / max_r;
+
+        if r > 1.2 {
+            return (0.0, 0.0);
+        }
+
+        let freq = self.current_frequency();
+        let t = self.time * freq;
+
+        // Ring radius - affected by audio and smooth_secondary when Speaking
+        let speaking_expansion = if self.target_state == OrbState::Speaking {
+            self.smooth_secondary * 0.15
+        } else {
+            0.0
+        };
+        let base_ring_r = 0.5 + self.smooth_audio * 0.1 + speaking_expansion;
+
+        // Pulsing ring
+        let pulse = (t * TAU).sin() * 0.05;
+        let ring_r = base_ring_r + pulse;
+
+        // Ring width varies with audio
+        let ring_width = 0.08 + self.smooth_audio * 0.04;
+
+        // Distance from ring
+        let ring_dist = (r - ring_r).abs();
+        let ring_intensity = (-ring_dist * ring_dist / (2.0 * ring_width * ring_width)).exp();
+
+        // Core glow
+        let core_size = 0.15 + self.smooth_audio * 0.1;
+        let core = (-(r * r) / (2.0 * core_size * core_size)).exp() * 0.6;
+
+        // Outer glow
+        let outer_glow = if r > ring_r {
+            (-(r - ring_r) * 3.0).exp() * 0.3
+        } else {
+            0.0
+        };
+
+        let intensity = (ring_intensity * 0.8 + core).min(1.0);
+        let glow = (ring_intensity * 0.3 + outer_glow).min(1.0);
+
+        (intensity, glow)
+    }
+
     fn render(&self, width: usize, height: usize) -> Vec<Vec<(char, Color)>> {
         let mut buffer = vec![vec![(' ', Color::Reset); width]; height];
         let palette = self.current_palette();
@@ -447,41 +595,75 @@ impl Orb {
         let cy = height as f64 / 2.0;
 
         let shades: &[char] = &[' ', '.', ':', '-', '=', '+', '*', '#', '@'];
+        // Block shades for Classic style (from basic)
+        let block_shades: &[char] = &[' ', '░', '▒', '▓', '█', '●', '◉'];
 
         for row in 0..height {
             for col in 0..width {
                 let x = (col as f64 - cx) / aspect;
                 let y = row as f64 - cy;
 
-                let (intensity, glow) = match self.style {
-                    OrbStyle::Rings => self.sample_rings(x, y, max_r),
-                    OrbStyle::Blob => self.sample_blob(x, y, max_r),
-                };
+                match self.style {
+                    OrbStyle::Rings | OrbStyle::Blob | OrbStyle::Ring => {
+                        let (intensity, glow) = match self.style {
+                            OrbStyle::Rings => self.sample_rings(x, y, max_r),
+                            OrbStyle::Blob => self.sample_blob(x, y, max_r),
+                            OrbStyle::Ring => self.sample_ring(x, y, max_r),
+                            _ => unreachable!(),
+                        };
 
-                if intensity < 0.01 && glow < 0.02 {
-                    continue;
-                }
+                        if intensity < 0.01 && glow < 0.02 {
+                            continue;
+                        }
 
-                let dist = (x * x + y * y).sqrt() / max_r;
-                let color_t = (dist * 1.1).min(1.0);
+                        let dist = (x * x + y * y).sqrt() / max_r;
+                        let color_t = (dist * 1.1).min(1.0);
 
-                let base_color = palette.sample(color_t);
-                let brightness = intensity * 0.75 + glow * 0.35;
-                let mut final_color = base_color.scale(0.25 + brightness * 0.75);
+                        let base_color = palette.sample(color_t);
+                        let brightness = intensity * 0.75 + glow * 0.35;
+                        let mut final_color = base_color.scale(0.25 + brightness * 0.75);
 
-                let combined = intensity;
-                if combined > 0.75 {
-                    let highlight = (combined - 0.75) * 2.0;
-                    final_color = final_color.add(Rgb(highlight, highlight, highlight).scale(0.25));
-                }
+                        let combined = intensity;
+                        if combined > 0.75 {
+                            let highlight = (combined - 0.75) * 2.0;
+                            final_color =
+                                final_color.add(Rgb(highlight, highlight, highlight).scale(0.25));
+                        }
 
-                let char_intensity = (intensity + glow * 0.25).min(1.0);
-                let idx = ((char_intensity * (shades.len() - 1) as f64).round() as usize)
-                    .min(shades.len() - 1);
+                        let char_intensity = (intensity + glow * 0.25).min(1.0);
+                        let idx = ((char_intensity * (shades.len() - 1) as f64).round() as usize)
+                            .min(shades.len() - 1);
 
-                let ch = shades[idx];
-                if ch != ' ' {
-                    buffer[row][col] = (ch, final_color.to_terminal());
+                        let ch = shades[idx];
+                        if ch != ' ' {
+                            buffer[row][col] = (ch, final_color.to_terminal());
+                        }
+                    }
+                    OrbStyle::Classic => {
+                        let (intensity, color) = self.sample_classic(x, y, max_r);
+
+                        if intensity < 0.1 {
+                            continue;
+                        }
+
+                        // Use block characters for classic style
+                        let idx = if intensity < 0.25 {
+                            1
+                        } else if intensity < 0.4 {
+                            2
+                        } else if intensity < 0.55 {
+                            3
+                        } else if intensity < 0.7 {
+                            4
+                        } else if intensity < 0.85 {
+                            5
+                        } else {
+                            6
+                        };
+
+                        let ch = block_shades[idx];
+                        buffer[row][col] = (ch, color);
+                    }
                 }
             }
         }
@@ -699,6 +881,8 @@ impl UiRenderer for GraphicalUi {
         let style_name = match self.orb.style {
             OrbStyle::Rings => "Rings",
             OrbStyle::Blob => "Blob",
+            OrbStyle::Classic => "Classic",
+            OrbStyle::Ring => "Ring",
         };
 
         out.push_str(&format!(
@@ -753,11 +937,13 @@ impl UiRenderer for GraphicalUi {
                     return Ok(Some("/mute".to_string()));
                 }
 
-                // Tab to switch visual style
+                // Tab to cycle through visual styles
                 if key.code == KeyCode::Tab {
                     let new_style = match self.orb.style {
                         OrbStyle::Rings => OrbStyle::Blob,
-                        OrbStyle::Blob => OrbStyle::Rings,
+                        OrbStyle::Blob => OrbStyle::Classic,
+                        OrbStyle::Classic => OrbStyle::Ring,
+                        OrbStyle::Ring => OrbStyle::Rings,
                     };
                     self.orb.set_style(new_style);
                     continue;

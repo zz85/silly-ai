@@ -62,6 +62,10 @@ pub enum OrbStyleConfig {
     Rings,
     /// Volumetric noise blob
     Blob,
+    /// Classic blob with simpler colors
+    Classic,
+    /// Simple circular ring
+    Ring,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,7 +73,7 @@ pub struct UiConfig {
     /// UI mode: "text" or "graphical"
     #[serde(default)]
     pub mode: UiModeConfig,
-    /// Visual style for graphical mode: "rings" or "blob"
+    /// Visual style for graphical mode: "rings", "blob", "classic", or "ring"
     #[serde(default)]
     pub orb_style: OrbStyleConfig,
 }

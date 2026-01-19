@@ -67,8 +67,8 @@ struct Cli {
     #[arg(long, short = 't')]
     text: bool,
 
-    /// Visual style for graphical UI: rings or blob
-    #[arg(long, value_parser = ["rings", "blob"])]
+    /// Visual style for graphical UI: rings, blob, classic, or ring
+    #[arg(long, value_parser = ["rings", "blob", "classic", "ring"])]
     orb_style: Option<String>,
 }
 
@@ -578,9 +578,13 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     let orb_style = match cli.orb_style.as_deref() {
         Some("rings") => OrbStyle::Rings,
         Some("blob") => OrbStyle::Blob,
+        Some("classic") => OrbStyle::Classic,
+        Some("ring") => OrbStyle::Ring,
         _ => match config.ui.orb_style {
             OrbStyleConfig::Rings => OrbStyle::Rings,
             OrbStyleConfig::Blob => OrbStyle::Blob,
+            OrbStyleConfig::Classic => OrbStyle::Classic,
+            OrbStyleConfig::Ring => OrbStyle::Ring,
         },
     };
 

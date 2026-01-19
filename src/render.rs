@@ -38,6 +38,8 @@ pub enum OrbStyle {
     Ring,
     /// Concentric glowing orbs (horizontal ellipses)
     Orbs,
+    /// Particle sphere with displacement and noise
+    Sphere,
 }
 
 /// Trait for UI renderers - allows swapping between text and graphical UI

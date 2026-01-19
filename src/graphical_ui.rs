@@ -35,6 +35,7 @@ pub enum ShadePattern {
     Circles,        // Unicode circles
     BrailleSolid,   // Braille with solid block
     Lines,          // Pipes and lines
+    Particles,      // Optimized for particle rendering
 }
 
 impl ShadePattern {
@@ -45,6 +46,7 @@ impl ShadePattern {
             ShadePattern::Circles => &[' ', '·', ':', '∘', '○', '●', '◉', '#', '@'],
             ShadePattern::BrailleSolid => &[' ', '⠁', '⠃', '⠇', '⠏', '⠟', '⠿', '⣿', '█'],
             ShadePattern::Lines => &[' ', '|', '¦', '‖', '║', '█', '█', '█', '█'],
+            ShadePattern::Particles => &[' ', '·', '∘', '°', '○', '●', '◉', '⬢', '⬣'],
         }
     }
 
@@ -55,6 +57,7 @@ impl ShadePattern {
             ShadePattern::Circles => "Circles",
             ShadePattern::BrailleSolid => "Braille█",
             ShadePattern::Lines => "Lines",
+            ShadePattern::Particles => "Particles",
         }
     }
 
@@ -64,7 +67,8 @@ impl ShadePattern {
             ShadePattern::Classic => ShadePattern::Circles,
             ShadePattern::Circles => ShadePattern::BrailleSolid,
             ShadePattern::BrailleSolid => ShadePattern::Lines,
-            ShadePattern::Lines => ShadePattern::BrailleAt,
+            ShadePattern::Lines => ShadePattern::Particles,
+            ShadePattern::Particles => ShadePattern::BrailleAt,
         }
     }
 }
@@ -303,9 +307,10 @@ fn smooth_noise(x: f64, y: f64, z: f64) -> f64 {
     let yf = y - yi;
     let zf = z - zi;
 
-    let u = xf * xf * (3.0 - 2.0 * xf);
-    let v = yf * yf * (3.0 - 2.0 * yf);
-    let w = zf * zf * (3.0 - 2.0 * zf);
+    // Smoother interpolation (quintic instead of cubic)
+    let u = xf * xf * xf * (xf * (xf * 6.0 - 15.0) + 10.0);
+    let v = yf * yf * yf * (yf * (yf * 6.0 - 15.0) + 10.0);
+    let w = zf * zf * zf * (zf * (zf * 6.0 - 15.0) + 10.0);
 
     let c000 = hash(xi, yi, zi);
     let c100 = hash(xi + 1.0, yi, zi);
@@ -339,7 +344,9 @@ fn fbm(x: f64, y: f64, z: f64, octaves: usize, persistence: f64) -> f64 {
         amplitude *= persistence;
         frequency *= 2.0;
     }
-    value / max_value
+    
+    // Normalize to [-1, 1] range for better organic movement
+    (value / max_value) * 2.0 - 1.0
 }
 
 fn ease_out_quart(t: f64) -> f64 {
@@ -364,10 +371,46 @@ struct Orb {
     secondary_audio: f64,
     smooth_secondary: f64,
     shade_pattern: ShadePattern,
+    random_positions: Vec<(f64, f64, f64)>, // Pre-generated random sphere positions
 }
 
 impl Orb {
     fn new(style: OrbStyle) -> Self {
+        // Generate random particles on sphere surface using hash-based pseudo-randomness
+        let mut random_positions = Vec::new();
+        let max_particles = 300; // Generate enough for the highest particle count (256) with some buffer
+        
+        for i in 0..max_particles {
+            // Use hash function to generate pseudo-random values for each particle
+            let seed = i as f64;
+            
+            // Generate random spherical coordinates using hash
+            let u1 = hash(seed, 12.34, 56.78); // Random value [0,1]
+            let u2 = hash(seed + 100.0, 78.90, 23.45); // Another random value [0,1]
+            let u3 = hash(seed + 200.0, 34.56, 89.12); // Third random value for clustering
+            
+            // Add some clustering to make distribution more natural (not perfectly uniform)
+            let cluster_strength = 0.15; // How much clustering to apply
+            let cluster_u1 = u1 + (u3 - 0.5) * cluster_strength;
+            let cluster_u2 = u2 + (hash(seed + 300.0, 45.67, 12.89) - 0.5) * cluster_strength;
+            
+            // Clamp to [0,1] range
+            let final_u1 = cluster_u1.clamp(0.0, 1.0);
+            let final_u2 = cluster_u2.clamp(0.0, 1.0);
+            
+            // Convert uniform random values to spherical coordinates
+            // This ensures good distribution on sphere surface with natural clustering
+            let theta = final_u1 * TAU; // Azimuthal angle [0, 2π]
+            let phi = (2.0 * final_u2 - 1.0).acos(); // Polar angle [0, π] with proper distribution
+            
+            // Convert spherical to Cartesian coordinates
+            let x = phi.sin() * theta.cos();
+            let y = phi.sin() * theta.sin();
+            let z = phi.cos();
+            
+            random_positions.push((x, y, z));
+        }
+        
         Self {
             state: OrbState::Idle,
             target_state: OrbState::Idle,
@@ -381,7 +424,8 @@ impl Orb {
             style,
             secondary_audio: 0.0,
             smooth_secondary: 0.0,
-            shade_pattern: ShadePattern::BrailleAt,
+            shade_pattern: ShadePattern::Particles,
+            random_positions,
         }
     }
 
@@ -820,6 +864,197 @@ impl Orb {
         (intensity, glow)
     }
 
+    // Simple wireframe sphere renderer - minimal particles at key positions
+    fn sample_sphere(&self, x: f64, y: f64, max_r: f64) -> (f64, f64, f64) {
+        let freq = self.current_frequency();
+        let time_scale = self.time * freq;
+        
+        // SPHERE-SPECIFIC SCALING: Make sphere larger but keep particles visible
+        let sphere_scale = 3.0;  // Reduced from 20x to 3x for better visibility
+        let x_scaled = x / sphere_scale;  // Scale down coordinates = camera further away
+        let y_scaled = y / sphere_scale;
+        let max_r_scaled = max_r / sphere_scale;
+        
+        // Normalize coordinates for true sphere (using scaled values)
+        let x_norm = x_scaled / max_r_scaled;
+        let y_norm = y_scaled / max_r_scaled;
+        let screen_dist = (x_norm * x_norm + y_norm * y_norm).sqrt();
+        
+        // Early exit for points outside sphere (adjusted for larger sphere)
+        if screen_dist > 0.9 {
+            return (0.0, 0.0, 0.0);
+        }
+        
+        let mut intensity = 0.0;
+        let mut glow = 0.0;
+        let mut secondary_intensity = 0.0;
+        
+        // Use pre-generated random positions for natural distribution
+        let key_positions = &self.random_positions;
+        
+        let particle_count = match self.target_state {
+            OrbState::Idle => 80,        // Reduced slightly for stability
+            OrbState::Listening => 120,  // Reduced slightly
+            OrbState::Thinking => 180,   // Reduced slightly
+            OrbState::Speaking => 140,   // Reduced slightly
+            OrbState::Error => 200,      // Reduced from 256 to 200
+        };
+        
+        // Render only the first N positions based on state
+        for i in 0..particle_count.min(key_positions.len()) {
+            let (base_x, base_y, base_z) = key_positions[i];
+            
+            // ORGANIC ANIMATION - Based on vertex displacement techniques from Three.js examples
+            
+            // Use particle's world position as noise coordinates for consistent organic movement
+            let world_pos_x = base_x;
+            let world_pos_y = base_y;
+            let world_pos_z = base_z;
+            
+            // Time-based noise evolution for flowing animation
+            let time_offset = time_scale * 0.5;
+            
+            // Multi-octave noise for complex organic movement
+            let noise_scale_1 = 1.5;  // Primary frequency
+            let noise_scale_2 = 3.0;  // Secondary frequency
+            let noise_scale_3 = 6.0;  // Detail frequency
+            
+            // Sample noise at different frequencies (like shader vertex displacement)
+            let noise_1 = fbm(
+                world_pos_x * noise_scale_1 + time_offset,
+                world_pos_y * noise_scale_1 + time_offset,
+                world_pos_z * noise_scale_1 + time_offset,
+                4, 0.5
+            );
+            
+            let noise_2 = fbm(
+                world_pos_x * noise_scale_2 + time_offset * 1.3,
+                world_pos_y * noise_scale_2 + time_offset * 1.3,
+                world_pos_z * noise_scale_2 + time_offset * 1.3,
+                3, 0.6
+            );
+            
+            let noise_3 = fbm(
+                world_pos_x * noise_scale_3 + time_offset * 0.7,
+                world_pos_y * noise_scale_3 + time_offset * 0.7,
+                world_pos_z * noise_scale_3 + time_offset * 0.7,
+                2, 0.4
+            );
+            
+            // Combine noise layers for complex organic movement with turbulence
+            let combined_noise = noise_1 * 0.6 + noise_2 * 0.3 + noise_3 * 0.1;
+            
+            // Add turbulence for more organic, flowing movement
+            let turbulence_x = fbm(
+                world_pos_y * 2.0 + time_offset * 0.8,
+                world_pos_z * 2.0 + time_offset * 0.8,
+                world_pos_x * 2.0 + time_offset * 0.8,
+                2, 0.5
+            ).clamp(-1.0, 1.0) * 0.15;
+            
+            let turbulence_y = fbm(
+                world_pos_z * 2.0 + time_offset * 1.1,
+                world_pos_x * 2.0 + time_offset * 1.1,
+                world_pos_y * 2.0 + time_offset * 1.1,
+                2, 0.5
+            ).clamp(-1.0, 1.0) * 0.15;
+            
+            let turbulence_z = fbm(
+                world_pos_x * 2.0 + time_offset * 0.9,
+                world_pos_y * 2.0 + time_offset * 0.9,
+                world_pos_z * 2.0 + time_offset * 0.9,
+                2, 0.5
+            ).clamp(-1.0, 1.0) * 0.15;
+            
+            // State-dependent noise amplitude
+            let noise_amplitude = match self.target_state {
+                OrbState::Idle => 0.08,
+                OrbState::Listening => 0.15,
+                OrbState::Thinking => 0.25,
+                OrbState::Speaking => 0.18,
+                OrbState::Error => 0.35,
+            };
+            
+            // Apply noise as radial displacement (like vertex shader displacement)
+            let displacement = (combined_noise * noise_amplitude).clamp(-0.5, 0.5); // Clamp displacement
+            
+            // Audio-reactive enhancement
+            let audio_band = i % 6;
+            let audio_displacement = (self.smooth_freqs[audio_band] * 0.12).clamp(-0.2, 0.2); // Clamp audio displacement
+            
+            // Breathing effect with organic variation
+            let breathing_base = (time_scale * 1.2).sin() * 0.04;
+            let breathing_variation = (time_scale * 2.1 + i as f64 * 0.4).sin() * 0.02;
+            let breathing = breathing_base + breathing_variation;
+            
+            // Final organic radius calculation
+            let base_radius = 1.0;
+            let organic_radius = base_radius + displacement + audio_displacement + breathing;
+            let final_radius = organic_radius.max(0.2); // Prevent collapse
+            
+            // Apply organic displacement to particle position with turbulence
+            let organic_x = world_pos_x + turbulence_x * noise_amplitude;
+            let organic_y = world_pos_y + turbulence_y * noise_amplitude;
+            let organic_z = world_pos_z + turbulence_z * noise_amplitude;
+            
+            // Normalize to maintain sphere shape while allowing organic deformation
+            let organic_length = (organic_x * organic_x + organic_y * organic_y + organic_z * organic_z).sqrt();
+            
+            // Prevent division by zero
+            let safe_length = if organic_length < 0.001 { 1.0 } else { organic_length };
+            
+            let normalized_x = organic_x / safe_length;
+            let normalized_y = organic_y / safe_length;
+            let normalized_z = organic_z / safe_length;
+            
+            let particle_x = normalized_x * final_radius;
+            let particle_y = normalized_y * final_radius;
+            let particle_z = normalized_z * final_radius;
+            
+            // Project to 2D (no aspect distortion)
+            let proj_x = particle_x;
+            let proj_y = particle_y;
+            
+            // Distance from current pixel to particle
+            let particle_dist = ((x_norm - proj_x).powi(2) + (y_norm - proj_y).powi(2)).sqrt();
+            
+            // Particle size based on depth and state - 20x SMALLER particles for distant viewing
+            let depth_factor = (particle_z + 1.0) * 0.5; // Normalize z to [0,1]
+            let size_factor = 0.6 + depth_factor * 0.8; // Closer = larger
+            let brightness_factor = 0.3 + depth_factor * 0.7;
+            
+            let base_size = match self.target_state {
+                OrbState::Idle => 0.018,       // Slightly smaller for denser appearance
+                OrbState::Listening => 0.016,   
+                OrbState::Thinking => 0.013,     
+                OrbState::Speaking => 0.020,    
+                OrbState::Error => 0.022,        
+            };
+            
+            let dynamic_size = base_size * size_factor * (1.0 + self.smooth_audio * 0.2);
+            
+            // Only render if we're close enough to the particle
+            if particle_dist <= dynamic_size {
+                // Gaussian falloff for smooth particle edges
+                let falloff = -(particle_dist * particle_dist) / (2.0 * dynamic_size * dynamic_size * 0.5);
+                let particle_intensity = falloff.exp() * brightness_factor;
+                
+                intensity += particle_intensity * 0.8;
+                glow += particle_intensity * 0.3;
+                
+                // Secondary color for dual-state rendering
+                if self.composite.secondary.is_some() && i % 2 == 0 {
+                    secondary_intensity += particle_intensity * 0.6 * self.composite.blend;
+                }
+            }
+        }
+        
+        // No central core - pure particle sphere approach
+        // No outer glow - clean particle-only rendering
+        
+        (intensity.min(1.0), glow.min(1.0), secondary_intensity.min(1.0))
+    }
+
     fn render(&self, width: usize, height: usize) -> Vec<Vec<(char, Color)>> {
         let mut buffer = vec![vec![(' ', Color::Reset); width]; height];
         let palette = self.current_palette();
@@ -846,6 +1081,7 @@ impl Orb {
                         (a, b, 0.0)
                     },
                     OrbStyle::Orbs => self.sample_rings2(x, y, max_r),
+                    OrbStyle::Sphere => self.sample_sphere(x, y, max_r),
                 };
 
                 // Skip pixels with minimal contribution
@@ -853,8 +1089,15 @@ impl Orb {
                     continue;
                 }
 
-                let dist = (x * x + y * y).sqrt() / max_r;
-                let color_t = (dist * 1.05).min(1.0); // Slightly adjusted for better color distribution
+                // For sphere style, use particle-based coloring instead of distance-based
+                let color_t = if matches!(self.style, OrbStyle::Sphere) {
+                    // Use intensity for color variation in sphere mode
+                    (intensity * 0.8 + glow * 0.2).min(1.0)
+                } else {
+                    // Use distance-based coloring for other styles
+                    let dist = (x * x + y * y).sqrt() / max_r;
+                    (dist * 1.05).min(1.0)
+                };
 
                 let base_color = palette.sample(color_t);
                 
@@ -938,7 +1181,7 @@ impl GraphicalUi {
         )?;
 
         Ok(Self {
-            orb: Orb::new(OrbStyle::Orbs),
+            orb: Orb::new(OrbStyle::Sphere),
             last_frame: Instant::now(),
             status: "Loading...".to_string(),
             preview: String::new(),
@@ -1110,6 +1353,7 @@ impl UiRenderer for GraphicalUi {
             OrbStyle::Orbs => "Orbs",
             OrbStyle::Blob => "Blob",
             OrbStyle::Ring => "Ring",
+            OrbStyle::Sphere => "Sphere",
         };
 
         out.push_str(&format!(
@@ -1170,7 +1414,8 @@ impl UiRenderer for GraphicalUi {
                     let new_style = match self.orb.style {
                         OrbStyle::Orbs => OrbStyle::Blob,
                         OrbStyle::Blob => OrbStyle::Ring,
-                        OrbStyle::Ring => OrbStyle::Orbs,
+                        OrbStyle::Ring => OrbStyle::Sphere,
+                        OrbStyle::Sphere => OrbStyle::Orbs,
                     };
                     self.orb.set_style(new_style);
                     continue;

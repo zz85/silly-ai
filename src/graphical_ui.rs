@@ -28,6 +28,47 @@ pub enum OrbState {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ShadePattern {
+    BrailleAt,      // Braille with @
+    Classic,        // Classic ASCII
+    Circles,        // Unicode circles
+    BrailleSolid,   // Braille with solid block
+    Lines,          // Pipes and lines
+}
+
+impl ShadePattern {
+    fn chars(&self) -> &'static [char] {
+        match self {
+            ShadePattern::BrailleAt => &[' ', '⠁', '⠃', '⠇', '⠏', '⠟', '⠿', '⣿', '@'],
+            ShadePattern::Classic => &[' ', '.', ':', '-', '=', '+', '*', '#', '@'],
+            ShadePattern::Circles => &[' ', '·', ':', '∘', '○', '●', '◉', '#', '@'],
+            ShadePattern::BrailleSolid => &[' ', '⠁', '⠃', '⠇', '⠏', '⠟', '⠿', '⣿', '█'],
+            ShadePattern::Lines => &[' ', '|', '¦', '‖', '║', '█', '█', '█', '█'],
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            ShadePattern::BrailleAt => "Braille@",
+            ShadePattern::Classic => "Classic",
+            ShadePattern::Circles => "Circles",
+            ShadePattern::BrailleSolid => "Braille█",
+            ShadePattern::Lines => "Lines",
+        }
+    }
+
+    fn next(&self) -> ShadePattern {
+        match self {
+            ShadePattern::BrailleAt => ShadePattern::Classic,
+            ShadePattern::Classic => ShadePattern::Circles,
+            ShadePattern::Circles => ShadePattern::BrailleSolid,
+            ShadePattern::BrailleSolid => ShadePattern::Lines,
+            ShadePattern::Lines => ShadePattern::BrailleAt,
+        }
+    }
+}
+
 impl OrbState {
     /// Animation frequency multiplier for each state.
     /// Higher values = faster animation.
@@ -322,6 +363,7 @@ struct Orb {
     style: OrbStyle,
     secondary_audio: f64,
     smooth_secondary: f64,
+    shade_pattern: ShadePattern,
 }
 
 impl Orb {
@@ -339,6 +381,7 @@ impl Orb {
             style,
             secondary_audio: 0.0,
             smooth_secondary: 0.0,
+            shade_pattern: ShadePattern::BrailleAt,
         }
     }
 
@@ -352,6 +395,10 @@ impl Orb {
 
     fn set_style(&mut self, style: OrbStyle) {
         self.style = style;
+    }
+
+    fn set_shade_pattern(&mut self, pattern: ShadePattern) {
+        self.shade_pattern = pattern;
     }
 
     fn set_audio(&mut self, level: f64) {
@@ -782,7 +829,7 @@ impl Orb {
         let cx = width as f64 / 2.0;
         let cy = height as f64 / 2.0;
 
-        let shades: &[char] = &[' ', '·', ':', '∘', '○', '●', '◉', '█', '█'];
+        let shades = self.shade_pattern.chars();
 
         for row in 0..height {
             for col in 0..width {
@@ -1066,11 +1113,12 @@ impl UiRenderer for GraphicalUi {
         };
 
         out.push_str(&format!(
-            " \x1b[1m{}\x1b[0m | {} | {} | Style: {} | Ctx: {} | Resp: {}",
+            " \x1b[1m{}\x1b[0m | {} | {} | Style: {} | Shades: {} | Ctx: {} | Resp: {}",
             self.status,
             mode_str,
             toggles,
             style_name,
+            self.orb.shade_pattern.name(),
             self.context_words,
             self.last_response_words
         ));
@@ -1125,6 +1173,13 @@ impl UiRenderer for GraphicalUi {
                         OrbStyle::Ring => OrbStyle::Orbs,
                     };
                     self.orb.set_style(new_style);
+                    continue;
+                }
+
+                // Backtick to cycle through shade patterns
+                if key.code == KeyCode::Char('`') {
+                    let new_pattern = self.orb.shade_pattern.next();
+                    self.orb.set_shade_pattern(new_pattern);
                     continue;
                 }
 
@@ -1481,7 +1536,7 @@ mod tests {
 pub fn run_orb_demo() -> io::Result<()> {
     println!("=== Orb Visual Demo ===");
     println!("Cycling through all states and styles...");
-    println!("Press Tab to cycle styles manually, Ctrl+C to exit");
+    println!("Press Tab to cycle styles, ` (backtick) to cycle shade patterns, Ctrl+C to exit");
     
     let mut ui = GraphicalUi::new()?;
     

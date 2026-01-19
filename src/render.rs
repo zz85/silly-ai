@@ -31,15 +31,13 @@ pub enum UiMode {
 /// Visual style for the graphical orb UI
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OrbStyle {
-    /// Concentric glowing rings (horizontal ellipses)
-    #[default]
-    Rings,
     /// Volumetric noise blob
+    #[default]
     Blob,
-    /// Classic blob with simpler colors (from orb-cli)
-    Classic,
+    /// Concentric glowing rings (horizontal ellipses)
+    Rings1,
     /// Simple circular ring (from main-ring.rs)
-    Ring,
+    Rings2,
 }
 
 /// Trait for UI renderers - allows swapping between text and graphical UI

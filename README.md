@@ -4,6 +4,7 @@ This is my playground of local AI LLM experiments. It's super useful when you wa
 
 - `silly` - "Hey Silly" is a CLI based AI voice chat assistant using real-time speech transcription, local LLMs, and TTS. It allows answering questions from LLM while completely offline, making this a good replacement for cloud based personal assistants like Siri, Alexa, Google, ChatGPT if you are ever concerned about sending anything over the internet
 - `silly transcribe` - Converts ogg/wav files into text
+- `silly orb-demo` - Interactive demo of graphical orb animations (cycles through all states and styles)
 - `silly summarize` - Summarizes transcripts
 - `ai department` - A department/roundtable of "experts"
 

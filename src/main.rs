@@ -82,6 +82,8 @@ enum Command {
         #[arg(default_value = "all")]
         scene: String,
     },
+    /// Demo graphical orb animations (all states and styles)
+    OrbDemo,
     /// Capture and transcribe audio continuously
     #[cfg(feature = "listen")]
     Listen {
@@ -156,6 +158,10 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     match &cli.command {
         Some(Command::Transcribe) => return run_transcribe_mode().await,
         Some(Command::TestUi { scene }) => return test_ui::run(scene).await,
+        Some(Command::OrbDemo) => {
+            return graphical_ui::run_orb_demo()
+                .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>);
+        },
         #[cfg(feature = "listen")]
         Some(Command::Listen {
             source,
@@ -576,15 +582,13 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
 
     // Determine orb style
     let orb_style = match cli.orb_style.as_deref() {
-        Some("rings") => OrbStyle::Rings,
+        Some("rings1") => OrbStyle::Rings1,
         Some("blob") => OrbStyle::Blob,
-        Some("classic") => OrbStyle::Classic,
-        Some("ring") => OrbStyle::Ring,
+        Some("rings2") => OrbStyle::Rings2,
         _ => match config.ui.orb_style {
-            OrbStyleConfig::Rings => OrbStyle::Rings,
+            OrbStyleConfig::Rings1 => OrbStyle::Rings1,
             OrbStyleConfig::Blob => OrbStyle::Blob,
-            OrbStyleConfig::Classic => OrbStyle::Classic,
-            OrbStyleConfig::Ring => OrbStyle::Ring,
+            OrbStyleConfig::Rings2 => OrbStyle::Rings2,
         },
     };
 

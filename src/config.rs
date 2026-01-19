@@ -58,14 +58,12 @@ pub enum UiModeConfig {
 #[serde(rename_all = "lowercase")]
 pub enum OrbStyleConfig {
     /// Concentric glowing rings (default)
-    #[default]
-    Rings,
+    Rings1,
     /// Volumetric noise blob
+    #[default]
     Blob,
-    /// Classic blob with simpler colors
-    Classic,
     /// Simple circular ring
-    Ring,
+    Rings2,
 }
 
 #[derive(Debug, Deserialize)]

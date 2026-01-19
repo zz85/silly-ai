@@ -1,7 +1,7 @@
 //! Graphical orb UI for the voice assistant
 //!
 //! Provides a visual representation of the assistant's state using animated
-//! ASCII art orbs. Supports multiple visual styles: Rings, Blob, Classic, and Ring.
+//! ASCII art orbs. Supports multiple visual styles: Rings, Blob, and Ring.
 
 use crate::render::{OrbStyle, UiEvent, UiMode, UiRenderer};
 use crate::state::AppMode;
@@ -10,7 +10,8 @@ use crossterm::style::Color;
 use crossterm::terminal::{self, ClearType};
 use crossterm::{cursor, execute};
 use std::io::{self, Write, stdout};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use std::thread;
 
 const TAU: f64 = std::f64::consts::TAU;
 
@@ -32,6 +33,7 @@ impl OrbState {
     /// Higher values = faster animation.
     ///
     /// BPM reference (assuming base animation cycle is ~1 second):
+    /// Some initial estimates
     /// - Idle:      0.4 Hz = ~24 BPM (calm, slow breathing)
     /// - Listening: 0.7 Hz = ~42 BPM (attentive, moderate pace)
     /// - Thinking:  1.4 Hz = ~84 BPM (active processing)
@@ -39,11 +41,11 @@ impl OrbState {
     /// - Error:     2.0 Hz = ~120 BPM (urgent, attention-grabbing)
     fn frequency(&self) -> f64 {
         match self {
-            OrbState::Idle => 0.4,      // ~24 BPM - slow, calm breathing
-            OrbState::Listening => 0.7, // ~42 BPM - attentive, not too fast
-            OrbState::Thinking => 1.4,  // ~84 BPM - active, processing
-            OrbState::Speaking => 1.0,  // ~60 BPM - natural speech rhythm
-            OrbState::Error => 2.0,     // ~120 BPM - urgent flashing
+            OrbState::Idle => 0.7,
+            OrbState::Listening => 0.5,
+            OrbState::Thinking => 1.0,
+            OrbState::Speaking => 0.8,
+            OrbState::Error => 1.5,
         }
     }
 
@@ -81,36 +83,42 @@ impl OrbState {
             },
         }
     }
+}
 
-    /// Classic color scheme from basic (simpler, more saturated)
-    fn classic_color(&self, intensity: f32) -> Color {
-        let t = intensity;
-        match self {
-            OrbState::Idle => Color::Rgb {
-                r: (100.0 + t * 100.0) as u8,
-                g: (150.0 + t * 80.0) as u8,
-                b: (200.0 + t * 55.0) as u8,
-            },
-            OrbState::Listening => Color::Rgb {
-                r: (100.0 + t * 155.0) as u8,
-                g: (180.0 + t * 75.0) as u8,
-                b: 255,
-            },
-            OrbState::Thinking => Color::Rgb {
-                r: (180.0 + t * 75.0) as u8,
-                g: (100.0 + t * 80.0) as u8,
-                b: 255,
-            },
-            OrbState::Speaking => Color::Rgb {
-                r: 255,
-                g: (180.0 + t * 75.0) as u8,
-                b: (100.0 + t * 155.0) as u8,
-            },
-            OrbState::Error => Color::Rgb {
-                r: 255,
-                g: (50.0 + (intensity * 50.0)) as u8,
-                b: 50,
-            },
+
+/// Represents a potentially composite state (e.g., listening + speaking)
+#[derive(Clone, Copy)]
+struct CompositeState {
+    primary: OrbState,
+    secondary: Option<OrbState>,
+    blend: f64, // 0.0 = primary only, 1.0 = equal blend
+}
+
+impl CompositeState {
+    fn single(state: OrbState) -> Self {
+        Self {
+            primary: state,
+            secondary: None,
+            blend: 0.0,
+        }
+    }
+
+    fn dual(primary: OrbState, secondary: OrbState, blend: f64) -> Self {
+        Self {
+            primary,
+            secondary: Some(secondary),
+            blend: blend.clamp(0.0, 1.0),
+        }
+    }
+
+    fn frequency(&self) -> f64 {
+        match self.secondary {
+            Some(sec) => {
+                let f1 = self.primary.frequency();
+                let f2 = sec.frequency();
+                f1 * (1.0 - self.blend * 0.5) + f2 * self.blend * 0.5
+            }
+            None => self.primary.frequency(),
         }
     }
 }
@@ -183,12 +191,21 @@ impl Palette {
     }
 
     fn sample(&self, t: f64) -> Rgb {
-        if t < 0.3 {
-            self.core.lerp(self.mid, t / 0.3)
-        } else if t < 0.7 {
-            self.mid.lerp(self.edge, (t - 0.3) / 0.4)
+        // Improved color sampling with smoother transitions and better curve
+        let t_clamped = t.clamp(0.0, 1.0);
+        
+        if t_clamped < 0.25 {
+            // Core to mid transition - smooth curve
+            let local_t = (t_clamped / 0.25).powf(0.8);
+            self.core.lerp(self.mid, local_t)
+        } else if t_clamped < 0.65 {
+            // Mid to edge transition - linear for stability
+            let local_t = (t_clamped - 0.25) / 0.4;
+            self.mid.lerp(self.edge, local_t)
         } else {
-            self.edge.lerp(self.glow, (t - 0.7) / 0.3)
+            // Edge to glow transition - exponential for dramatic falloff
+            let local_t = ((t_clamped - 0.65) / 0.35).powf(1.5);
+            self.edge.lerp(self.glow, local_t)
         }
     }
 }
@@ -260,6 +277,7 @@ fn ease_out_quart(t: f64) -> f64 {
 struct Orb {
     state: OrbState,
     target_state: OrbState,
+    composite: CompositeState,
     time: f64,
     transition: f64,
     audio_level: f64,
@@ -276,6 +294,7 @@ impl Orb {
         Self {
             state: OrbState::Idle,
             target_state: OrbState::Idle,
+            composite: CompositeState::single(OrbState::Idle),
             time: 0.0,
             transition: 1.0,
             audio_level: 0.0,
@@ -320,7 +339,8 @@ impl Orb {
         let k = 1.0 - (-dt * 15.0).exp();
         self.smooth_audio += (self.audio_level - self.smooth_audio) * k;
         self.smooth_secondary += (self.secondary_audio - self.smooth_secondary) * k;
-        for i in 0..8 {
+        for i in 0..6 {
+            // instead of 0..8 for inner rings
             self.smooth_freqs[i] += (self.audio_freqs[i] - self.smooth_freqs[i]) * k;
         }
     }
@@ -335,104 +355,231 @@ impl Orb {
         self.state.frequency() + (self.target_state.frequency() - self.state.frequency()) * t
     }
 
-    // Ring style renderer - horizontal elliptical rings
-    fn sample_rings(&self, x: f64, y: f64, max_r: f64) -> (f64, f64) {
+     // -------------------------------------------------------------------------
+    // Ring style - thin horizontal elliptical rings with wave displacement
+    //
+    // The rings appear as if viewing a set of concentric circles from an angle,
+    // creating wide but very short (thin) ellipses. Think of Saturn's rings
+    // viewed from slightly above the plane.
+    // -------------------------------------------------------------------------
+
+    fn sample_rings2(&self, x: f64, y: f64, max_r: f64) -> (f64, f64, f64) {
         let freq = self.current_frequency();
-        let x_squash = 0.4;
+
+        // =================================================================
+        // SHAPE TRANSFORM - Improved ellipse calculation
+        // =================================================================
+        let x_squash = 0.35; // Optimized for better visual balance
+        let y_squash = 1.2;  // Slight vertical compression for better proportions
         let x_scaled = x * x_squash;
+        let y_scaled = y * y_squash;
 
-        let wave_freq = 2.0;
-        let wave_speed = 0.4;
-        let wave_amp = max_r * 0.025 * (1.0 + self.smooth_audio * 0.3);
-
+        // =================================================================
+        // ENHANCED WAVE DISPLACEMENT
+        // Multi-layered wave system for more organic movement
+        // =================================================================
+        let wave_freq = 1.8; // Slightly lower for smoother motion
+        let wave_speed = 0.35;
+        let base_wave_amp = max_r * 0.02;
+        
+        // Primary wave
         let x_norm = x / max_r;
-        let y_wave = (x_norm * wave_freq + self.time * freq * TAU * wave_speed).sin() * wave_amp;
-        let y_displaced = y + y_wave;
+        let primary_wave = (x_norm * wave_freq + self.time * freq * TAU * wave_speed).sin();
+        
+        // Secondary harmonic for complexity
+        let secondary_wave = (x_norm * wave_freq * 2.3 + self.time * freq * TAU * wave_speed * 1.7).sin() * 0.4;
+        
+        // Audio-reactive wave amplitude
+        let audio_wave_boost = 1.0 + self.smooth_audio * 0.5;
+        let combined_wave = (primary_wave + secondary_wave) * base_wave_amp * audio_wave_boost;
+        
+        let y_displaced = y_scaled + combined_wave;
 
+        // =================================================================
+        // COORDINATE SYSTEM - Improved distance calculation
+        // =================================================================
         let dist = (x_scaled * x_scaled + y_displaced * y_displaced).sqrt();
         let angle = y_displaced.atan2(x_scaled);
         let r = dist / max_r;
 
-        if r > 0.7 {
-            return (0.0, 0.0);
+        // Optimized early exit with smoother falloff
+        if r > 0.8 {
+            return (0.0, 0.0, 0.0);
         }
 
         let mut intensity = 0.0;
         let mut glow = 0.0;
+        let mut secondary_intensity = 0.0;
 
-        // Central core - size affected by smooth_secondary when Speaking
-        let core_dist = ((x * x_squash).powi(2) + (y * 0.8).powi(2)).sqrt() / max_r;
-        let core_pulse = 1.0 + 0.15 * (self.time * freq * TAU).sin();
-        let speaking_boost = if self.target_state == OrbState::Speaking {
-            self.smooth_secondary * 0.03
-        } else {
-            0.0
+        // =================================================================
+        // ENHANCED CENTRAL CORE
+        // Improved core with better falloff and audio reactivity
+        // =================================================================
+        let core_dist = ((x * x_squash).powi(2) + (y * y_squash * 0.9).powi(2)).sqrt() / max_r;
+        
+        // Multi-frequency breathing with harmonics
+        let core_pulse = 1.0 + 0.12 * (self.time * freq * TAU).sin() 
+                            + 0.06 * (self.time * freq * TAU * 2.1).sin();
+        
+        // Dynamic core size based on state and audio
+        let base_core_size = match self.target_state {
+            OrbState::Idle => 0.035,
+            OrbState::Listening => 0.045,
+            OrbState::Thinking => 0.055,
+            OrbState::Speaking => 0.050,
+            OrbState::Error => 0.040,
         };
-        let core_size = (0.04 + self.smooth_audio * 0.02 + speaking_boost) * core_pulse;
-        let core = (-(core_dist * core_dist) / (2.0 * core_size * core_size)).exp();
-        intensity += core * 0.9;
-        glow += core * 1.2;
+        
+        let core_size = (base_core_size + self.smooth_audio * 0.025) * core_pulse;
+        
+        // Improved Gaussian with smoother falloff
+        let core_falloff = -(core_dist * core_dist) / (2.0 * core_size * core_size);
+        let core = core_falloff.exp();
+        
+        intensity += core * 0.95;
+        glow += core * 1.3;
 
-        // Concentric rings
+        // Enhanced secondary core for dual-color mode
+        if self.composite.secondary.is_some() {
+            let sec_pulse = 1.0 + 0.10 * (self.time * freq * TAU + 2.1).sin();
+            let sec_size = (base_core_size * 0.8 + self.smooth_secondary * 0.02) * sec_pulse;
+            let sec_falloff = -(core_dist * core_dist) / (2.0 * sec_size * sec_size);
+            let sec_core = sec_falloff.exp();
+            secondary_intensity += sec_core * self.composite.blend * 0.85;
+        }
+
+        // =================================================================
+        // IMPROVED CONCENTRIC RINGS
+        // Better ring distribution and audio reactivity
+        // =================================================================
         let ring_count = match self.target_state {
             OrbState::Idle => 3,
             OrbState::Listening => 4,
-            OrbState::Thinking => 5,
-            OrbState::Speaking => 4,
-            OrbState::Error => 3,
+            OrbState::Thinking => 6, // More rings for complexity
+            OrbState::Speaking => 5,
+            OrbState::Error => 4,
         };
 
-        // Ring radius range - affected by smooth_secondary when Speaking
-        let speaking_expansion = if self.target_state == OrbState::Speaking {
-            self.smooth_secondary * 0.05
-        } else {
-            0.0
-        };
-        let inner_r = 0.20 + speaking_expansion * 0.3;
-        let outer_r = 0.38 + speaking_expansion;
+        // Improved ring spacing with non-linear distribution
+        let inner_r = 0.18;
+        let outer_r = 0.42;
 
         for i in 0..ring_count {
             let ring_phase = i as f64 / (ring_count - 1).max(1) as f64;
-            let base_r = inner_r + ring_phase * (outer_r - inner_r);
+            
+            // Non-linear ring distribution for better visual balance
+            let ring_curve = ring_phase.powf(1.2);
+            let base_r = inner_r + ring_curve * (outer_r - inner_r);
 
-            let breath_phase = self.time * freq * TAU + ring_phase * TAU * 1.5;
-            let breath = breath_phase.sin() * 0.012;
+            // Enhanced breathing with per-ring phase offset
+            let breath_phase = self.time * freq * TAU + ring_phase * TAU * 1.8 + i as f64 * 0.5;
+            let breath = breath_phase.sin() * (0.008 + ring_phase * 0.006);
 
-            let band = (i * 8 / ring_count).min(7);
-            let audio_r = self.smooth_freqs[band] * 0.025;
+            // Improved audio reactivity with frequency separation
+            let band = (i * 6 / ring_count).min(5); // Use fewer bands for smoother response
+            let audio_r = self.smooth_freqs[band] * (0.02 + ring_phase * 0.01);
 
-            let wobble = self.ring_wobble(angle, i, self.time * freq);
+            // Enhanced organic wobble
+            let wobble = self.ring_wobble(angle, i, self.time * freq) * (1.0 + self.smooth_audio * 0.3);
+
             let ring_r = base_r + breath + audio_r + wobble;
 
-            let width = 0.010 + self.smooth_audio * 0.003;
+            // =================================================================
+            // ENHANCED RING INTENSITY
+            // Improved falloff and visual quality
+            // =================================================================
+            let adaptive_width = 0.008 + self.smooth_audio * 0.004 + ring_phase * 0.002;
             let d = (r - ring_r).abs();
-            let ring_intensity = (-d * d / (2.0 * width * width)).exp();
+            let ring_falloff = -(d * d) / (2.0 * adaptive_width * adaptive_width);
+            let ring_intensity = ring_falloff.exp();
 
-            let fade = 1.0 - ring_phase * 0.25;
+            // Improved fade with smoother transition
+            let fade = (1.0 - ring_phase * 0.3).max(0.4);
+
+            // Enhanced edge brightness with better curve
             let edge_y = (y / max_r).abs();
-            let edge_bright = 0.8 + edge_y.powf(0.5) * 0.2;
+            let edge_bright = 0.75 + edge_y.powf(0.7) * 0.35;
 
-            intensity += ring_intensity * fade * edge_bright * 0.55;
-            glow += ring_intensity * fade * 0.2;
+            // State-dependent intensity scaling
+            let state_intensity = match self.target_state {
+                OrbState::Thinking => 0.65,
+                OrbState::Speaking => 0.60,
+                OrbState::Listening => 0.70,
+                _ => 0.55,
+            };
+
+            intensity += ring_intensity * fade * edge_bright * state_intensity;
+            glow += ring_intensity * fade * 0.25;
+
+            // Enhanced secondary color system
+            if self.composite.secondary.is_some() && i % 2 == 1 {
+                let sec_audio = self.smooth_secondary * 0.025;
+                let sec_wobble = self.ring_wobble(angle, i + 13, self.time * freq * 1.15);
+                let sec_r = ring_r * 0.96 + sec_audio + sec_wobble;
+                let sec_d = (r - sec_r).abs();
+                let sec_falloff = -(sec_d * sec_d) / (2.0 * adaptive_width * adaptive_width);
+                let sec_ring = sec_falloff.exp();
+                secondary_intensity += sec_ring * fade * 0.5 * self.composite.blend;
+            }
         }
 
-        let ambient = (-(r - outer_r).max(0.0).powi(2) * 25.0).exp() * 0.05;
+        // =================================================================
+        // ENHANCED AMBIENT GLOW
+        // Improved atmospheric effect with distance-based falloff
+        // =================================================================
+        let glow_distance = (r - outer_r * 0.9).max(0.0);
+        let ambient_falloff = -(glow_distance * glow_distance * 20.0);
+        let ambient = ambient_falloff.exp() * 0.08;
         glow += ambient;
 
-        (intensity.min(1.0), glow.min(1.0))
+        // Add subtle noise-based atmospheric scattering
+        let noise_x = x / max_r * 3.0;
+        let noise_y = y / max_r * 3.0;
+        let noise_t = self.time * 0.2;
+        let atmospheric_noise = smooth_noise(noise_x, noise_y, noise_t) * 0.02;
+        glow += atmospheric_noise * (1.0 - r).max(0.0);
+
+        (
+            intensity.min(1.0),
+            glow.min(1.0),
+            secondary_intensity.min(1.0),
+        )
     }
 
     fn ring_wobble(&self, angle: f64, ring_idx: usize, t: f64) -> f64 {
         let mut w = 0.0;
-        for h in 1..=4 {
+        
+        // Multi-harmonic wobble for more organic movement
+        for h in 1..=5 {
             let hf = h as f64;
-            let speed = 0.3 + (ring_idx as f64 * 0.07);
-            let phase = t * hf * speed + ring_idx as f64 * 0.6;
-            w += (angle * hf * 2.0 + phase * TAU).sin() * 0.008 / hf;
+            let speed = 0.25 + (ring_idx as f64 * 0.05);
+            let phase = t * hf * speed + ring_idx as f64 * 0.8;
+            
+            // Different harmonics have different amplitudes for natural variation
+            let amplitude = match h {
+                1 => 0.012, // Fundamental
+                2 => 0.008, // Second harmonic
+                3 => 0.005, // Third harmonic
+                4 => 0.003, // Fourth harmonic
+                _ => 0.002, // Higher harmonics
+            };
+            
+            w += (angle * hf * 1.8 + phase * TAU).sin() * amplitude / hf.sqrt();
         }
-        let band = ((angle / TAU + 0.5).fract() * 8.0) as usize;
-        w += self.smooth_freqs[band] * 0.015;
-        w
+        
+        // Enhanced audio reactivity with smoother frequency mapping
+        let angle_norm = (angle / TAU + 0.5).fract();
+        let band = (angle_norm * 6.0) as usize; // Use 6 bands for smoother distribution
+        let audio_wobble = self.smooth_freqs[band] * (0.018 + ring_idx as f64 * 0.002);
+        
+        // Add subtle noise for organic variation
+        let noise_factor = smooth_noise(
+            angle * 2.0, 
+            ring_idx as f64 * 0.5, 
+            t * 0.3
+        ) * 0.004;
+        
+        w + audio_wobble + noise_factor
     }
 
     // Blob style renderer - volumetric noise blob
@@ -447,6 +594,7 @@ impl Orb {
 
         let freq = self.current_frequency();
         let t = self.time * freq;
+        let angle = angle + (t * 0.1).sin() * 2.;
 
         let noise_scale = match self.target_state {
             OrbState::Idle => 1.5,
@@ -471,11 +619,11 @@ impl Orb {
 
         // Base radius - affected by smooth_secondary when Speaking
         let speaking_expansion = if self.target_state == OrbState::Speaking {
-            self.smooth_secondary * 0.15
+            self.smooth_secondary
         } else {
             0.0
         };
-        let base_radius = 0.55 + self.smooth_audio * 0.15 + speaking_expansion;
+        let base_radius = 0.55 + self.smooth_audio + speaking_expansion;
         let deform = (noise - 0.5) * 0.35;
         let mut blob_radius = base_radius + deform;
 
@@ -506,40 +654,12 @@ impl Orb {
         (interior.min(1.0), (surface_glow + atmo).min(1.0))
     }
 
-    // Classic style renderer - simple circular orb with basic colors
-    // Uses simpler, more saturated colors and block characters
-    fn sample_classic(&self, x: f64, y: f64, max_r: f64) -> (f64, Color) {
+    // Ring style renderer - rotating ring with subtle wobble
+    // Single glowing ring that rotates and has very subtle organic wobble
+    fn sample_rings1(&self, x: f64, y: f64, max_r: f64) -> (f64, f64) {
+        let y = y * 1.3;
         let dist = (x * x + y * y).sqrt();
-        let r = dist / max_r;
-
-        if r > 1.0 {
-            return (0.0, Color::Reset);
-        }
-
-        let freq = self.current_frequency();
-
-        // Noise for organic movement
-        let noise = (self.time * freq + dist * 1.5 + (x * y) * 0.2).sin() * 0.05;
-        let value = (r + noise).clamp(0.0, 1.0);
-
-        // Intensity falls off from center
-        let mut intensity = (1.0 - value) * (self.smooth_audio * 0.5 + 0.5);
-
-        // Speaking expansion based on smooth_secondary
-        if self.target_state == OrbState::Speaking {
-            let expansion = self.smooth_secondary * 0.3;
-            intensity *= 1.0 + expansion;
-        }
-
-        let color = self.target_state.classic_color(intensity as f32);
-
-        (intensity, color)
-    }
-
-    // Ring style renderer - simple circular ring from main-ring.rs
-    // Single glowing ring that pulses with audio
-    fn sample_ring(&self, x: f64, y: f64, max_r: f64) -> (f64, f64) {
-        let dist = (x * x + y * y).sqrt();
+        let angle = y.atan2(x);
         let r = dist / max_r;
 
         if r > 1.2 {
@@ -548,39 +668,72 @@ impl Orb {
 
         let freq = self.current_frequency();
         let t = self.time * freq;
+        let vol = self.smooth_secondary + self.smooth_audio ;
+        let angle = (vol * (1. * t + vol * 5.).cos()).sin() * 7. + angle;
 
-        // Ring radius - affected by audio and smooth_secondary when Speaking
+        // Base ring radius - stable with slight audio reactivity
         let speaking_expansion = if self.target_state == OrbState::Speaking {
-            self.smooth_secondary * 0.15
+            self.smooth_secondary * 0.3
         } else {
             0.0
         };
-        let base_ring_r = 0.5 + self.smooth_audio * 0.1 + speaking_expansion;
+        let base_ring_r = 0.5 + self.smooth_audio * 0.2 + speaking_expansion;
 
-        // Pulsing ring
-        let pulse = (t * TAU).sin() * 0.05;
-        let ring_r = base_ring_r + pulse;
+        // Rotation-based animation instead of pulsing
+        // Create rotating pattern by modulating ring radius based on angle and time
+        let rotation_speed = match self.target_state {
+            OrbState::Idle => 0.3,
+            OrbState::Listening => 0.5,
+            OrbState::Thinking => 0.8,
+            OrbState::Speaking => 0.6,
+            OrbState::Error => 1.2,
+        } * 0.1;
 
-        // Ring width varies with audio
-        let ring_width = 0.08 + self.smooth_audio * 0.04;
+        // Multi-harmonic rotation for more interesting patterns
+        let rotation_phase = t * rotation_speed * 0.5;
+        let rotation_modulation = 
+            (angle * 3.0 + rotation_phase * TAU).sin() * 0.04 +
+            (angle * 5.0 - rotation_phase * TAU * 0.7).sin() * 0.025 +
+            (angle * 7.0 + rotation_phase * TAU * 1.3).sin() * 0.015;
 
-        // Distance from ring
+        // Very subtle wobble - reduced to maintain ring shape
+        let subtle_wobble = self.ring_wobble(angle, 0, t * 100.);
+
+        // Final ring radius with rotation and very subtle wobble
+        let ring_r = base_ring_r + rotation_modulation * 0.15 + subtle_wobble * 0.1;
+
+        // Ring width varies with audio and state
+        let base_width = match self.target_state {
+            OrbState::Idle => 0.06,
+            OrbState::Listening => 0.08,
+            OrbState::Thinking => 0.05,
+            OrbState::Speaking => 0.07,
+            OrbState::Error => 0.04,
+        } * 0.04;
+        let ring_width = base_width + self.smooth_audio * 0.3 + self.smooth_secondary * 0.3;
+
+        // Distance from ring with Gaussian falloff
         let ring_dist = (r - ring_r).abs();
         let ring_intensity = (-ring_dist * ring_dist / (2.0 * ring_width * ring_width)).exp();
 
-        // Core glow
-        let core_size = 0.15 + self.smooth_audio * 0.1;
-        let core = (-(r * r) / (2.0 * core_size * core_size)).exp() * 0.6;
+        // Enhanced core with rotation-based brightness variation
+        let core_size = 0.12 + self.smooth_audio * 0.08;
+        let core_brightness_mod = 1.0 + (rotation_phase * 2.0).sin() * 0.15;
+        let core = (-(r * r) / (2.0 * core_size * core_size)).exp() * 0.7 * core_brightness_mod;
 
-        // Outer glow
+        // Outer glow with rotation-based variation
         let outer_glow = if r > ring_r {
-            (-(r - ring_r) * 3.0).exp() * 0.3
+            let glow_strength = 1.0 + (angle * 2.0 + rotation_phase).sin() * 0.2 * 0.;
+            (-(r - ring_r) * 2.5).exp() * 0.35 * glow_strength
         } else {
             0.0
         };
 
-        let intensity = (ring_intensity * 0.8 + core).min(1.0);
-        let glow = (ring_intensity * 0.3 + outer_glow).min(1.0);
+        // Brightness varies around the ring based on rotation
+        let angular_brightness = 1.0 + (angle * 4.0 + rotation_phase * 1.5).sin() * 0.2;
+
+        let intensity = (ring_intensity * 0.85 * angular_brightness + core).min(1.0);
+        let glow = (ring_intensity * 0.25 + outer_glow).min(1.0);
 
         (intensity, glow)
     }
@@ -589,81 +742,75 @@ impl Orb {
         let mut buffer = vec![vec![(' ', Color::Reset); width]; height];
         let palette = self.current_palette();
 
-        let aspect = 2.1;
+        let aspect = 2.0; // Slightly adjusted for better proportions
         let max_r = (height as f64).min(width as f64 / aspect) * 0.48;
         let cx = width as f64 / 2.0;
         let cy = height as f64 / 2.0;
 
         let shades: &[char] = &[' ', '.', ':', '-', '=', '+', '*', '#', '@'];
-        // Block shades for Classic style (from basic)
-        let block_shades: &[char] = &[' ', '░', '▒', '▓', '█', '●', '◉'];
+        // let shades: &[char] = &[' ', '·', ':', '∘', '○', '●', '◉', '█', '█'];
 
         for row in 0..height {
             for col in 0..width {
                 let x = (col as f64 - cx) / aspect;
                 let y = row as f64 - cy;
 
-                match self.style {
-                    OrbStyle::Rings | OrbStyle::Blob | OrbStyle::Ring => {
-                        let (intensity, glow) = match self.style {
-                            OrbStyle::Rings => self.sample_rings(x, y, max_r),
-                            OrbStyle::Blob => self.sample_blob(x, y, max_r),
-                            OrbStyle::Ring => self.sample_ring(x, y, max_r),
-                            _ => unreachable!(),
-                        };
+                let (intensity, glow, secondary) = match self.style {
+                    OrbStyle::Blob => {
+                        let (a, b) = self.sample_blob(x, y, max_r);
+                        (a, b, 0.0)
+                    },
+                    OrbStyle::Rings1 => {
+                        let (a, b) = self.sample_rings1(x, y, max_r);
+                        (a, b, 0.0)
+                    },
+                    OrbStyle::Rings2 => self.sample_rings2(x, y, max_r),
+                };
 
-                        if intensity < 0.01 && glow < 0.02 {
-                            continue;
-                        }
+                // Skip pixels with minimal contribution
+                if intensity < 0.008 && glow < 0.015 && secondary < 0.008 {
+                    continue;
+                }
 
-                        let dist = (x * x + y * y).sqrt() / max_r;
-                        let color_t = (dist * 1.1).min(1.0);
+                let dist = (x * x + y * y).sqrt() / max_r;
+                let color_t = (dist * 1.05).min(1.0); // Slightly adjusted for better color distribution
 
-                        let base_color = palette.sample(color_t);
-                        let brightness = intensity * 0.75 + glow * 0.35;
-                        let mut final_color = base_color.scale(0.25 + brightness * 0.75);
+                let base_color = palette.sample(color_t);
+                
+                // Enhanced color mixing for secondary colors
+                let mut final_color = if secondary > 0.01 && self.composite.secondary.is_some() {
+                    let secondary_palette = self.composite.secondary.unwrap().palette();
+                    let sec_color = secondary_palette.sample(color_t);
+                    base_color.lerp(sec_color, secondary * 0.7)
+                } else {
+                    base_color
+                };
 
-                        let combined = intensity;
-                        if combined > 0.75 {
-                            let highlight = (combined - 0.75) * 2.0;
-                            final_color =
-                                final_color.add(Rgb(highlight, highlight, highlight).scale(0.25));
-                        }
+                // Improved brightness calculation with better dynamic range
+                let brightness = intensity * 0.8 + glow * 0.4 + secondary * 0.6;
+                final_color = final_color.scale(0.2 + brightness * 0.8);
 
-                        let char_intensity = (intensity + glow * 0.25).min(1.0);
-                        let idx = ((char_intensity * (shades.len() - 1) as f64).round() as usize)
-                            .min(shades.len() - 1);
+                // Enhanced highlight system with smoother transitions
+                let combined = intensity + secondary * 0.8;
+                if combined > 0.6 {
+                    let highlight_strength = ((combined - 0.6) / 0.4).min(1.0);
+                    let highlight = Rgb(
+                        highlight_strength * 0.3,
+                        highlight_strength * 0.3,
+                        highlight_strength * 0.3
+                    );
+                    final_color = final_color.add(highlight);
+                }
 
-                        let ch = shades[idx];
-                        if ch != ' ' {
-                            buffer[row][col] = (ch, final_color.to_terminal());
-                        }
-                    }
-                    OrbStyle::Classic => {
-                        let (intensity, color) = self.sample_classic(x, y, max_r);
+                // Improved character selection with better intensity mapping
+                let char_intensity = (intensity + glow * 0.3 + secondary * 0.5).min(1.0);
+                let char_curve = char_intensity.powf(0.7); // Gamma correction for better visual distribution
+                let idx = ((char_curve * (shades.len() - 1) as f64).round() as usize)
+                    .min(shades.len() - 1);
 
-                        if intensity < 0.1 {
-                            continue;
-                        }
-
-                        // Use block characters for classic style
-                        let idx = if intensity < 0.25 {
-                            1
-                        } else if intensity < 0.4 {
-                            2
-                        } else if intensity < 0.55 {
-                            3
-                        } else if intensity < 0.7 {
-                            4
-                        } else if intensity < 0.85 {
-                            5
-                        } else {
-                            6
-                        };
-
-                        let ch = block_shades[idx];
-                        buffer[row][col] = (ch, color);
-                    }
+                let ch = shades[idx];
+                if ch != ' ' {
+                    buffer[row][col] = (ch, final_color.to_terminal());
                 }
             }
         }
@@ -710,7 +857,7 @@ impl GraphicalUi {
         )?;
 
         Ok(Self {
-            orb: Orb::new(OrbStyle::Rings),
+            orb: Orb::new(OrbStyle::Rings2),
             last_frame: Instant::now(),
             status: "Loading...".to_string(),
             preview: String::new(),
@@ -879,10 +1026,9 @@ impl UiRenderer for GraphicalUi {
         );
 
         let style_name = match self.orb.style {
-            OrbStyle::Rings => "Rings",
+            OrbStyle::Rings2 => "Rings",
             OrbStyle::Blob => "Blob",
-            OrbStyle::Classic => "Classic",
-            OrbStyle::Ring => "Ring",
+            OrbStyle::Rings1 => "Ring",
         };
 
         out.push_str(&format!(
@@ -940,10 +1086,9 @@ impl UiRenderer for GraphicalUi {
                 // Tab to cycle through visual styles
                 if key.code == KeyCode::Tab {
                     let new_style = match self.orb.style {
-                        OrbStyle::Rings => OrbStyle::Blob,
-                        OrbStyle::Blob => OrbStyle::Classic,
-                        OrbStyle::Classic => OrbStyle::Ring,
-                        OrbStyle::Ring => OrbStyle::Rings,
+                        OrbStyle::Rings2 => OrbStyle::Blob,
+                        OrbStyle::Blob => OrbStyle::Rings1,
+                        OrbStyle::Rings1 => OrbStyle::Rings2,
                     };
                     self.orb.set_style(new_style);
                     continue;
@@ -1129,4 +1274,238 @@ impl Drop for GraphicalUi {
     fn drop(&mut self) {
         let _ = self.restore();
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    use std::time::Duration;
+
+    /// Interactive test to showcase all orb states and styles
+    /// Run with: cargo test --bin silly-cli graphical_ui_demo -- --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn graphical_ui_demo() {
+        println!("Starting Graphical UI Demo...");
+        println!("This will cycle through all orb states and styles.");
+        println!("Press Ctrl+C to exit at any time.");
+
+        let mut ui = GraphicalUi::new().expect("Failed to initialize UI");
+        
+        let states = [
+            (OrbState::Idle, "Idle - Calm breathing"),
+            (OrbState::Listening, "Listening - Attentive"),
+            (OrbState::Thinking, "Thinking - Processing"),
+            (OrbState::Speaking, "Speaking - Responding"),
+            (OrbState::Error, "Error - Alert"),
+        ];
+
+        let styles = [
+            (OrbStyle::Rings2, "Rings2 - Horizontal elliptical rings"),
+            (OrbStyle::Blob, "Blob - Organic noise blob"),
+            (OrbStyle::Rings1, "Rings1 - Single rotating ring"),
+        ];
+
+        let mut frame_count = 0;
+        let mut state_index = 0;
+        let mut style_index = 0;
+        let frames_per_state = 180; // 3 seconds at 60fps
+        let frames_per_style = frames_per_state * states.len();
+
+        loop {
+            let now = std::time::Instant::now();
+
+            // Check for Ctrl+C
+            if let Ok(Some(input)) = ui.poll_input() {
+                if input == "\x03" {
+                    break;
+                }
+            }
+
+            // Cycle through styles every few seconds
+            if frame_count % frames_per_style == 0 {
+                let (style, style_name) = styles[style_index];
+                ui.orb.set_style(style);
+                println!("\n=== Style: {} ===", style_name);
+                style_index = (style_index + 1) % styles.len();
+            }
+
+            // Cycle through states within each style
+            if frame_count % frames_per_state == 0 {
+                let (state, state_name) = states[state_index];
+                ui.orb.set_state(state);
+                ui.status = format!("{} (Frame: {})", state_name, frame_count);
+                state_index = (state_index + 1) % states.len();
+            }
+
+            // Simulate audio levels for more interesting visuals
+            let audio_phase = frame_count as f64 * 0.1;
+            let audio_level = (0.3 + 0.4 * (audio_phase * 0.5).sin()).max(0.0) as f32;
+            let tts_level = (0.2 + 0.3 * (audio_phase * 0.7 + 1.0).sin()).max(0.0) as f32;
+            
+            ui.set_audio_level(audio_level);
+            ui.set_tts_level(tts_level);
+
+            // Update orb animation
+            let dt = 1.0 / 60.0; // 60 FPS
+            ui.orb.set_audio(audio_level as f64);
+            ui.orb.set_secondary_audio(tts_level as f64);
+            ui.orb.update(dt);
+
+            // Draw frame
+            if let Err(e) = ui.draw() {
+                eprintln!("Draw error: {}", e);
+                break;
+            }
+
+            frame_count += 1;
+
+            // Maintain 60 FPS
+            let elapsed = now.elapsed();
+            let target_frame_time = Duration::from_millis(16); // ~60 FPS
+            if elapsed < target_frame_time {
+                thread::sleep(target_frame_time - elapsed);
+            }
+        }
+
+        println!("\nDemo finished!");
+    }
+
+    /// Test individual orb rendering without UI setup
+    #[test]
+    fn test_orb_rendering() {
+        let mut orb = Orb::new(OrbStyle::Rings2);
+        
+        // Test all states
+        for state in [OrbState::Idle, OrbState::Listening, OrbState::Thinking, OrbState::Speaking, OrbState::Error] {
+            orb.set_state(state);
+            orb.set_audio(0.5);
+            orb.update(0.016); // One frame
+            
+            let buffer = orb.render(80, 24);
+            
+            // Verify buffer dimensions
+            assert_eq!(buffer.len(), 24);
+            assert_eq!(buffer[0].len(), 80);
+            
+            // Check that some pixels are rendered (not all spaces)
+            let has_content = buffer.iter().any(|row| {
+                row.iter().any(|(ch, _)| *ch != ' ')
+            });
+            assert!(has_content, "State {:?} should render some content", state);
+        }
+    }
+
+    /// Test all orb styles
+    #[test]
+    fn test_orb_styles() {
+        for style in [OrbStyle::Rings1, OrbStyle::Rings2, OrbStyle::Blob] {
+            let mut orb = Orb::new(style);
+            orb.set_state(OrbState::Thinking);
+            orb.set_audio(0.7);
+            orb.update(0.016);
+            
+            let buffer = orb.render(60, 20);
+            
+            // Verify rendering works for each style
+            let has_content = buffer.iter().any(|row| {
+                row.iter().any(|(ch, _)| *ch != ' ')
+            });
+            assert!(has_content, "Style {:?} should render content", style);
+        }
+    }
+
+    /// Benchmark rendering performance
+    #[test]
+    #[ignore]
+    fn benchmark_rendering() {
+        let mut orb = Orb::new(OrbStyle::Rings2);
+        orb.set_state(OrbState::Thinking);
+        orb.set_audio(0.5);
+        
+        let start = std::time::Instant::now();
+        let iterations = 1000;
+        
+        for _ in 0..iterations {
+            orb.update(0.016);
+            let _buffer = orb.render(80, 24);
+        }
+        
+        let elapsed = start.elapsed();
+        let fps = iterations as f64 / elapsed.as_secs_f64();
+        
+        println!("Rendered {} frames in {:?}", iterations, elapsed);
+        println!("Average FPS: {:.2}", fps);
+        
+        // Should be able to render at least 60 FPS
+        assert!(fps > 60.0, "Rendering too slow: {:.2} FPS", fps);
+    }
+}
+
+/// Standalone demo function that can be called from main
+pub fn run_orb_demo() -> io::Result<()> {
+    println!("=== Orb Visual Demo ===");
+    println!("Cycling through all states and styles...");
+    println!("Press Tab to cycle styles manually, Ctrl+C to exit");
+    
+    let mut ui = GraphicalUi::new()?;
+    
+    let states = [
+        (OrbState::Idle, "Idle"),
+        (OrbState::Listening, "Listening"), 
+        (OrbState::Thinking, "Thinking"),
+        (OrbState::Speaking, "Speaking"),
+        (OrbState::Error, "Error"),
+    ];
+    
+    let mut frame_count = 0;
+    let mut state_index = 0;
+    let auto_cycle = true;
+    
+    loop {
+        let now = std::time::Instant::now();
+        
+        // Handle input
+        if let Ok(Some(input)) = ui.poll_input() {
+            if input == "\x03" {
+                break;
+            }
+            // Tab key cycles styles (handled in poll_input)
+        }
+        
+        // Auto-cycle states every 3 seconds
+        if auto_cycle && frame_count % 180 == 0 {
+            let (state, state_name) = states[state_index];
+            ui.orb.set_state(state);
+            ui.status = format!("{} - Auto Demo", state_name);
+            state_index = (state_index + 1) % states.len();
+        }
+        
+        // Simulate varying audio levels
+        let t = frame_count as f64 * 0.05;
+        let audio = (0.2 + 0.5 * (t * 0.8).sin() + 0.2 * (t * 1.3).sin()).max(0.0).min(1.0);
+        let tts = (0.1 + 0.4 * (t * 0.6 + 2.0).sin()).max(0.0).min(1.0);
+        
+        ui.set_audio_level(audio as f32);
+        ui.set_tts_level(tts as f32);
+        
+        // Update and draw
+        ui.orb.set_audio(audio);
+        ui.orb.set_secondary_audio(tts);
+        ui.orb.update(1.0 / 60.0);
+        
+        ui.draw()?;
+        
+        frame_count += 1;
+        
+        // 60 FPS timing
+        let elapsed = now.elapsed();
+        let target = Duration::from_millis(16);
+        if elapsed < target {
+            thread::sleep(target - elapsed);
+        }
+    }
+    
+    Ok(())
 }

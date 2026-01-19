@@ -161,7 +161,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         Some(Command::OrbDemo) => {
             return graphical_ui::run_orb_demo()
                 .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>);
-        },
+        }
         #[cfg(feature = "listen")]
         Some(Command::Listen {
             source,

@@ -1,6 +1,7 @@
 //! Terminal UI with proper cursor management and synchronized updates
 
 use crate::render::UiEvent;
+use crate::state::AppMode;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{self, ClearType};
 use crossterm::{cursor, execute, queue};
@@ -39,6 +40,7 @@ pub struct Tui {
     tts_enabled: bool,
     wake_enabled: bool,
     auto_submit_progress: Option<f32>, // 1.0 = full, 0.0 = about to submit
+    mode: AppMode,
 }
 
 impl Tui {
@@ -65,6 +67,7 @@ impl Tui {
             tts_enabled: true,
             wake_enabled: true,
             auto_submit_progress: None,
+            mode: AppMode::Idle,
         })
     }
 
@@ -82,6 +85,10 @@ impl Tui {
 
     pub fn set_wake_enabled(&mut self, enabled: bool) {
         self.wake_enabled = enabled;
+    }
+
+    pub fn set_mode(&mut self, mode: AppMode) {
+        self.mode = mode;
     }
 
     pub fn restore(&self) -> io::Result<()> {
@@ -241,9 +248,16 @@ impl Tui {
             if self.tts_enabled { "🔊" } else { "🔈" },
             if self.wake_enabled { "👂" } else { "💤" },
         );
+        // Mode indicator with color coding
+        let mode_str = match self.mode {
+            AppMode::Idle => "⏸ Idle",
+            AppMode::Chat => "\x1b[92m💬 Chat\x1b[90m",
+            AppMode::Transcribe => "\x1b[93m📝 Transcribe\x1b[90m",
+            AppMode::NoteTaking => "\x1b[95m📓 Note\x1b[90m",
+        };
         let status_content = format!(
-            "{}{} │ {} │ 📝 {} │ 💬 {}",
-            spinner_str, self.status, toggles, self.context_words, self.last_response_words
+            "{}{} │ {} │ {} │ 📝 {} │ 💬 {}",
+            spinner_str, self.status, mode_str, toggles, self.context_words, self.last_response_words
         );
         let status_width = status_content.width();
         let padding = if term_width > status_width {

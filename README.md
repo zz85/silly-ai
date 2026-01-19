@@ -1,6 +1,11 @@
-# silly-ai
+# Silly AI
 
-"Hey Silly" is a CLI based AI voice chat assistant using real-time speech transcription, local LLMs, and TTS. It allows answering questions from LLM while completely offline, making this a good replacement for cloud based personal assistants like Siri, Alexa, Google, ChatGPT if you are ever concerned about sending anything over the internet.
+This is my playground of local AI LLM experiments. It's super useful when you want AI capabilities while offline. Even if you have internet, local LLMs avoids transmitting data to a 3rd-party.
+
+- `silly` - "Hey Silly" is a CLI based AI voice chat assistant using real-time speech transcription, local LLMs, and TTS. It allows answering questions from LLM while completely offline, making this a good replacement for cloud based personal assistants like Siri, Alexa, Google, ChatGPT if you are ever concerned about sending anything over the internet
+- `silly transcribe` - Converts ogg/wav files into text
+- `silly summarize` - Summarizes transcripts
+- `ai department` - A department/roundtable of "experts"
 
 ## Features
 
@@ -13,6 +18,8 @@
 - Streaming TTS: speech starts as soon as the first sentence is generated
 - Multi-threaded architecture: separate threads for audio capture, VAD, preview transcription, and final transcription
 - **Hardware acceleration**: Metal on Apple Silicon for LLM, CoreML for VAD, transcription, and TTS
+- **Crosstalk mode**: Continue listening while TTS plays, with barge-in support
+- **Multiple modes**: Chat, Transcribe, and Note-taking modes
 
 ## Demo
 [demo](https://x.com/BlurSpline/status/2004470406435295742?s=20)
@@ -28,6 +35,53 @@
                └─────┘    └─────────────────┘    └─────────┘
                           (lossy channel)
 ```
+
+### Crosstalk Flow
+
+When crosstalk is enabled, the system continues processing audio while TTS is playing:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           Crosstalk System                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   ┌─────────┐    ┌─────┐    ┌──────────────────────┐                        │
+│   │  Mic    │───▶│ VAD │───▶│ Crosstalk Enabled?   │                        │
+│   │ Input   │    │     │    └──────────┬───────────┘                        │
+│   └─────────┘    └─────┘               │                                    │
+│                                        │                                    │
+│                    ┌───────────────────┴───────────────────┐                │
+│                    │                                       │                │
+│                    ▼                                       ▼                │
+│            ┌──────────────┐                       ┌──────────────┐          │
+│            │     Yes      │                       │      No      │          │
+│            │ Continue     │                       │ Mute during  │          │
+│            │ Processing   │                       │    TTS       │          │
+│            └──────┬───────┘                       └──────────────┘          │
+│                   │                                                         │
+│                   ▼                                                         │
+│         ┌─────────────────┐                                                 │
+│         │ Speech Detected │                                                 │
+│         │  during TTS?    │                                                 │
+│         └────────┬────────┘                                                 │
+│                  │                                                          │
+│         ┌────────┴────────┐                                                 │
+│         │                 │                                                 │
+│         ▼                 ▼                                                 │
+│   ┌───────────┐    ┌───────────┐                                           │
+│   │ Duck TTS  │    │ Barge-in: │                                           │
+│   │ to 20%    │    │ Stop TTS  │                                           │
+│   │ volume    │    │ + Process │                                           │
+│   └───────────┘    │ new input │                                           │
+│                    └───────────┘                                           │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Crosstalk behaviors:**
+- **Volume ducking**: When you speak while TTS is playing, volume reduces to 20%
+- **Barge-in**: Your speech stops TTS and processes your new input
+- **Stop command**: Say "stop" to halt TTS without triggering a new response
 
 ## Setup
 
@@ -161,15 +215,46 @@ Say the wake word ("Hey Silly" by default) to activate, then speak your question
 3. Send to LLM and stream the response in cyan
 4. Speak the response using TTS (streaming sentence-by-sentence)
 
-After responding, the assistant listens for follow-up questions for 30 seconds (configurable) before requiring the wake word again.
+After responding, the assistant listens for follow-up questions for 30 seconds (configurable via `wake_timeout_secs`) before requiring the wake word again.
 
 ### Keyboard Commands
 
-- `/mute` or `/mic` - Toggle microphone mute
-- `/speak` or `/tts` - Toggle TTS output
-- `/wake` - Toggle wake word requirement
-- `/stats` - Show inference performance stats (transcription, TTS, LLM)
-- Type text and press Enter to submit directly (bypasses transcription)
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `/mute` | `/mic` | Toggle microphone mute |
+| `/speak` | `/tts` | Toggle TTS output |
+| `/wake` | | Toggle wake word requirement |
+| `/crosstalk` | | Toggle crosstalk mode (listen during TTS) |
+| `/mode <mode>` | | Switch mode: `chat`, `transcribe`, `note` |
+| `/stats` | | Show inference performance stats |
+| `/help` | `/h`, `/?` | Show available commands |
+
+Type text and press Enter to submit directly (bypasses transcription).
+
+### Voice Commands
+
+These commands are recognized from speech and processed before the LLM:
+
+| Command | Phrases | Action |
+|---------|---------|--------|
+| Stop | "stop", "quiet", "shut up", "enough" | Stop TTS playback |
+| Mute | "mute", "be quiet" | Disable TTS output |
+| Unmute | "unmute", "speak" | Enable TTS output |
+| Start Chat | "start chat", "let's chat" | Enter chat mode |
+| Start Transcription | "start transcription" | Enter transcribe mode |
+| Take Note | "take a note" | Enter note-taking mode |
+| Stand Down | "stand down" | Graceful shutdown |
+
+### Application Modes
+
+| Mode | Description |
+|------|-------------|
+| **Idle** | Default mode. Requires wake word to activate. |
+| **Chat** | Conversational mode. No wake word needed, continuous conversation. |
+| **Transcribe** | Speech-to-text only. No LLM processing, just transcription. |
+| **Note** | Note-taking mode. Transcriptions are appended to a notes file with timestamps. |
+
+The current mode is displayed in the status bar with color coding.
 
 ### Auto-Submit
 
@@ -186,7 +271,7 @@ Create `config.toml` to customize (see [`config.example.toml`](config.example.to
 ```toml
 name = "Silly"
 wake_word = "Hey Silly"
-wake_timeout_secs = 30
+wake_timeout_secs = 30  # Seconds to wait for follow-up before requiring wake word again
 
 [llm]
 backend = "llama-cpp"
@@ -208,7 +293,28 @@ engine = "supertonic"
 onnx_dir = "models/supertonic/onnx"
 voice_style = "models/supertonic/voice_styles/M1.json"
 speed = 1.1
+
+[interaction]
+# Enable processing input while TTS is playing
+crosstalk = false
+
+# Volume level when user speaks during TTS (0.0-1.0)
+duck_volume = 0.2
+
+# Phrases that stop TTS but don't go to LLM
+stop_phrases = ["stop", "quiet", "shut up", "enough"]
 ```
+
+### Configuration Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `name` | "Silly" | Assistant name |
+| `wake_word` | "Hey Silly" | Phrase to activate the assistant |
+| `wake_timeout_secs` | 30 | After responding, how long to wait for follow-up questions before requiring the wake word again |
+| `interaction.crosstalk` | false | When true, continue listening while TTS plays (enables barge-in) |
+| `interaction.duck_volume` | 0.2 | TTS volume (0.0-1.0) when user speaks during playback |
+| `interaction.stop_phrases` | ["stop", ...] | Phrases that stop TTS without triggering LLM |
 
 ### LLM Models
 
@@ -230,6 +336,24 @@ speed = 1.1
 Other settings:
 - **VAD thresholds**: Edit constants in `src/audio.rs` and `src/vad.rs`
 - **Preview interval**: `PREVIEW_INTERVAL` in `src/audio.rs` (default 500ms)
+
+## Runtime State
+
+The application maintains a centralized, thread-safe runtime state that can be queried and modified at runtime. Key state variables:
+
+| State | Description |
+|-------|-------------|
+| `mic_muted` | Whether microphone input is muted |
+| `mic_level` | Current microphone RMS level (0.0-1.0) |
+| `tts_enabled` | Whether TTS output is enabled |
+| `tts_playing` | Whether TTS is currently playing |
+| `tts_volume` | Current TTS volume (0.0-1.0) |
+| `crosstalk_enabled` | Whether to process audio during TTS |
+| `wake_enabled` | Whether wake word is required |
+| `in_conversation` | Whether within wake timeout window |
+| `mode` | Current application mode (Idle/Chat/Transcribe/Note) |
+
+All state can be toggled via keyboard commands (e.g., `/mute`, `/crosstalk`).
 
 ## Profiling with hotpath
 

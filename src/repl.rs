@@ -1,6 +1,7 @@
 //! REPL input handling - keyboard and voice input processing
 
 use crate::render::Ui;
+use crate::state::{AppMode, SharedState};
 use crate::wake::WakeWord;
 use std::time::{Duration, Instant};
 
@@ -10,7 +11,20 @@ pub enum TranscriptEvent {
     Final(String),
 }
 
+/// Result of transcript handling
+pub enum TranscriptResult {
+    /// Text should be sent to LLM
+    SendToLlm(String),
+    /// Text should be transcribed only (no LLM)
+    TranscribeOnly(String),
+    /// Text should be appended to notes
+    AppendNote(String),
+    /// No action needed
+    None,
+}
+
 /// Handle voice transcript event, returns text to add to input if any
+#[allow(dead_code)]
 pub fn handle_transcript(
     event: TranscriptEvent,
     wake_word: &WakeWord,
@@ -47,4 +61,91 @@ pub fn handle_transcript(
             Some(command)
         }
     }
+}
+
+/// Handle voice transcript event with mode awareness
+///
+/// This is the mode-aware version that handles different behaviors based on AppMode:
+/// - Idle: Requires wake word, sends to LLM
+/// - Chat: No wake word needed, sends to LLM
+/// - Transcribe: STT only, no LLM processing
+/// - NoteTaking: Append to notes file
+pub fn handle_transcript_with_mode(
+    event: TranscriptEvent,
+    wake_word: &WakeWord,
+    last_interaction: Option<Instant>,
+    wake_timeout: Duration,
+    state: &SharedState,
+    ui: &Ui,
+) -> TranscriptResult {
+    let mode = state.mode();
+    let wake_enabled = state.wake_enabled.load(std::sync::atomic::Ordering::SeqCst);
+    
+    match event {
+        TranscriptEvent::Preview(text) => {
+            ui.set_preview(text);
+            TranscriptResult::None
+        }
+        TranscriptEvent::Final(text) => {
+            ui.set_idle(); // Clear preview
+
+            if text.is_empty() {
+                return TranscriptResult::None;
+            }
+
+            match mode {
+                AppMode::Idle => {
+                    // Idle mode: requires wake word unless in conversation
+                    let in_conversation = last_interaction
+                        .map(|t| t.elapsed() < wake_timeout)
+                        .unwrap_or(false);
+
+                    let command = if !wake_enabled || in_conversation {
+                        text
+                    } else {
+                        match wake_word.detect(&text) {
+                            Some(cmd) => cmd,
+                            None => return TranscriptResult::None,
+                        }
+                    };
+
+                    if command.is_empty() {
+                        return TranscriptResult::None;
+                    }
+
+                    TranscriptResult::SendToLlm(command)
+                }
+                AppMode::Chat => {
+                    // Chat mode: no wake word needed, always send to LLM
+                    state.update_last_interaction();
+                    TranscriptResult::SendToLlm(text)
+                }
+                AppMode::Transcribe => {
+                    // Transcribe mode: STT only, no LLM
+                    TranscriptResult::TranscribeOnly(text)
+                }
+                AppMode::NoteTaking => {
+                    // Note-taking mode: append to notes
+                    TranscriptResult::AppendNote(text)
+                }
+            }
+        }
+    }
+}
+
+/// Append text to the notes file
+pub fn append_to_notes(text: &str) -> std::io::Result<()> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("notes.txt")?;
+    
+    // Add timestamp
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    writeln!(file, "[{}] {}", timestamp, text)?;
+    
+    Ok(())
 }

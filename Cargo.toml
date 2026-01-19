@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
+chrono = "0.4"
 cpal = "0.17.0"
 crossterm = "0.29"
 ctrlc = "3"

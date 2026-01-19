@@ -30,7 +30,7 @@ mod wake;
 use command::{CommandProcessor, CommandResult};
 use config::{Config, LlmConfig, TtsConfig};
 use render::Ui;
-use repl::TranscriptEvent;
+use repl::{TranscriptEvent, TranscriptResult};
 use state::RuntimeState;
 
 use clap::{Parser, Subcommand};
@@ -216,15 +216,15 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     let stats_tts = Arc::clone(&stats);
     let stats_session = Arc::clone(&stats);
 
-    // Legacy flags for backward compatibility with audio.rs
-    // TODO: Refactor audio.rs to use RuntimeState directly
+    // Legacy flags for backward compatibility (session manager still uses these)
     let tts_playing = Arc::new(AtomicBool::new(false));
-    let tts_playing_vad = Arc::clone(&tts_playing);
     let mic_muted = Arc::new(AtomicBool::new(cli.no_stt));
-    let mic_muted_vad = Arc::clone(&mic_muted);
     let tts_enabled = Arc::new(AtomicBool::new(!cli.no_tts));
     let tts_enabled_session = Arc::clone(&tts_enabled);
     let wake_enabled = Arc::new(AtomicBool::new(!cli.no_stt));
+    
+    // Clone runtime_state for VAD processor
+    let runtime_state_vad = Arc::clone(&runtime_state);
 
     // Channel: audio -> VAD processor
     let (audio_tx, audio_rx) = mpsc::channel::<Vec<f32>>();
@@ -254,7 +254,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     // Start audio capture thread
     let _stream = audio::start_capture(audio_tx)?;
 
-    // Start VAD processing thread
+    // Start VAD processing thread with crosstalk support
     let vad_handle = thread::spawn(move || {
         let use_gpu_vad = config.acceleration.vad_gpu;
 
@@ -266,12 +266,13 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE)
             };
 
-            #[cfg(not(feature = "supertonic"))]
+            #[cfg(not(all(feature = "supertonic", target_arch = "aarch64", target_os = "macos")))]
             let vad_result = VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE);
 
             match vad_result {
                 Ok(v) => {
-                    eprintln!("VAD: Silero enabled");
+                    eprintln!("VAD: Silero enabled (crosstalk: {})",
+                        runtime_state_vad.crosstalk_enabled.load(Ordering::SeqCst));
                     Some(v)
                 }
                 Err(e) => {
@@ -284,27 +285,25 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
             Some(VadEngine::energy())
         };
 
-        // Handle VAD processor errors gracefully
+        // Use the new crosstalk-enabled VAD processor
         if let Some(vad_engine) = vad {
-            audio::run_vad_processor(
+            audio::run_vad_processor_with_state(
                 audio_rx,
                 final_tx,
                 preview_tx,
                 Some(vad_engine),
-                tts_playing_vad,
-                mic_muted_vad,
+                runtime_state_vad,
                 display_tx_audio,
             );
         } else {
             eprintln!("Failed to initialize VAD engine");
             // Continue with energy-based VAD as fallback
-            audio::run_vad_processor(
+            audio::run_vad_processor_with_state(
                 audio_rx,
                 final_tx,
                 preview_tx,
                 Some(VadEngine::energy()),
-                tts_playing_vad,
-                mic_muted_vad,
+                runtime_state_vad,
                 display_tx_audio,
             );
         }
@@ -529,7 +528,8 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         tts_enabled_session,
         session_event_tx,
     )
-    .with_stats(stats_session);
+    .with_stats(stats_session)
+    .with_state(Arc::clone(&runtime_state));
     // Spawn session manager on dedicated thread (LLM inference is blocking)
     let _session_handle = std::thread::spawn(move || {
         session_mgr.run_sync(session_rx);
@@ -608,36 +608,59 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 }
                 tui.draw()?;
             }
-            // Audio transcription events
+            // Audio transcription events - mode-aware handling
             Some(event) = async_display_rx.recv() => {
                 match event {
                     DisplayEvent::AudioLevel(level) => {
                         tui.set_audio_level(level);
                     }
                     DisplayEvent::Preview(text) => {
-                        repl::handle_transcript(
+                        // Use mode-aware transcript handling
+                        let result = repl::handle_transcript_with_mode(
                             TranscriptEvent::Preview(text),
                             &wake_word,
                             last_interaction,
                             wake_timeout,
-                            wake_enabled.load(Ordering::SeqCst),
+                            &runtime_state,
                             &ui,
                         );
-                        // Cancel auto-submit on preview activity
-                        auto_submit_deadline = None;
+                        // Preview always returns None, but we still cancel auto-submit
+                        if !matches!(result, TranscriptResult::None) {
+                            auto_submit_deadline = None;
+                        }
                     }
                     DisplayEvent::Final(text) => {
-                        if let Some(input_text) = repl::handle_transcript(
+                        // Use mode-aware transcript handling
+                        let result = repl::handle_transcript_with_mode(
                             TranscriptEvent::Final(text),
                             &wake_word,
                             last_interaction,
                             wake_timeout,
-                            wake_enabled.load(Ordering::SeqCst),
+                            &runtime_state,
                             &ui,
-                        ) {
-                            tui.append_input(&input_text);
-                            // Start auto-submit timer
-                            auto_submit_deadline = Some(tokio::time::Instant::now() + auto_submit_delay);
+                        );
+                        
+                        match result {
+                            TranscriptResult::SendToLlm(input_text) => {
+                                tui.append_input(&input_text);
+                                // Start auto-submit timer
+                                auto_submit_deadline = Some(tokio::time::Instant::now() + auto_submit_delay);
+                            }
+                            TranscriptResult::TranscribeOnly(text) => {
+                                // Transcribe mode: just display the text, no LLM
+                                tui.show_message(&format!("[Transcribed] {}", text));
+                            }
+                            TranscriptResult::AppendNote(text) => {
+                                // Note-taking mode: append to notes file
+                                if let Err(e) = repl::append_to_notes(&text) {
+                                    tui.show_message(&format!("Failed to save note: {}", e));
+                                } else {
+                                    tui.show_message(&format!("[Note saved] {}", text));
+                                }
+                            }
+                            TranscriptResult::None => {
+                                // No action needed
+                            }
                         }
                     }
                 }
@@ -671,6 +694,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                     }
                                     CommandResult::ModeChange { mode, announcement } => {
                                         runtime_state.set_mode(mode);
+                                        tui.set_mode(mode);
                                         if let Some(msg) = announcement {
                                             tui.show_message(&msg);
                                         }
@@ -723,6 +747,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                 }
                                 CommandResult::ModeChange { mode, announcement } => {
                                     runtime_state.set_mode(mode);
+                                    tui.set_mode(mode);
                                     if let Some(msg) = announcement {
                                         tui.show_message(&msg);
                                     }
@@ -753,6 +778,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 // Temporarily mute mic on any keypress
                 if tui.has_keypress_activity() {
                     mic_muted.store(true, Ordering::SeqCst);
+                    runtime_state.mic_muted.store(true, Ordering::SeqCst);
                     keypress_mute_until = Some(std::time::Instant::now() + keypress_mute_duration);
                 }
 
@@ -760,6 +786,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 if let Some(until) = keypress_mute_until {
                     if std::time::Instant::now() >= until {
                         mic_muted.store(false, Ordering::SeqCst);
+                        runtime_state.mic_muted.store(false, Ordering::SeqCst);
                         keypress_mute_until = None;
                     }
                 }

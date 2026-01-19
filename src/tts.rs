@@ -1,8 +1,133 @@
+use crate::state::SharedState;
 use crate::stats::{SharedStats, StatKind, Timer};
 use rodio::{OutputStreamBuilder, Sink};
+use std::sync::atomic::Ordering;
 
 pub trait TtsEngine: Send + Sync {
     fn synthesize(&self, text: &str) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error>>;
+}
+
+// ============================================================================
+// TTS Controller - wraps Sink with stop/duck operations
+// ============================================================================
+
+/// Controller for TTS playback with stop and volume control
+///
+/// This wraps a rodio Sink and provides:
+/// - Immediate stop capability
+/// - Volume ducking (reduce volume when user speaks)
+/// - Integration with RuntimeState for coordinated control
+pub struct TtsController {
+    sink: Sink,
+    state: SharedState,
+    base_volume: f32,
+}
+
+impl TtsController {
+    /// Create a new TTS controller with the given sink and state
+    pub fn new(sink: Sink, state: SharedState) -> Self {
+        Self {
+            sink,
+            state,
+            base_volume: 1.0,
+        }
+    }
+
+    /// Stop playback immediately and clear the queue
+    pub fn stop(&self) {
+        self.sink.stop();
+        self.state.tts_playing.store(false, Ordering::SeqCst);
+    }
+
+    /// Check if TTS is currently playing
+    pub fn is_playing(&self) -> bool {
+        !self.sink.empty()
+    }
+
+    /// Duck the volume (reduce to the level specified in state)
+    #[allow(dead_code)]
+    pub fn duck(&self) {
+        let duck_volume = self.state.get_tts_volume();
+        self.sink.set_volume(self.base_volume * duck_volume);
+    }
+
+    /// Restore volume to full
+    #[allow(dead_code)]
+    pub fn restore_volume(&self) {
+        self.state.restore_tts_volume();
+        self.sink.set_volume(self.base_volume);
+    }
+
+    /// Set the base volume level (0.0 - 1.0)
+    #[allow(dead_code)]
+    pub fn set_base_volume(&mut self, volume: f32) {
+        self.base_volume = volume.clamp(0.0, 1.0);
+        self.sink.set_volume(self.base_volume);
+    }
+
+    /// Get the underlying sink for queueing audio
+    pub fn sink(&self) -> &Sink {
+        &self.sink
+    }
+
+    /// Wait for playback to complete
+    pub fn wait_until_end(&self) {
+        self.sink.sleep_until_end();
+    }
+
+    /// Update volume based on current state (call periodically during playback)
+    pub fn update_volume(&self) {
+        let state_volume = self.state.get_tts_volume();
+        self.sink.set_volume(self.base_volume * state_volume);
+    }
+
+    /// Check if cancellation was requested
+    pub fn is_cancel_requested(&self) -> bool {
+        self.state.is_cancel_requested()
+    }
+}
+
+/// Handle for controlling TTS playback from other threads
+///
+/// This is a lightweight handle that can be cloned and sent to other threads
+/// to control TTS playback (stop, duck, etc.)
+#[allow(dead_code)]
+#[derive(Clone)]
+pub struct TtsHandle {
+    state: SharedState,
+}
+
+#[allow(dead_code)]
+impl TtsHandle {
+    /// Create a new handle from shared state
+    pub fn new(state: SharedState) -> Self {
+        Self { state }
+    }
+
+    /// Request TTS to stop (will be picked up by the controller)
+    pub fn request_stop(&self) {
+        self.state.request_cancel();
+    }
+
+    /// Duck the TTS volume
+    pub fn duck(&self) {
+        self.state.duck_tts();
+    }
+
+    /// Restore TTS volume
+    pub fn restore_volume(&self) {
+        self.state.restore_tts_volume();
+    }
+
+    /// Check if TTS is currently playing
+    pub fn is_playing(&self) -> bool {
+        self.state.tts_playing.load(Ordering::SeqCst)
+    }
+
+    /// Set TTS volume directly
+    pub fn set_volume(&self, volume: f32) {
+        self.state.set_tts_volume(volume);
+    }
 }
 
 // ============================================================================
@@ -144,9 +269,45 @@ impl Tts {
         Ok((stream, sink))
     }
 
+    /// Create a TTS controller with the given state
+    pub fn create_controller(
+        state: SharedState,
+    ) -> Result<(rodio::OutputStream, TtsController), Box<dyn std::error::Error>> {
+        let stream = OutputStreamBuilder::open_default_stream()?;
+        let sink = Sink::connect_new(stream.mixer());
+        let controller = TtsController::new(sink, state);
+        Ok((stream, controller))
+    }
+
+    /// Queue text to a TTS controller
+    pub fn queue_to_controller(
+        &self,
+        text: &str,
+        controller: &TtsController,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let timer = self
+            .stats
+            .as_ref()
+            .map(|s| Timer::new(s, StatKind::Tts, text.len()));
+        let (audio, sample_rate) = self.engine.synthesize(text)?;
+        if let Some(t) = timer {
+            t.finish(audio.len());
+        }
+        controller
+            .sink()
+            .append(rodio::buffer::SamplesBuffer::new(1, sample_rate, audio));
+        Ok(())
+    }
+
     /// Wait for sink to finish and suppress drop warning
     pub fn finish(stream: rodio::OutputStream, sink: Sink) {
         sink.sleep_until_end();
+        std::mem::forget(stream); // Suppress "Dropping OutputStream" warning
+    }
+
+    /// Finish a controller and suppress drop warning
+    pub fn finish_controller(stream: rodio::OutputStream, controller: TtsController) {
+        controller.wait_until_end();
         std::mem::forget(stream); // Suppress "Dropping OutputStream" warning
     }
 }

@@ -20,6 +20,8 @@ pub struct Config {
     pub interaction: InteractionConfig,
     #[serde(default)]
     pub commands: CommandsConfig,
+    #[serde(default)]
+    pub ui: UiConfig,
 }
 
 impl Default for Config {
@@ -33,6 +35,50 @@ impl Default for Config {
             acceleration: AccelerationConfig::default(),
             interaction: InteractionConfig::default(),
             commands: CommandsConfig::default(),
+            ui: UiConfig::default(),
+        }
+    }
+}
+
+// ============================================================================
+// UI Config
+// ============================================================================
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UiModeConfig {
+    /// Text-based terminal UI (default)
+    #[default]
+    Text,
+    /// Graphical orb visualization
+    Graphical,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OrbStyleConfig {
+    /// Concentric glowing rings (default)
+    #[default]
+    Rings,
+    /// Volumetric noise blob
+    Blob,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UiConfig {
+    /// UI mode: "text" or "graphical"
+    #[serde(default)]
+    pub mode: UiModeConfig,
+    /// Visual style for graphical mode: "rings" or "blob"
+    #[serde(default)]
+    pub orb_style: OrbStyleConfig,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            mode: UiModeConfig::default(),
+            orb_style: OrbStyleConfig::default(),
         }
     }
 }

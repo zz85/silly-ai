@@ -5,6 +5,7 @@ mod chat;
 mod command;
 mod config;
 mod fuzzy;
+mod graphical_ui;
 #[cfg(feature = "listen")]
 mod listen;
 mod llm;
@@ -29,8 +30,8 @@ mod vad;
 mod wake;
 
 use command::{CommandProcessor, CommandResult};
-use config::{Config, LlmConfig, TtsConfig};
-use render::Ui;
+use config::{Config, LlmConfig, OrbStyleConfig, TtsConfig, UiModeConfig};
+use render::{OrbStyle, Ui, UiRenderer};
 use repl::{TranscriptEvent, TranscriptResult};
 use state::RuntimeState;
 
@@ -57,6 +58,18 @@ struct Cli {
     /// Disable text-to-speech output
     #[arg(long)]
     no_tts: bool,
+
+    /// Use graphical orb UI instead of text UI
+    #[arg(long, short = 'g')]
+    graphical: bool,
+
+    /// Use text UI (default, overrides config)
+    #[arg(long, short = 't')]
+    text: bool,
+
+    /// Visual style for graphical UI: rings or blob
+    #[arg(long, value_parser = ["rings", "blob"])]
+    orb_style: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -552,9 +565,35 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
 
     let (ui, ui_rx) = Ui::new();
 
-    // Initialize TUI
-    let mut tui = tui::Tui::new()?;
-    tui.draw()?;
+    // Determine UI mode from CLI flags or config
+    let ui_mode = if cli.text {
+        UiModeConfig::Text
+    } else if cli.graphical {
+        UiModeConfig::Graphical
+    } else {
+        config.ui.mode
+    };
+
+    // Determine orb style
+    let orb_style = match cli.orb_style.as_deref() {
+        Some("rings") => OrbStyle::Rings,
+        Some("blob") => OrbStyle::Blob,
+        _ => match config.ui.orb_style {
+            OrbStyleConfig::Rings => OrbStyle::Rings,
+            OrbStyleConfig::Blob => OrbStyle::Blob,
+        },
+    };
+
+    // Initialize UI based on mode
+    let mut ui_renderer: Box<dyn UiRenderer> = match ui_mode {
+        UiModeConfig::Text => Box::new(tui::Tui::new()?),
+        UiModeConfig::Graphical => {
+            let mut gui = graphical_ui::GraphicalUi::new()?;
+            gui.set_visual_style(orb_style);
+            Box::new(gui)
+        }
+    };
+    ui_renderer.draw()?;
 
     let mut last_interaction: Option<std::time::Instant> = None;
     let wake_timeout = std::time::Duration::from_secs(config.wake_timeout_secs);
@@ -583,8 +622,8 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         tokio::select! {
             // UI events from Ui sender
             Some(event) = async_ui_rx.recv() => {
-                tui.handle_ui_event(event)?;
-                tui.draw()?;
+                ui_renderer.handle_ui_event(event)?;
+                ui_renderer.draw()?;
             }
             // Session events - process UI and draw immediately
             Some(event) = session_event_rx.recv() => {
@@ -597,7 +636,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                     }
                     session::SessionEvent::ResponseEnd { response_words } => {
                         ui.end_response();
-                        tui.set_last_response_words(response_words);
+                        ui_renderer.set_last_response_words(response_words);
                     }
                     session::SessionEvent::Speaking => {
                         ui.set_speaking();
@@ -610,7 +649,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                         ui.set_context_words(words);
                     }
                     session::SessionEvent::Ready => {
-                        tui.set_ready();
+                        ui_renderer.set_ready();
                     }
                     session::SessionEvent::Error(e) => {
                         eprintln!("Session error: {}", e);
@@ -619,18 +658,18 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 }
                 // Process pending UI events and draw
                 while let Ok(ui_event) = async_ui_rx.try_recv() {
-                    tui.handle_ui_event(ui_event)?;
+                    ui_renderer.handle_ui_event(ui_event)?;
                 }
-                tui.draw()?;
+                ui_renderer.draw()?;
             }
             // Audio transcription events - mode-aware handling
             Some(event) = async_display_rx.recv() => {
                 match event {
                     DisplayEvent::AudioLevel(level) => {
-                        tui.set_audio_level(level);
+                        ui_renderer.set_audio_level(level);
                     }
                     DisplayEvent::TtsLevel(level) => {
-                        tui.set_tts_level(level);
+                        ui_renderer.set_tts_level(level);
                     }
                     DisplayEvent::Preview(text) => {
                         // Use mode-aware transcript handling
@@ -662,34 +701,34 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
 
                         match result {
                             TranscriptResult::SendToLlm(input_text) => {
-                                tui.append_input(&input_text);
+                                ui_renderer.append_input(&input_text);
                                 // Start auto-submit timer
                                 auto_submit_deadline = Some(tokio::time::Instant::now() + auto_submit_delay);
                             }
                             TranscriptResult::TranscribeOnly(text) => {
                                 // Transcribe mode: just display the text, no LLM
-                                tui.show_message(&format!("[Transcribed] {}", text));
+                                ui_renderer.show_message(&format!("[Transcribed] {}", text));
                             }
                             TranscriptResult::AppendNote(text) => {
                                 // Note-taking mode: append to notes file
                                 if let Err(e) = repl::append_to_notes(&text) {
-                                    tui.show_message(&format!("Failed to save note: {}", e));
+                                    ui_renderer.show_message(&format!("Failed to save note: {}", e));
                                 } else {
-                                    tui.show_message(&format!("[Note saved] {}", text));
+                                    ui_renderer.show_message(&format!("[Note saved] {}", text));
                                 }
                             }
                             TranscriptResult::CommandHandled(msg) => {
                                 // Command was handled
                                 if let Some(m) = msg {
-                                    tui.show_message(&m);
+                                    ui_renderer.show_message(&m);
                                 }
                                 // Sync legacy flags with runtime state
                                 mic_muted.store(runtime_state.mic_muted.load(Ordering::SeqCst), Ordering::SeqCst);
                                 tts_enabled.store(runtime_state.tts_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
                                 wake_enabled.store(runtime_state.wake_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
-                                tui.set_mic_muted(runtime_state.mic_muted.load(Ordering::SeqCst));
-                                tui.set_tts_enabled(runtime_state.tts_enabled.load(Ordering::SeqCst));
-                                tui.set_wake_enabled(runtime_state.wake_enabled.load(Ordering::SeqCst));
+                                ui_renderer.set_mic_muted(runtime_state.mic_muted.load(Ordering::SeqCst));
+                                ui_renderer.set_tts_enabled(runtime_state.tts_enabled.load(Ordering::SeqCst));
+                                ui_renderer.set_wake_enabled(runtime_state.wake_enabled.load(Ordering::SeqCst));
                             }
                             TranscriptResult::Stop => {
                                 let _ = session_tx.send(session::SessionCommand::Cancel);
@@ -699,9 +738,9 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                             }
                             TranscriptResult::ModeChange { mode, announcement } => {
                                 runtime_state.set_mode(mode);
-                                tui.set_mode(mode);
+                                ui_renderer.set_mode(mode);
                                 if let Some(msg) = announcement {
-                                    tui.show_message(&msg);
+                                    ui_renderer.show_message(&msg);
                                 }
                             }
                             TranscriptResult::None => {
@@ -716,7 +755,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 // Poll keyboard input - drain all available events before redrawing
                 let mut should_break = false;
                 loop {
-                    match tui.poll_input()? {
+                    match ui_renderer.poll_input()? {
                         None => break,
                         Some(line) => {
                             if line == "\x03" {
@@ -728,7 +767,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                             if let Some(cmd_result) = command::process_slash_command(&line, &runtime_state) {
                                 match cmd_result {
                                     CommandResult::Handled(Some(msg)) => {
-                                        tui.show_message(&msg);
+                                        ui_renderer.show_message(&msg);
                                     }
                                     CommandResult::Handled(None) => {}
                                     CommandResult::Stop => {
@@ -740,9 +779,9 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                     }
                                     CommandResult::ModeChange { mode, announcement } => {
                                         runtime_state.set_mode(mode);
-                                        tui.set_mode(mode);
+                                        ui_renderer.set_mode(mode);
                                         if let Some(msg) = announcement {
-                                            tui.show_message(&msg);
+                                            ui_renderer.show_message(&msg);
                                         }
                                     }
                                     CommandResult::PassThrough(_) => {}
@@ -751,9 +790,9 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                 mic_muted.store(runtime_state.mic_muted.load(Ordering::SeqCst), Ordering::SeqCst);
                                 tts_enabled.store(runtime_state.tts_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
                                 wake_enabled.store(runtime_state.wake_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
-                                tui.set_mic_muted(runtime_state.mic_muted.load(Ordering::SeqCst));
-                                tui.set_tts_enabled(runtime_state.tts_enabled.load(Ordering::SeqCst));
-                                tui.set_wake_enabled(runtime_state.wake_enabled.load(Ordering::SeqCst));
+                                ui_renderer.set_mic_muted(runtime_state.mic_muted.load(Ordering::SeqCst));
+                                ui_renderer.set_tts_enabled(runtime_state.tts_enabled.load(Ordering::SeqCst));
+                                ui_renderer.set_wake_enabled(runtime_state.wake_enabled.load(Ordering::SeqCst));
                                 keypress_mute_until = None;
                                 continue;
                             }
@@ -761,7 +800,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                             // Handle /stats separately (not in command module)
                             if line == "/stats" {
                                 let summary = stats.lock().unwrap().summary();
-                                tui.show_message(&summary);
+                                ui_renderer.show_message(&summary);
                                 continue;
                             }
 
@@ -777,7 +816,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                     break;
                                 }
                                 CommandResult::Handled(Some(msg)) => {
-                                    tui.show_message(&msg);
+                                    ui_renderer.show_message(&msg);
                                     // Sync legacy flags
                                     mic_muted.store(runtime_state.mic_muted.load(Ordering::SeqCst), Ordering::SeqCst);
                                     tts_enabled.store(runtime_state.tts_enabled.load(Ordering::SeqCst), Ordering::SeqCst);
@@ -793,9 +832,9 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                 }
                                 CommandResult::ModeChange { mode, announcement } => {
                                     runtime_state.set_mode(mode);
-                                    tui.set_mode(mode);
+                                    ui_renderer.set_mode(mode);
                                     if let Some(msg) = announcement {
-                                        tui.show_message(&msg);
+                                        ui_renderer.show_message(&msg);
                                     }
                                     continue;
                                 }
@@ -818,11 +857,11 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
 
                 // Process pending UI events and draw
                 while let Ok(ui_event) = async_ui_rx.try_recv() {
-                    tui.handle_ui_event(ui_event)?;
+                    ui_renderer.handle_ui_event(ui_event)?;
                 }
 
                 // Temporarily mute mic on any keypress
-                if tui.has_keypress_activity() {
+                if ui_renderer.has_keypress_activity() {
                     mic_muted.store(true, Ordering::SeqCst);
                     runtime_state.mic_muted.store(true, Ordering::SeqCst);
                     keypress_mute_until = Some(std::time::Instant::now() + keypress_mute_duration);
@@ -838,7 +877,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 }
 
                 // Cancel auto-submit timer on any keypress
-                if tui.has_input_activity() {
+                if ui_renderer.has_input_activity() {
                     auto_submit_deadline = None;
                 }
 
@@ -847,35 +886,35 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                     let now = tokio::time::Instant::now();
                     if now >= deadline {
                         auto_submit_deadline = None;
-                        tui.set_auto_submit_progress(None);
-                        if let Some(line) = tui.take_input() {
+                        ui_renderer.set_auto_submit_progress(None);
+                        if let Some(line) = ui_renderer.take_input() {
                             if !line.is_empty() {
                                 // Cancel any in-progress response
                                 let _ = session_tx.send(session::SessionCommand::Cancel);
                                 ui.show_final(&line);
                                 while let Ok(event) = async_ui_rx.try_recv() {
-                                    tui.handle_ui_event(event)?;
+                                    ui_renderer.handle_ui_event(event)?;
                                 }
-                                tui.draw()?;
+                                ui_renderer.draw()?;
                                 let _ = session_tx.send(session::SessionCommand::UserInput(line));
                             }
                         }
                     } else {
                         let elapsed = auto_submit_delay.as_millis() as f32 - (deadline - now).as_millis() as f32;
                         let total = auto_submit_delay.as_millis() as f32;
-                        tui.set_auto_submit_progress(Some(elapsed / total));
+                        ui_renderer.set_auto_submit_progress(Some(elapsed / total));
                     }
                 } else {
-                    tui.set_auto_submit_progress(None);
+                    ui_renderer.set_auto_submit_progress(None);
                 }
 
                 // Redraw
-                tui.draw()?;
+                ui_renderer.draw()?;
             }
         }
     }
 
-    drop(tui);
+    drop(ui_renderer);
     drop(ui_rx_bridge);
 
     let _ = vad_handle.join();

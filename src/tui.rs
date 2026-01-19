@@ -1,6 +1,6 @@
 //! Terminal UI with proper cursor management and synchronized updates
 
-use crate::render::UiEvent;
+use crate::render::{OrbStyle, UiEvent, UiMode, UiRenderer};
 use crate::state::AppMode;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{self, ClearType};
@@ -533,5 +533,88 @@ impl Tui {
 impl Drop for Tui {
     fn drop(&mut self) {
         let _ = self.restore();
+    }
+}
+
+// Implement UiRenderer trait for Tui
+impl UiRenderer for Tui {
+    fn handle_ui_event(&mut self, event: UiEvent) -> io::Result<()> {
+        Tui::handle_ui_event(self, event)
+    }
+
+    fn draw(&mut self) -> io::Result<()> {
+        Tui::draw(self)
+    }
+
+    fn poll_input(&mut self) -> io::Result<Option<String>> {
+        Tui::poll_input(self)
+    }
+
+    fn restore(&self) -> io::Result<()> {
+        Tui::restore(self)
+    }
+
+    fn show_message(&mut self, text: &str) {
+        Tui::show_message(self, text)
+    }
+
+    fn set_auto_submit_progress(&mut self, progress: Option<f32>) {
+        Tui::set_auto_submit_progress(self, progress)
+    }
+
+    fn set_mic_muted(&mut self, muted: bool) {
+        Tui::set_mic_muted(self, muted)
+    }
+
+    fn set_tts_enabled(&mut self, enabled: bool) {
+        Tui::set_tts_enabled(self, enabled)
+    }
+
+    fn set_wake_enabled(&mut self, enabled: bool) {
+        Tui::set_wake_enabled(self, enabled)
+    }
+
+    fn set_mode(&mut self, mode: AppMode) {
+        Tui::set_mode(self, mode)
+    }
+
+    fn set_ready(&mut self) {
+        Tui::set_ready(self)
+    }
+
+    fn set_last_response_words(&mut self, words: usize) {
+        Tui::set_last_response_words(self, words)
+    }
+
+    fn set_audio_level(&mut self, level: f32) {
+        Tui::set_audio_level(self, level)
+    }
+
+    fn set_tts_level(&mut self, level: f32) {
+        Tui::set_tts_level(self, level)
+    }
+
+    fn has_input_activity(&mut self) -> bool {
+        Tui::has_input_activity(self)
+    }
+
+    fn has_keypress_activity(&mut self) -> bool {
+        Tui::has_keypress_activity(self)
+    }
+
+    fn take_input(&mut self) -> Option<String> {
+        Tui::take_input(self)
+    }
+
+    fn append_input(&mut self, text: &str) {
+        Tui::append_input(self, text)
+    }
+
+    fn ui_mode(&self) -> UiMode {
+        UiMode::Text
+    }
+
+    fn set_visual_style(&mut self, _style: OrbStyle) {
+        // No-op for text UI
     }
 }

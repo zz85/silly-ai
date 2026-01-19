@@ -1,5 +1,8 @@
 //! UI event types and sender for cross-thread communication
 
+use crate::state::AppMode;
+use std::io;
+
 #[derive(Clone)]
 pub enum UiEvent {
     Preview(String),
@@ -12,6 +15,93 @@ pub enum UiEvent {
     Idle,
     Tick,
     ContextWords(usize),
+}
+
+/// UI mode selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(dead_code)]
+pub enum UiMode {
+    /// Text-based terminal UI (default)
+    #[default]
+    Text,
+    /// Graphical orb visualization
+    Graphical,
+}
+
+/// Visual style for the graphical orb UI
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OrbStyle {
+    /// Concentric glowing rings
+    #[default]
+    Rings,
+    /// Volumetric noise blob
+    Blob,
+}
+
+/// Trait for UI renderers - allows swapping between text and graphical UI
+pub trait UiRenderer: Send {
+    /// Handle a UI event from the event channel
+    fn handle_ui_event(&mut self, event: UiEvent) -> io::Result<()>;
+
+    /// Draw/render the current UI state
+    fn draw(&mut self) -> io::Result<()>;
+
+    /// Poll for keyboard input, returns submitted text if any
+    fn poll_input(&mut self) -> io::Result<Option<String>>;
+
+    /// Restore terminal state on exit
+    fn restore(&self) -> io::Result<()>;
+
+    /// Show a multi-line message
+    fn show_message(&mut self, text: &str);
+
+    /// Set auto-submit progress (0.0-1.0, None to disable)
+    fn set_auto_submit_progress(&mut self, progress: Option<f32>);
+
+    /// Set microphone muted state indicator
+    fn set_mic_muted(&mut self, muted: bool);
+
+    /// Set TTS enabled state indicator
+    fn set_tts_enabled(&mut self, enabled: bool);
+
+    /// Set wake word enabled state indicator
+    fn set_wake_enabled(&mut self, enabled: bool);
+
+    /// Set current application mode
+    fn set_mode(&mut self, mode: AppMode);
+
+    /// Set the ready state
+    fn set_ready(&mut self);
+
+    /// Set last response word count
+    fn set_last_response_words(&mut self, words: usize);
+
+    /// Set current audio input level (0.0-1.0)
+    fn set_audio_level(&mut self, level: f32);
+
+    /// Set current TTS output level (0.0-1.0)
+    fn set_tts_level(&mut self, level: f32);
+
+    /// Check if there was input activity since last call
+    fn has_input_activity(&mut self) -> bool;
+
+    /// Check if there was any keypress since last call
+    fn has_keypress_activity(&mut self) -> bool;
+
+    /// Take the current input buffer and clear it
+    fn take_input(&mut self) -> Option<String>;
+
+    /// Append text to the input buffer
+    fn append_input(&mut self, text: &str);
+
+    /// Get the current UI mode
+    #[allow(dead_code)]
+    fn ui_mode(&self) -> UiMode;
+
+    /// Switch to a different visual style (for graphical UI)
+    fn set_visual_style(&mut self, _style: OrbStyle) {
+        // Default no-op for text UI
+    }
 }
 
 #[derive(Clone)]

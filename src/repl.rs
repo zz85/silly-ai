@@ -86,14 +86,14 @@ pub fn handle_transcript(
 pub fn handle_transcript_with_mode(
     event: TranscriptEvent,
     wake_word: &WakeWord,
-    last_interaction: Option<Instant>,
-    wake_timeout: Duration,
+    _last_interaction: Option<Instant>,
+    _wake_timeout: Duration,
     state: &SharedState,
     command_processor: &CommandProcessor,
     ui: &Ui,
 ) -> TranscriptResult {
     let mode = state.mode();
-    let wake_enabled = state.wake_enabled.load(std::sync::atomic::Ordering::SeqCst);
+    let _wake_enabled = state.wake_enabled.load(std::sync::atomic::Ordering::SeqCst);
     
     match event {
         TranscriptEvent::Preview(text) => {
@@ -122,31 +122,25 @@ pub fn handle_transcript_with_mode(
                     CommandResult::PassThrough(text) => {
                         // Not a command, continue with mode-specific handling
                         match mode {
-                            AppMode::Idle => {
-                                // Idle mode: requires wake word unless in conversation
-                                let in_conversation = last_interaction
-                                    .map(|t| t.elapsed() < wake_timeout)
-                                    .unwrap_or(false);
-
-                                let command = if !wake_enabled || in_conversation {
-                                    text
-                                } else {
-                                    match wake_word.detect(&text) {
-                                        Some(cmd) => cmd,
-                                        None => return TranscriptResult::None,
-                                    }
-                                };
-
-                                if command.is_empty() {
-                                    return TranscriptResult::None;
-                                }
-
-                                TranscriptResult::SendToLlm(command)
-                            }
                             AppMode::Chat => {
                                 // Chat mode: no wake word needed, always send to LLM
                                 state.update_last_interaction();
                                 TranscriptResult::SendToLlm(text)
+                            }
+                            AppMode::Paused => {
+                                // Paused mode: requires wake word to resume
+                                match wake_word.detect(&text) {
+                                    Some(cmd) => {
+                                        // Wake word detected - resume conversation and process command
+                                        state.update_last_interaction();
+                                        // Auto-switch to Chat mode
+                                        TranscriptResult::ModeChange {
+                                            mode: AppMode::Chat,
+                                            announcement: Some(format!("Resumed. {}", cmd)),
+                                        }
+                                    }
+                                    None => TranscriptResult::None,
+                                }
                             }
                             AppMode::Command => {
                                 // Command mode: if not a command, show message

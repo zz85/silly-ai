@@ -15,10 +15,10 @@ use crate::config::Config;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum AppMode {
-    /// Waiting for wake word
-    Idle = 0,
-    /// Conversational mode (no wake word needed)
-    Chat = 1,
+    /// Conversational mode (default, no wake word needed)
+    Chat = 0,
+    /// Paused conversation (requires wake word to resume)
+    Paused = 1,
     /// Transcription-only mode (no LLM)
     Transcribe = 2,
     /// Note-taking mode
@@ -30,12 +30,12 @@ pub enum AppMode {
 impl From<u8> for AppMode {
     fn from(v: u8) -> Self {
         match v {
-            0 => AppMode::Idle,
-            1 => AppMode::Chat,
+            0 => AppMode::Chat,
+            1 => AppMode::Paused,
             2 => AppMode::Transcribe,
             3 => AppMode::NoteTaking,
             4 => AppMode::Command,
-            _ => AppMode::Idle,
+            _ => AppMode::Chat,
         }
     }
 }
@@ -43,8 +43,8 @@ impl From<u8> for AppMode {
 impl fmt::Display for AppMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AppMode::Idle => write!(f, "Idle"),
             AppMode::Chat => write!(f, "Chat"),
+            AppMode::Paused => write!(f, "Paused"),
             AppMode::Transcribe => write!(f, "Transcribe"),
             AppMode::NoteTaking => write!(f, "Note"),
             AppMode::Command => write!(f, "Command"),
@@ -146,8 +146,8 @@ impl RuntimeState {
             last_interaction_ms: AtomicU64::new(0),
             wake_timeout_secs: AtomicU64::new(config.wake_timeout_secs),
 
-            // Mode
-            mode: AtomicU8::new(AppMode::Idle as u8),
+            // Mode - start in Chat mode by default
+            mode: AtomicU8::new(AppMode::Chat as u8),
 
             // LLM
             llm_generating: AtomicBool::new(false),

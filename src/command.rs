@@ -141,10 +141,17 @@ impl CommandProcessor {
         }
 
         // Mode commands
-        if text.contains("start chat") || text.contains("let's chat") || text.contains("lets chat") {
+        if text.contains("start chat") || text.contains("let's chat") || text.contains("lets chat") || text.contains("resume") {
             return Some(CommandResult::ModeChange {
                 mode: AppMode::Chat,
-                announcement: Some("Entering chat mode. No wake word needed.".to_string()),
+                announcement: Some("Resuming conversation.".to_string()),
+            });
+        }
+
+        if text.contains("pause") || text.contains("pause conversation") {
+            return Some(CommandResult::ModeChange {
+                mode: AppMode::Paused,
+                announcement: Some("Conversation paused. Say wake word to resume.".to_string()),
             });
         }
 
@@ -162,12 +169,6 @@ impl CommandProcessor {
             });
         }
 
-        if text.contains("normal mode") || text.contains("idle mode") || text.contains("exit mode") {
-            return Some(CommandResult::ModeChange {
-                mode: AppMode::Idle,
-                announcement: Some("Returning to normal mode.".to_string()),
-            });
-        }
 
         if text.contains("command mode") || text.contains("commands only") {
             return Some(CommandResult::ModeChange {
@@ -236,8 +237,8 @@ fn parse_action(action: &str) -> Option<CommandAction> {
     if action.starts_with("mode:") {
         let mode_str = action.strip_prefix("mode:")?;
         let mode = match mode_str {
-            "idle" => AppMode::Idle,
             "chat" => AppMode::Chat,
+            "paused" | "pause" => AppMode::Paused,
             "transcribe" => AppMode::Transcribe,
             "note" | "notetaking" => AppMode::NoteTaking,
             "command" => AppMode::Command,
@@ -351,10 +352,10 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
                 announcement: Some("Note mode".to_string()),
             })
         }
-        "idle" | "normal" => {
+        "pause" => {
             Some(CommandResult::ModeChange {
-                mode: AppMode::Idle,
-                announcement: Some("Normal mode".to_string()),
+                mode: AppMode::Paused,
+                announcement: Some("Paused".to_string()),
             })
         }
         "command" => {
@@ -387,11 +388,11 @@ Commands:
   /tts - Toggle text-to-speech
   /crosstalk - Toggle crosstalk (listen during TTS)
   /wake - Toggle wake word requirement
-  /chat - Enter chat mode (no wake word)
+  /chat - Resume conversation mode
+  /pause - Pause conversation (requires wake word to resume)
   /transcribe - Enter transcription mode
   /note - Enter note-taking mode
   /command - Enter command-only mode
-  /idle - Return to normal mode
   /stop - Stop TTS playback
   /quit - Exit application
   /status - Show current status
@@ -399,11 +400,14 @@ Commands:
 
 Voice commands:
   'stop', 'quiet', 'hush', 'shush' - Stop TTS
+  'pause' - Pause conversation
+  'resume' - Resume conversation
   'mute' / 'unmute' - Control microphone
   'enable/disable crosstalk' - Control crosstalk
-  'start chat' - Enter chat mode
   'command mode' - Enter command-only mode
-  'stand down' - Exit application".to_string();
+  'stand down' - Exit application
+  
+Wake word: Say wake phrase when paused to resume".to_string();
             Some(CommandResult::Handled(Some(help)))
         }
         _ => None,

@@ -67,7 +67,7 @@ impl Tui {
             tts_enabled: true,
             wake_enabled: true,
             auto_submit_progress: None,
-            mode: AppMode::Idle,
+            mode: AppMode::Chat,
         })
     }
 
@@ -250,8 +250,8 @@ impl Tui {
         );
         // Mode indicator with color coding
         let mode_str = match self.mode {
-            AppMode::Idle => "⏸ Idle",
             AppMode::Chat => "\x1b[92m💬 Chat\x1b[90m",
+            AppMode::Paused => "\x1b[33m⏸ Paused\x1b[90m",
             AppMode::Transcribe => "\x1b[93m📝 Transcribe\x1b[90m",
             AppMode::NoteTaking => "\x1b[95m📓 Note\x1b[90m",
             AppMode::Command => "\x1b[96m⌘ Command\x1b[90m",

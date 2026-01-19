@@ -16,6 +16,7 @@ This is my playground of local AI LLM experiments. It's super useful when you wa
 - **Auto-download models** from HuggingFace on first run
 - Text-to-speech with [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M) or [Supertonic](https://github.com/supertone-inc/supertonic)
 - Streaming TTS: speech starts as soon as the first sentence is generated
+- **Real-time audio visualization**: Animated bars showing microphone input and TTS output volume levels
 - Multi-threaded architecture: separate threads for audio capture, VAD, preview transcription, and final transcription
 - **Hardware acceleration**: Metal on Apple Silicon for LLM, CoreML for VAD, transcription, and TTS
 - **Crosstalk mode**: Continue listening while TTS plays, with barge-in support
@@ -348,12 +349,21 @@ The application maintains a centralized, thread-safe runtime state that can be q
 | `tts_enabled` | Whether TTS output is enabled |
 | `tts_playing` | Whether TTS is currently playing |
 | `tts_volume` | Current TTS volume (0.0-1.0) |
+| `tts_level` | Current TTS output RMS level (0.0-1.0) for real-time visualization |
 | `crosstalk_enabled` | Whether to process audio during TTS |
 | `wake_enabled` | Whether wake word is required |
 | `in_conversation` | Whether within wake timeout window |
 | `mode` | Current application mode (Idle/Chat/Transcribe/Note) |
 
 All state can be toggled via keyboard commands (e.g., `/mute`, `/crosstalk`).
+
+### Audio Visualization
+
+The status bar displays real-time audio levels using animated Unicode bars:
+- **Microphone input**: Green bars (`▁▂▄▆█`) show your voice volume while speaking
+- **TTS output**: Magenta bars show the assistant's voice volume during speech playback
+
+Both visualizations use RMS (Root Mean Square) calculation updated every 50ms for smooth animation.
 
 ## Profiling with hotpath
 

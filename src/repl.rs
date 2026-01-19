@@ -94,7 +94,7 @@ pub fn handle_transcript_with_mode(
 ) -> TranscriptResult {
     let mode = state.mode();
     let _wake_enabled = state.wake_enabled.load(std::sync::atomic::Ordering::SeqCst);
-    
+
     match event {
         TranscriptEvent::Preview(text) => {
             ui.set_preview(text);
@@ -109,7 +109,7 @@ pub fn handle_transcript_with_mode(
 
             // First, check if this is a command (in all modes except Transcribe/NoteTaking)
             let should_check_commands = !matches!(mode, AppMode::Transcribe | AppMode::NoteTaking);
-            
+
             if should_check_commands {
                 let cmd_result = command_processor.process(&text, state);
                 match cmd_result {
@@ -144,7 +144,10 @@ pub fn handle_transcript_with_mode(
                             }
                             AppMode::Command => {
                                 // Command mode: if not a command, show message
-                                TranscriptResult::CommandHandled(Some(format!("[Not a command] {}", text)))
+                                TranscriptResult::CommandHandled(Some(format!(
+                                    "[Not a command] {}",
+                                    text
+                                )))
                             }
                             _ => TranscriptResult::None,
                         }
@@ -166,15 +169,15 @@ pub fn handle_transcript_with_mode(
 pub fn append_to_notes(text: &str) -> std::io::Result<()> {
     use std::fs::OpenOptions;
     use std::io::Write;
-    
+
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open("notes.txt")?;
-    
+
     // Add timestamp
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     writeln!(file, "[{}] {}", timestamp, text)?;
-    
+
     Ok(())
 }

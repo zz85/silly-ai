@@ -338,7 +338,7 @@ pub fn run_vad_processor_with_state(
     let mut last_preview = Instant::now();
     let mut last_level = Instant::now();
     let chunk_size = (TARGET_RATE as f32 * CHUNK_SECONDS) as usize;
-    
+
     // Track if we're in a barge-in situation (speech detected during TTS)
     let mut barge_in_active = false;
     let mut speech_during_tts = false;
@@ -420,7 +420,7 @@ pub fn run_vad_processor_with_state(
                         if new_count >= VAD_ONSET_FRAMES {
                             prefill.drain_to(&mut speech_buf);
                             vad_state = VadState::Speaking(0);
-                            
+
                             // If TTS is playing, mark barge-in
                             if tts_playing && crosstalk_enabled {
                                 barge_in_active = true;
@@ -446,7 +446,8 @@ pub fn run_vad_processor_with_state(
             // Check if we should emit
             let should_emit = match vad_state {
                 VadState::Speaking(silence) => {
-                    silence >= VAD_SILENCE_FRAMES_TO_END || speech_buf.len() >= MAX_SPEECH_BUFFER_SIZE
+                    silence >= VAD_SILENCE_FRAMES_TO_END
+                        || speech_buf.len() >= MAX_SPEECH_BUFFER_SIZE
                 }
                 _ => false,
             };
@@ -458,7 +459,7 @@ pub fn run_vad_processor_with_state(
                         state.request_cancel();
                         barge_in_active = false;
                     }
-                    
+
                     let samples: Arc<[f32]> = std::mem::take(&mut speech_buf).into();
                     let _ = final_tx.send(samples);
                 } else {
@@ -466,7 +467,7 @@ pub fn run_vad_processor_with_state(
                 }
                 vad_state = VadState::Idle;
                 last_preview = Instant::now();
-                
+
                 // Restore volume after speech ends
                 if speech_during_tts {
                     state.restore_tts_volume();

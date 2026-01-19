@@ -86,6 +86,7 @@ impl SessionManager {
             Err(e) => {
                 let _ = self.event_tx.send(SessionEvent::Error(e.to_string()));
                 self.state.tts_playing.store(false, Ordering::SeqCst);
+                self.state.set_tts_level(0.0);
                 return;
             }
         };
@@ -148,6 +149,7 @@ impl SessionManager {
             controller.stop();
             Tts::finish_controller(stream, controller);
             self.state.tts_playing.store(false, Ordering::SeqCst);
+            self.state.set_tts_level(0.0);
             let _ = self.event_tx.send(SessionEvent::Ready);
             return;
         }
@@ -189,5 +191,6 @@ impl SessionManager {
         let _ = self.event_tx.send(SessionEvent::SpeakingDone);
         let _ = self.event_tx.send(SessionEvent::Ready);
         self.state.tts_playing.store(false, Ordering::SeqCst);
+        self.state.set_tts_level(0.0);
     }
 }

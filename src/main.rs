@@ -198,7 +198,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
 
     // Create shared runtime state
     let runtime_state = RuntimeState::new(&config);
-    
+
     // Apply CLI flags to runtime state
     if cli.no_stt {
         runtime_state.mic_muted.store(true, Ordering::SeqCst);
@@ -221,7 +221,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     let mic_muted = Arc::new(AtomicBool::new(cli.no_stt));
     let tts_enabled = Arc::new(AtomicBool::new(!cli.no_tts));
     let wake_enabled = Arc::new(AtomicBool::new(!cli.no_stt));
-    
+
     // Clone runtime_state for VAD processor
     let runtime_state_vad = Arc::clone(&runtime_state);
 
@@ -253,6 +253,22 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     // Start audio capture thread
     let _stream = audio::start_capture(audio_tx)?;
 
+    // TTS level monitor thread - send updates when TTS is playing
+    let runtime_state_tts = Arc::clone(&runtime_state);
+    let display_tx_tts = display_tx.clone();
+    thread::spawn(move || {
+        loop {
+            // Only send if TTS is playing
+            if runtime_state_tts.tts_playing.load(Ordering::SeqCst) {
+                // Read real-time TTS level from runtime state (updated by MonitoredSource)
+                let level = runtime_state_tts.get_tts_level();
+                let _ = display_tx_tts.send(DisplayEvent::TtsLevel(level));
+            }
+            // Update every 50ms (same as audio level)
+            thread::sleep(std::time::Duration::from_millis(50));
+        }
+    });
+
     // Start VAD processing thread with crosstalk support
     let vad_handle = thread::spawn(move || {
         let use_gpu_vad = config.acceleration.vad_gpu;
@@ -270,8 +286,10 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
 
             match vad_result {
                 Ok(v) => {
-                    eprintln!("VAD: Silero enabled (crosstalk: {})",
-                        runtime_state_vad.crosstalk_enabled.load(Ordering::SeqCst));
+                    eprintln!(
+                        "VAD: Silero enabled (crosstalk: {})",
+                        runtime_state_vad.crosstalk_enabled.load(Ordering::SeqCst)
+                    );
                     Some(v)
                 }
                 Err(e) => {
@@ -611,6 +629,9 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                     DisplayEvent::AudioLevel(level) => {
                         tui.set_audio_level(level);
                     }
+                    DisplayEvent::TtsLevel(level) => {
+                        tui.set_tts_level(level);
+                    }
                     DisplayEvent::Preview(text) => {
                         // Use mode-aware transcript handling
                         let result = repl::handle_transcript_with_mode(
@@ -638,7 +659,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                             &command_processor,
                             &ui,
                         );
-                        
+
                         match result {
                             TranscriptResult::SendToLlm(input_text) => {
                                 tui.append_input(&input_text);
@@ -702,7 +723,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                 should_break = true;
                                 break;
                             }
-                            
+
                             // Check for slash commands first
                             if let Some(cmd_result) = command::process_slash_command(&line, &runtime_state) {
                                 match cmd_result {
@@ -736,14 +757,14 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                 keypress_mute_until = None;
                                 continue;
                             }
-                            
+
                             // Handle /stats separately (not in command module)
                             if line == "/stats" {
                                 let summary = stats.lock().unwrap().summary();
                                 tui.show_message(&summary);
                                 continue;
                             }
-                            
+
                             // Process through command processor for voice-style commands
                             let cmd_result = command_processor.process(&line, &runtime_state);
                             match cmd_result {
@@ -868,6 +889,7 @@ enum DisplayEvent {
     Preview(String),
     Final(String),
     AudioLevel(f32),
+    TtsLevel(f32),
 }
 
 async fn run_transcribe_mode() -> Result<(), Box<dyn Error + Send + Sync>> {

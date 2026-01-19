@@ -5,9 +5,9 @@
 
 #![allow(dead_code)] // Many fields/methods will be used in future phases
 
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use crate::config::Config;
 
@@ -92,6 +92,8 @@ pub struct RuntimeState {
     pub tts_playing: AtomicBool,
     /// Current TTS volume (0.0-1.0)
     pub tts_volume: AtomicF32,
+    /// Current TTS output RMS level (0.0-1.0)
+    pub tts_level: AtomicF32,
 
     // ========================================================================
     // Interaction state
@@ -138,6 +140,7 @@ impl RuntimeState {
             tts_enabled: AtomicBool::new(true),
             tts_playing: AtomicBool::new(false),
             tts_volume: AtomicF32::new(1.0),
+            tts_level: AtomicF32::new(0.0),
 
             // Interaction
             crosstalk_enabled: AtomicBool::new(config.interaction.crosstalk),
@@ -213,7 +216,18 @@ impl RuntimeState {
 
     /// Set TTS volume
     pub fn set_tts_volume(&self, volume: f32) {
-        self.tts_volume.store(volume.clamp(0.0, 1.0), Ordering::SeqCst);
+        self.tts_volume
+            .store(volume.clamp(0.0, 1.0), Ordering::SeqCst);
+    }
+
+    /// Update TTS output level
+    pub fn set_tts_level(&self, level: f32) {
+        self.tts_level.store(level, Ordering::SeqCst);
+    }
+
+    /// Get current TTS output level
+    pub fn get_tts_level(&self) -> f32 {
+        self.tts_level.load(Ordering::SeqCst)
     }
 
     // ========================================================================
@@ -312,11 +326,23 @@ impl fmt::Debug for RuntimeState {
             .field("mic_muted", &self.mic_muted.load(Ordering::SeqCst))
             .field("tts_enabled", &self.tts_enabled.load(Ordering::SeqCst))
             .field("tts_playing", &self.tts_playing.load(Ordering::SeqCst))
-            .field("crosstalk_enabled", &self.crosstalk_enabled.load(Ordering::SeqCst))
+            .field(
+                "crosstalk_enabled",
+                &self.crosstalk_enabled.load(Ordering::SeqCst),
+            )
             .field("wake_enabled", &self.wake_enabled.load(Ordering::SeqCst))
-            .field("in_conversation", &self.in_conversation.load(Ordering::SeqCst))
-            .field("llm_generating", &self.llm_generating.load(Ordering::SeqCst))
-            .field("cancel_requested", &self.cancel_requested.load(Ordering::SeqCst))
+            .field(
+                "in_conversation",
+                &self.in_conversation.load(Ordering::SeqCst),
+            )
+            .field(
+                "llm_generating",
+                &self.llm_generating.load(Ordering::SeqCst),
+            )
+            .field(
+                "cancel_requested",
+                &self.cancel_requested.load(Ordering::SeqCst),
+            )
             .finish()
     }
 }

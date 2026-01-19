@@ -1,10 +1,103 @@
 use crate::state::SharedState;
 use crate::stats::{SharedStats, StatKind, Timer};
-use rodio::{OutputStreamBuilder, Sink};
+use cpal::Sample;
+use rodio::{OutputStreamBuilder, Sink, Source};
 use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 pub trait TtsEngine: Send + Sync {
     fn synthesize(&self, text: &str) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error>>;
+}
+
+// ============================================================================
+// Audio Level Monitor - wraps a Source and monitors RMS levels in real-time
+// ============================================================================
+
+/// Wrapper around a Source that monitors audio levels as samples flow through
+pub struct MonitoredSource<I>
+where
+    I: Source,
+    I::Item: Sample,
+{
+    input: I,
+    state: SharedState,
+    buffer: Vec<f32>,
+    last_update: Instant,
+    update_interval: Duration,
+}
+
+impl<I> MonitoredSource<I>
+where
+    I: Source,
+    I::Item: Sample,
+{
+    pub fn new(input: I, state: SharedState) -> Self {
+        Self {
+            input,
+            state,
+            buffer: Vec::new(),
+            last_update: Instant::now(),
+            update_interval: Duration::from_millis(50), // Update every 50ms
+        }
+    }
+
+    fn update_level(&mut self) {
+        if self.buffer.is_empty() {
+            return;
+        }
+
+        // Calculate RMS of the buffered samples
+        let rms =
+            (self.buffer.iter().map(|s| s * s).sum::<f32>() / self.buffer.len() as f32).sqrt();
+        self.state.set_tts_level(rms);
+        self.buffer.clear();
+    }
+}
+
+impl<I> Iterator for MonitoredSource<I>
+where
+    I: Source,
+    I::Item: Sample,
+{
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let sample = self.input.next()?;
+
+        // Convert sample to f32 and add to buffer
+        let float_sample = sample.to_float_sample();
+        self.buffer.push(float_sample);
+
+        // Update level if enough time has passed
+        if self.last_update.elapsed() >= self.update_interval {
+            self.update_level();
+            self.last_update = Instant::now();
+        }
+
+        Some(sample)
+    }
+}
+
+impl<I> Source for MonitoredSource<I>
+where
+    I: Source,
+    I::Item: Sample,
+{
+    fn current_span_len(&self) -> Option<usize> {
+        self.input.current_span_len()
+    }
+
+    fn channels(&self) -> u16 {
+        self.input.channels()
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.input.sample_rate()
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        self.input.total_duration()
+    }
 }
 
 // ============================================================================
@@ -37,6 +130,7 @@ impl TtsController {
     pub fn stop(&self) {
         self.sink.stop();
         self.state.tts_playing.store(false, Ordering::SeqCst);
+        self.state.set_tts_level(0.0);
     }
 
     /// Check if TTS is currently playing
@@ -293,9 +387,14 @@ impl Tts {
         if let Some(t) = timer {
             t.finish(audio.len());
         }
-        controller
-            .sink()
-            .append(rodio::buffer::SamplesBuffer::new(1, sample_rate, audio));
+
+        // Create the audio buffer source
+        let source = rodio::buffer::SamplesBuffer::new(1, sample_rate, audio);
+
+        // Wrap it in a monitored source that tracks audio levels in real-time
+        let monitored_source = MonitoredSource::new(source, controller.state.clone());
+
+        controller.sink().append(monitored_source);
         Ok(())
     }
 

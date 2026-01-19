@@ -98,7 +98,7 @@ impl CommandProcessor {
     /// Process input text, returns command result
     pub fn process(&self, text: &str, state: &SharedState) -> CommandResult {
         let text_lower = text.to_lowercase().trim().to_string();
-        
+
         // Trim punctuation for better matching
         let text_trimmed = text_lower.trim_end_matches(|c: char| c.is_ascii_punctuation());
 
@@ -136,12 +136,20 @@ impl CommandProcessor {
     /// Check built-in commands
     fn check_builtin(&self, text: &str, state: &SharedState) -> Option<CommandResult> {
         // Shutdown commands
-        if text.contains("stand down") || text.contains("standdown") || text == "quit" || text == "exit" {
+        if text.contains("stand down")
+            || text.contains("standdown")
+            || text == "quit"
+            || text == "exit"
+        {
             return Some(CommandResult::Shutdown);
         }
 
         // Mode commands
-        if text.contains("start chat") || text.contains("let's chat") || text.contains("lets chat") || text.contains("resume") {
+        if text.contains("start chat")
+            || text.contains("let's chat")
+            || text.contains("lets chat")
+            || text.contains("resume")
+        {
             return Some(CommandResult::ModeChange {
                 mode: AppMode::Chat,
                 announcement: Some("Resuming conversation.".to_string()),
@@ -169,53 +177,82 @@ impl CommandProcessor {
             });
         }
 
-
         if text.contains("command mode") || text.contains("commands only") {
             return Some(CommandResult::ModeChange {
                 mode: AppMode::Command,
-                announcement: Some("Entering command mode. Only commands will be processed.".to_string()),
+                announcement: Some(
+                    "Entering command mode. Only commands will be processed.".to_string(),
+                ),
             });
         }
 
         // Toggle commands
         if text == "mute" || text == "mute mic" || text == "mute microphone" {
-            state.mic_muted.store(true, std::sync::atomic::Ordering::SeqCst);
-            return Some(CommandResult::Handled(Some("Microphone muted.".to_string())));
+            state
+                .mic_muted
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            return Some(CommandResult::Handled(Some(
+                "Microphone muted.".to_string(),
+            )));
         }
 
         if text == "unmute" || text == "unmute mic" || text == "unmute microphone" {
-            state.mic_muted.store(false, std::sync::atomic::Ordering::SeqCst);
-            return Some(CommandResult::Handled(Some("Microphone unmuted.".to_string())));
+            state
+                .mic_muted
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            return Some(CommandResult::Handled(Some(
+                "Microphone unmuted.".to_string(),
+            )));
         }
 
         if text == "be quiet" || text == "silence" || text == "disable speech" {
-            state.tts_enabled.store(false, std::sync::atomic::Ordering::SeqCst);
+            state
+                .tts_enabled
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             return Some(CommandResult::Handled(None)); // No spoken response since TTS is disabled
         }
 
         if text == "speak" || text == "enable speech" || text == "talk to me" {
-            state.tts_enabled.store(true, std::sync::atomic::Ordering::SeqCst);
+            state
+                .tts_enabled
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             return Some(CommandResult::Handled(Some("Speech enabled.".to_string())));
         }
 
         if text == "enable crosstalk" || text == "crosstalk on" {
-            state.crosstalk_enabled.store(true, std::sync::atomic::Ordering::SeqCst);
-            return Some(CommandResult::Handled(Some("Crosstalk enabled. I'll keep listening while speaking.".to_string())));
+            state
+                .crosstalk_enabled
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            return Some(CommandResult::Handled(Some(
+                "Crosstalk enabled. I'll keep listening while speaking.".to_string(),
+            )));
         }
 
         if text == "disable crosstalk" || text == "crosstalk off" {
-            state.crosstalk_enabled.store(false, std::sync::atomic::Ordering::SeqCst);
-            return Some(CommandResult::Handled(Some("Crosstalk disabled.".to_string())));
+            state
+                .crosstalk_enabled
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            return Some(CommandResult::Handled(Some(
+                "Crosstalk disabled.".to_string(),
+            )));
         }
 
         if text == "disable wake word" || text == "no wake word" {
-            state.wake_enabled.store(false, std::sync::atomic::Ordering::SeqCst);
-            return Some(CommandResult::Handled(Some("Wake word disabled. I'm always listening.".to_string())));
+            state
+                .wake_enabled
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            return Some(CommandResult::Handled(Some(
+                "Wake word disabled. I'm always listening.".to_string(),
+            )));
         }
 
         if text == "enable wake word" || text == "require wake word" {
-            state.wake_enabled.store(true, std::sync::atomic::Ordering::SeqCst);
-            return Some(CommandResult::Handled(Some("Wake word enabled.".to_string())));
+            state
+                .wake_enabled
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            return Some(CommandResult::Handled(Some(
+                "Wake word enabled.".to_string(),
+            )));
         }
 
         None
@@ -274,19 +311,47 @@ fn execute_action(action: &CommandAction, state: &SharedState) -> CommandResult 
             let (_new_state, msg) = match target {
                 ToggleTarget::Mute => {
                     let new = state.toggle_mic_mute();
-                    (new, if new { "Microphone muted." } else { "Microphone unmuted." })
+                    (
+                        new,
+                        if new {
+                            "Microphone muted."
+                        } else {
+                            "Microphone unmuted."
+                        },
+                    )
                 }
                 ToggleTarget::Tts => {
                     let new = state.toggle_tts();
-                    (new, if new { "Speech enabled." } else { "Speech disabled." })
+                    (
+                        new,
+                        if new {
+                            "Speech enabled."
+                        } else {
+                            "Speech disabled."
+                        },
+                    )
                 }
                 ToggleTarget::Crosstalk => {
                     let new = state.toggle_crosstalk();
-                    (new, if new { "Crosstalk enabled." } else { "Crosstalk disabled." })
+                    (
+                        new,
+                        if new {
+                            "Crosstalk enabled."
+                        } else {
+                            "Crosstalk disabled."
+                        },
+                    )
                 }
                 ToggleTarget::Wake => {
                     let new = state.toggle_wake();
-                    (new, if new { "Wake word enabled." } else { "Wake word disabled." })
+                    (
+                        new,
+                        if new {
+                            "Wake word enabled."
+                        } else {
+                            "Wake word disabled."
+                        },
+                    )
                 }
             };
             CommandResult::Handled(Some(msg.to_string()))
@@ -302,7 +367,7 @@ fn execute_action(action: &CommandAction, state: &SharedState) -> CommandResult 
 /// Check if input is a slash command (keyboard input)
 pub fn process_slash_command(input: &str, state: &SharedState) -> Option<CommandResult> {
     let input = input.trim();
-    
+
     if !input.starts_with('/') {
         return None;
     }
@@ -312,72 +377,85 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
     match cmd.as_str() {
         "mute" | "mic" => {
             let muted = state.toggle_mic_mute();
-            Some(CommandResult::Handled(Some(
-                if muted { "Mic muted".to_string() } else { "Mic unmuted".to_string() }
-            )))
+            Some(CommandResult::Handled(Some(if muted {
+                "Mic muted".to_string()
+            } else {
+                "Mic unmuted".to_string()
+            })))
         }
         "tts" | "speak" => {
             let enabled = state.toggle_tts();
-            Some(CommandResult::Handled(Some(
-                if enabled { "TTS enabled".to_string() } else { "TTS disabled".to_string() }
-            )))
+            Some(CommandResult::Handled(Some(if enabled {
+                "TTS enabled".to_string()
+            } else {
+                "TTS disabled".to_string()
+            })))
         }
         "crosstalk" => {
             let enabled = state.toggle_crosstalk();
-            Some(CommandResult::Handled(Some(
-                if enabled { "Crosstalk enabled".to_string() } else { "Crosstalk disabled".to_string() }
-            )))
+            Some(CommandResult::Handled(Some(if enabled {
+                "Crosstalk enabled".to_string()
+            } else {
+                "Crosstalk disabled".to_string()
+            })))
         }
         "wake" => {
             let enabled = state.toggle_wake();
-            Some(CommandResult::Handled(Some(
-                if enabled { "Wake word required".to_string() } else { "Wake word disabled".to_string() }
-            )))
+            Some(CommandResult::Handled(Some(if enabled {
+                "Wake word required".to_string()
+            } else {
+                "Wake word disabled".to_string()
+            })))
         }
-        "chat" => {
-            Some(CommandResult::ModeChange {
-                mode: AppMode::Chat,
-                announcement: Some("Chat mode".to_string()),
-            })
-        }
-        "transcribe" => {
-            Some(CommandResult::ModeChange {
-                mode: AppMode::Transcribe,
-                announcement: Some("Transcribe mode".to_string()),
-            })
-        }
-        "note" => {
-            Some(CommandResult::ModeChange {
-                mode: AppMode::NoteTaking,
-                announcement: Some("Note mode".to_string()),
-            })
-        }
-        "pause" => {
-            Some(CommandResult::ModeChange {
-                mode: AppMode::Paused,
-                announcement: Some("Paused".to_string()),
-            })
-        }
-        "command" => {
-            Some(CommandResult::ModeChange {
-                mode: AppMode::Command,
-                announcement: Some("Command mode".to_string()),
-            })
-        }
-        "stop" => {
-            Some(CommandResult::Stop)
-        }
-        "quit" | "exit" => {
-            Some(CommandResult::Shutdown)
-        }
+        "chat" => Some(CommandResult::ModeChange {
+            mode: AppMode::Chat,
+            announcement: Some("Chat mode".to_string()),
+        }),
+        "transcribe" => Some(CommandResult::ModeChange {
+            mode: AppMode::Transcribe,
+            announcement: Some("Transcribe mode".to_string()),
+        }),
+        "note" => Some(CommandResult::ModeChange {
+            mode: AppMode::NoteTaking,
+            announcement: Some("Note mode".to_string()),
+        }),
+        "pause" => Some(CommandResult::ModeChange {
+            mode: AppMode::Paused,
+            announcement: Some("Paused".to_string()),
+        }),
+        "command" => Some(CommandResult::ModeChange {
+            mode: AppMode::Command,
+            announcement: Some("Command mode".to_string()),
+        }),
+        "stop" => Some(CommandResult::Stop),
+        "quit" | "exit" => Some(CommandResult::Shutdown),
         "status" => {
             let status = format!(
                 "Mode: {}, Mic: {}, TTS: {}, Crosstalk: {}, Wake: {}",
                 state.mode(),
-                if state.mic_muted.load(std::sync::atomic::Ordering::SeqCst) { "muted" } else { "on" },
-                if state.tts_enabled.load(std::sync::atomic::Ordering::SeqCst) { "on" } else { "off" },
-                if state.crosstalk_enabled.load(std::sync::atomic::Ordering::SeqCst) { "on" } else { "off" },
-                if state.wake_enabled.load(std::sync::atomic::Ordering::SeqCst) { "required" } else { "off" },
+                if state.mic_muted.load(std::sync::atomic::Ordering::SeqCst) {
+                    "muted"
+                } else {
+                    "on"
+                },
+                if state.tts_enabled.load(std::sync::atomic::Ordering::SeqCst) {
+                    "on"
+                } else {
+                    "off"
+                },
+                if state
+                    .crosstalk_enabled
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    "on"
+                } else {
+                    "off"
+                },
+                if state.wake_enabled.load(std::sync::atomic::Ordering::SeqCst) {
+                    "required"
+                } else {
+                    "off"
+                },
             );
             Some(CommandResult::Handled(Some(status)))
         }
@@ -407,7 +485,8 @@ Voice commands:
   'command mode' - Enter command-only mode
   'stand down' - Exit application
   
-Wake word: Say wake phrase when paused to resume".to_string();
+Wake word: Say wake phrase when paused to resume"
+                .to_string();
             Some(CommandResult::Handled(Some(help)))
         }
         _ => None,
@@ -429,10 +508,22 @@ mod tests {
         let processor = CommandProcessor::new(&config);
         let state = test_state();
 
-        assert!(matches!(processor.process("stop", &state), CommandResult::Stop));
-        assert!(matches!(processor.process("Stop", &state), CommandResult::Stop));
-        assert!(matches!(processor.process("STOP", &state), CommandResult::Stop));
-        assert!(matches!(processor.process("quiet", &state), CommandResult::Stop));
+        assert!(matches!(
+            processor.process("stop", &state),
+            CommandResult::Stop
+        ));
+        assert!(matches!(
+            processor.process("Stop", &state),
+            CommandResult::Stop
+        ));
+        assert!(matches!(
+            processor.process("STOP", &state),
+            CommandResult::Stop
+        ));
+        assert!(matches!(
+            processor.process("quiet", &state),
+            CommandResult::Stop
+        ));
     }
 
     #[test]
@@ -442,10 +533,22 @@ mod tests {
         let state = test_state();
 
         let result = processor.process("start chat", &state);
-        assert!(matches!(result, CommandResult::ModeChange { mode: AppMode::Chat, .. }));
+        assert!(matches!(
+            result,
+            CommandResult::ModeChange {
+                mode: AppMode::Chat,
+                ..
+            }
+        ));
 
         let result = processor.process("let's chat", &state);
-        assert!(matches!(result, CommandResult::ModeChange { mode: AppMode::Chat, .. }));
+        assert!(matches!(
+            result,
+            CommandResult::ModeChange {
+                mode: AppMode::Chat,
+                ..
+            }
+        ));
     }
 
     #[test]

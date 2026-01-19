@@ -34,6 +34,7 @@ pub struct Tui {
     spinner_type: SpinnerType,
     spin_frame: usize,
     audio_level: f32,
+    tts_level: f32,
     input_activity: bool,
     keypress_activity: bool,
     mic_muted: bool,
@@ -61,6 +62,7 @@ impl Tui {
             spinner_type: SpinnerType::Dots,
             spin_frame: 0,
             audio_level: 0.0,
+            tts_level: 0.0,
             input_activity: false,
             keypress_activity: false,
             mic_muted: false,
@@ -248,6 +250,13 @@ impl Tui {
             if self.tts_enabled { "🔊" } else { "🔈" },
             if self.wake_enabled { "👂" } else { "💤" },
         );
+        // TTS output level visualization (animated bars)
+        let tts_viz = if self.spinner_type == SpinnerType::Music && self.tts_level > 0.0 {
+            let idx = ((self.tts_level * 30.0).min(1.0) * (BARS.len() - 1) as f32) as usize;
+            format!(" │ \x1b[95m{}\x1b[90m", BARS[idx])
+        } else {
+            String::new()
+        };
         // Mode indicator with color coding
         let mode_str = match self.mode {
             AppMode::Chat => "\x1b[92m💬 Chat\x1b[90m",
@@ -257,8 +266,14 @@ impl Tui {
             AppMode::Command => "\x1b[96m⌘ Command\x1b[90m",
         };
         let status_content = format!(
-            "{}{} │ {} │ {} │ 📝 {} │ 💬 {}",
-            spinner_str, self.status, mode_str, toggles, self.context_words, self.last_response_words
+            "{}{} │ {} │ {}{} │ 📝 {} │ 💬 {}",
+            spinner_str,
+            self.status,
+            mode_str,
+            toggles,
+            tts_viz,
+            self.context_words,
+            self.last_response_words
         );
         let status_width = status_content.width();
         let padding = if term_width > status_width {
@@ -483,6 +498,10 @@ impl Tui {
 
     pub fn set_audio_level(&mut self, level: f32) {
         self.audio_level = level;
+    }
+
+    pub fn set_tts_level(&mut self, level: f32) {
+        self.tts_level = level;
     }
 
     /// Check if there was input activity (keypress) since last call

@@ -823,360 +823,149 @@ impl Orb {
         (intensity, glow)
     }
 
-    // Efficient raycast-based sphere renderer with noise displacement and sparse rendering
+    // Advanced volumetric raymarching sphere renderer inspired by shader art
     fn sample_sphere(&self, x: f64, y: f64, max_r: f64) -> (f64, f64, f64) {
-        let freq = self.current_frequency();
-        let time_scale = self.time * freq;
-
-        // SPHERE-SPECIFIC SCALING: Make sphere bigger for more screen coverage
-        let sphere_scale = 2.0; // Increased from 2.5 for bigger sphere
-        let x_scaled = x / sphere_scale;
-        let y_scaled = y / sphere_scale;
-        let max_r_scaled = max_r / sphere_scale;
-
-        // Normalize coordinates for raycast
-        let x_norm = x_scaled / max_r_scaled;
-        let y_norm = y_scaled / max_r_scaled;
-        let screen_dist = (x_norm * x_norm + y_norm * y_norm).sqrt();
-
-        // Early exit for points far outside sphere - DISABLED for maximum coverage
-        if screen_dist > 1.2 {
-            return (0.0, 0.0, 0.0);
+        let time = self.time * self.current_frequency();
+        
+        // COORDINATE SETUP: Proper centering and camera distance
+        // Normalize coordinates to [-1, 1] range, centered at origin
+        let u = (x / max_r, y / max_r);
+        
+        // Scale down the sphere to move it further from camera and center it properly
+        let sphere_scale = 2.0; // Set to 2.0 to make orb smaller
+        let u = (u.0 * sphere_scale, u.1 * sphere_scale);
+        
+        // VOLUMETRIC RAYMARCHING: Multiple samples through volume
+        let mut color_accumulator = (0.0, 0.0, 0.0);
+        let mut depth = 0.1 * self.smooth_audio; // Audio-reactive initial depth
+        let max_steps = 64; // Reduced from 64 for better performance
+        
+        for step in 0..max_steps {
+            if step as f64 >= 100.0 { break; } // Match shader's 1e2 limit
+            
+            // RAYMARCHING POSITION: Move sphere further back and center it
+            let mut p = (u.0 * depth, u.1 * depth, depth - 25.0); // Increased from -16.0 to -25.0
+            let mut q = p;
+            
+            // ROTATION: p.xy *= mat2(cos(t+p.z*.2+vec4(0,33,11,0)))
+            let rotation_angle = time + p.2 * 0.2;
+            let cos_rot = rotation_angle.cos();
+            let sin_rot = (rotation_angle + 0.33).sin(); // Offset for matrix
+            let rotated_x = p.0 * cos_rot - p.1 * sin_rot;
+            let rotated_y = p.0 * sin_rot + p.1 * cos_rot;
+            p.0 = rotated_x;
+            p.1 = rotated_y;
+            
+            // TURBULENCE: Multi-octave distortion like the shader
+            for octave in 1..=6 {
+                let s = octave as f64;
+                
+                // q += sin(.3*t+p.xzy*s*.3)*.3
+                q.0 += (0.3 * time + p.0 * s * 0.3).sin() * 0.3;
+                q.1 += (0.3 * time + p.2 * s * 0.3).sin() * 0.3;
+                q.2 += (0.3 * time + p.1 * s * 0.3).sin() * 0.3;
+                
+                // p += sin(.4*t+q.yzx*s*.4)*.3
+                p.0 += (0.4 * time + q.1 * s * 0.4).sin() * 0.3;
+                p.1 += (0.4 * time + q.2 * s * 0.4).sin() * 0.3;
+                p.2 += (0.4 * time + q.0 * s * 0.4).sin() * 0.3;
+            }
+            
+            // DISTANCE FIELD: Complex sphere field calculation
+            // abs(p-floor(p)-.5) creates repeating cells
+            let cell_p = (
+                (p.0 - p.0.floor() - 0.5).abs(),
+                (p.1 - p.1.floor() - 0.5).abs(),
+                (p.2 - p.2.floor() - 0.5).abs(),
+            );
+            
+            // dot(abs(p-floor(p)-.5), vec3(1)) - distance to cell edges
+            let cell_distance = cell_p.0 + cell_p.1 + cell_p.2;
+            
+            // Sphere distances with audio-reactive scaling - adjusted for smaller orb size
+            let sphere_scale = 6.0 + self.smooth_audio * 1.5; // Reduced from 8.0 to 6.0
+            let p_sphere = (p.0 * p.0 + p.1 * p.1 + p.2 * p.2).sqrt() - sphere_scale;
+            let q_sphere = (q.0 * q.0 + q.1 * q.1 + q.2 * q.2).sqrt() - sphere_scale;
+            
+            // min(dot(...), max(length(p)-6., length(q)-6.))
+            let field_distance = cell_distance.min(p_sphere.max(q_sphere)).abs();
+            
+            // WARPING: s = .005+abs(mix(s, .001/abs(p.y), length(u)))
+            let u_length = (u.0 * u.0 + u.1 * u.1).sqrt();
+            let warp_factor = if p.1.abs() > 0.001 {
+                0.001 / p.1.abs()
+            } else {
+                0.001
+            };
+            let mixed_distance = field_distance * (1.0 - u_length) + warp_factor * u_length;
+            let step_size = 0.005 + mixed_distance.abs();
+            
+            // ACCUMULATE DISTANCE: d += s
+            depth += step_size;
+            
+            // COLOR ACCUMULATION: Multi-component color like the shader
+            if field_distance < 0.1 {
+                // (1.+cos(p.z+vec4(6,4,2,0))) / s
+                let p_color = (
+                    (1.0 + (p.2 + 6.0).cos()) / step_size,
+                    (1.0 + (p.2 + 4.0).cos()) / step_size,
+                    (1.0 + (p.2 + 2.0).cos()) / step_size,
+                );
+                
+                // (1.+cos(q.z+vec4(3,1,0,0))) / s
+                let q_color = (
+                    (1.0 + (q.2 + 3.0).cos()) / step_size,
+                    (1.0 + (q.2 + 1.0).cos()) / step_size,
+                    (1.0 + q.2.cos()) / step_size,
+                );
+                
+                // Combine colors
+                color_accumulator.0 += p_color.0 + q_color.0;
+                color_accumulator.1 += p_color.1 + q_color.1;
+                color_accumulator.2 += p_color.2 + q_color.2;
+            }
+            
+            // Early exit if we've accumulated enough or gone too far
+            if depth > 20.0 || color_accumulator.0 > 10.0 {
+                break;
+            }
         }
-
-        // SPARSE RENDERING DISABLED: Show all pixels for maximum particle density
-        let pixel_hash = hash(
-            x_norm * 1200.0,
-            y_norm * 1200.0,
-            (time_scale * 12.0).floor(),
+        
+        // TONE MAPPING: tanh(o*o/8e7) - compress dynamic range
+        let scale_factor = 1.0 / 80000.0; // Adjusted for ASCII rendering
+        let tone_mapped = (
+            (color_accumulator.0 * color_accumulator.0 * scale_factor).tanh(),
+            (color_accumulator.1 * color_accumulator.1 * scale_factor).tanh(),
+            (color_accumulator.2 * color_accumulator.2 * scale_factor).tanh(),
         );
-
-        // Significantly increased particle density - much more particles
-        let sparsity_threshold = match self.target_state {
-            OrbState::Idle => 0.45,      // 55% of pixels - increased from 30%
-            OrbState::Listening => 0.35, // 65% of pixels - increased from 40%
-            OrbState::Thinking => 0.20,  // 80% of pixels - increased from 55%
-            OrbState::Speaking => 0.30,  // 70% of pixels - increased from 45%
-            OrbState::Error => 0.15,     // 85% of pixels - increased from 65%
+        
+        // STATE-DEPENDENT INTENSITY SCALING
+        let state_multiplier = match self.target_state {
+            OrbState::Idle => 0.6,
+            OrbState::Listening => 0.8,
+            OrbState::Thinking => 1.2,
+            OrbState::Speaking => 1.0,
+            OrbState::Error => 1.5,
         };
-
-        // Sparse rendering DISABLED for maximum coverage
-        if pixel_hash > sparsity_threshold {
-            return (0.0, 0.0, 0.0);
-        }
-
-        // RAYCAST TO SPHERE: Calculate intersection with unit sphere
-        let ray_origin = (x_norm, y_norm, -2.0); // Camera position
-        let ray_dir = (0.0, 0.0, 1.0); // Ray direction (towards sphere)
-
-        // Sphere intersection math: |ray_origin + t * ray_dir|² = 1
-        // Solving quadratic equation for t
-        let a = ray_dir.0 * ray_dir.0 + ray_dir.1 * ray_dir.1 + ray_dir.2 * ray_dir.2; // Should be 1.0
-        let b =
-            2.0 * (ray_origin.0 * ray_dir.0 + ray_origin.1 * ray_dir.1 + ray_origin.2 * ray_dir.2);
-        let c =
-            ray_origin.0 * ray_origin.0 + ray_origin.1 * ray_origin.1 + ray_origin.2 * ray_origin.2
-                - 1.0;
-
-        let discriminant = b * b - 4.0 * a * c;
-
-        // No intersection with sphere
-        if discriminant < 0.0 {
-            return (0.0, 0.0, 0.0);
-        }
-
-        // Calculate intersection point (use closer intersection)
-        let t = (-b - discriminant.sqrt()) / (2.0 * a);
-
-        // Skip if intersection is behind camera
-        if t < 0.0 {
-            return (0.0, 0.0, 0.0);
-        }
-
-        // Calculate 3D position on sphere surface
-        let hit_x = ray_origin.0 + t * ray_dir.0;
-        let hit_y = ray_origin.1 + t * ray_dir.1;
-        let hit_z = ray_origin.2 + t * ray_dir.2;
-
-        // DISPLACEMENT MAPPING: Enhanced particle animation with distance-based movement
-        let time_offset = time_scale * 0.3; // Slower base animation
-
-        // Calculate distance from center for particle animation
-        let center_distance = (hit_x * hit_x + hit_y * hit_y + hit_z * hit_z).sqrt();
-
-        // DISTANCE-BASED ANIMATION: Particles animate based on distance to center
-        let distance_phase = center_distance * 8.0 + time_offset * 2.0;
-        let distance_wave = (distance_phase).sin() * 0.15;
-
-        // Multi-octave noise for surface displacement with enhanced randomness
-        let noise_scale_1 = 3.0; // Primary surface features - increased for more variation
-        let noise_scale_2 = 6.0; // Secondary detail - increased
-        let noise_scale_3 = 12.0; // Fine detail - increased
-
-        // Enhanced random positioning using multiple hash layers
-        let pos_hash_1 = hash(hit_x * 47.3, hit_y * 83.7, hit_z * 29.1);
-        let pos_hash_2 = hash(hit_x * 127.1, hit_y * 311.7, hit_z * 74.7);
-        let random_offset = (pos_hash_1 - 0.5) * 0.3 + (pos_hash_2 - 0.5) * 0.2;
-
-        // Sample noise at hit position with random offsets for non-uniform distribution
-        let noise_1 = fbm(
-            hit_x * noise_scale_1 + time_offset + random_offset,
-            hit_y * noise_scale_1 + time_offset + random_offset,
-            hit_z * noise_scale_1 + time_offset + random_offset,
-            4,
-            0.5,
-        );
-
-        let noise_2 = fbm(
-            hit_x * noise_scale_2 + time_offset * 1.3 + random_offset * 2.0,
-            hit_y * noise_scale_2 + time_offset * 1.3 + random_offset * 2.0,
-            hit_z * noise_scale_2 + time_offset * 1.3 + random_offset * 2.0,
-            3,
-            0.6,
-        );
-
-        let noise_3 = fbm(
-            hit_x * noise_scale_3 + time_offset * 0.7 + random_offset * 3.0,
-            hit_y * noise_scale_3 + time_offset * 0.7 + random_offset * 3.0,
-            hit_z * noise_scale_3 + time_offset * 0.7 + random_offset * 3.0,
-            2,
-            0.4,
-        );
-
-        // Combine noise layers with distance-based animation
-        let surface_noise = noise_1 * 0.5 + noise_2 * 0.3 + noise_3 * 0.2 + distance_wave;
-
-        // ENHANCED DISPLACEMENT HEIGHT - Maximum dramatic displacement
-        let displacement_amplitude = match self.target_state {
-            OrbState::Idle => 2.0,      // Increased from 1.2
-            OrbState::Listening => 2.8, // Increased from 1.6
-            OrbState::Thinking => 4.0,  // Increased from 2.4
-            OrbState::Speaking => 3.2,  // Increased from 1.8
-            OrbState::Error => 5.0,     // Increased from 2.8 - maximum displacement
-        };
-
-        // Apply displacement with enhanced particle behavior
-        let displacement = surface_noise.clamp(-1.0, 1.0) * displacement_amplitude;
-
-        // Enhanced audio-reactive displacement with distance modulation
-        let audio_displacement = self.smooth_audio * 0.8 * (1.0 + center_distance * 0.5);
-
-        // Particle clustering effect - particles tend to cluster and separate organically
-        let cluster_noise = fbm(
-            hit_x * 20.0 + time_offset * 0.5,
-            hit_y * 20.0 + time_offset * 0.5,
-            hit_z * 20.0 + time_offset * 0.5,
-            2,
-            0.7,
-        );
-        let cluster_effect = cluster_noise * 0.4;
-
-        // Final surface displacement with all effects combined
-        let total_displacement = displacement + audio_displacement + cluster_effect;
-
-        // Calculate displaced surface position (for potential future use)
-        let base_normal = (hit_x, hit_y, hit_z); // Unit sphere normal
-        let _displaced_pos = (
-            hit_x + base_normal.0 * total_displacement,
-            hit_y + base_normal.1 * total_displacement,
-            hit_z + base_normal.2 * total_displacement,
-        );
-
-        // PROPER 3D LIGHTING: Calculate surface normal and apply realistic lighting
-
-        // Calculate displaced surface normal using gradient approximation
-        let epsilon = 0.01;
-
-        // Sample displacement at nearby points to calculate gradient
-        let dx_pos = fbm(
-            (hit_x + epsilon) * noise_scale_1 + time_offset,
-            hit_y * noise_scale_1 + time_offset,
-            hit_z * noise_scale_1 + time_offset,
-            4,
-            0.5,
-        ) * displacement_amplitude;
-
-        let dx_neg = fbm(
-            (hit_x - epsilon) * noise_scale_1 + time_offset,
-            hit_y * noise_scale_1 + time_offset,
-            hit_z * noise_scale_1 + time_offset,
-            4,
-            0.5,
-        ) * displacement_amplitude;
-
-        let dy_pos = fbm(
-            hit_x * noise_scale_1 + time_offset,
-            (hit_y + epsilon) * noise_scale_1 + time_offset,
-            hit_z * noise_scale_1 + time_offset,
-            4,
-            0.5,
-        ) * displacement_amplitude;
-
-        let dy_neg = fbm(
-            hit_x * noise_scale_1 + time_offset,
-            (hit_y - epsilon) * noise_scale_1 + time_offset,
-            hit_z * noise_scale_1 + time_offset,
-            4,
-            0.5,
-        ) * displacement_amplitude;
-
-        let dz_pos = fbm(
-            hit_x * noise_scale_1 + time_offset,
-            hit_y * noise_scale_1 + time_offset,
-            (hit_z + epsilon) * noise_scale_1 + time_offset,
-            4,
-            0.5,
-        ) * displacement_amplitude;
-
-        let dz_neg = fbm(
-            hit_x * noise_scale_1 + time_offset,
-            hit_y * noise_scale_1 + time_offset,
-            (hit_z - epsilon) * noise_scale_1 + time_offset,
-            4,
-            0.5,
-        ) * displacement_amplitude;
-
-        // Calculate gradient (surface tangent)
-        let gradient_x = (dx_pos - dx_neg) / (2.0 * epsilon);
-        let gradient_y = (dy_pos - dy_neg) / (2.0 * epsilon);
-        let gradient_z = (dz_pos - dz_neg) / (2.0 * epsilon);
-
-        // Calculate perturbed surface normal
-        let base_normal = (hit_x, hit_y, hit_z); // Original sphere normal
-        let perturbed_normal = (
-            base_normal.0 + gradient_x * 0.5,
-            base_normal.1 + gradient_y * 0.5,
-            base_normal.2 + gradient_z * 0.5,
-        );
-
-        // Normalize the perturbed normal
-        let normal_length = (perturbed_normal.0 * perturbed_normal.0
-            + perturbed_normal.1 * perturbed_normal.1
-            + perturbed_normal.2 * perturbed_normal.2)
-            .sqrt();
-
-        let normal = if normal_length > 0.001 {
-            (
-                perturbed_normal.0 / normal_length,
-                perturbed_normal.1 / normal_length,
-                perturbed_normal.2 / normal_length,
-            )
-        } else {
-            base_normal
-        };
-
-        // LIGHTING SETUP: Multiple light sources for realistic shading
-
-        // Primary light (key light) - from upper front left
-        let light1_dir = (0.5, -0.3, -0.8);
-        let light1_intensity = 1.0;
-        let light1_color = 1.0;
-
-        // Secondary light (fill light) - from lower right
-        let light2_dir = (-0.3, 0.4, -0.6);
-        let light2_intensity = 0.4;
-        let light2_color = 0.8;
-
-        // Rim light - from behind
-        let light3_dir = (0.0, 0.0, 1.0);
-        let light3_intensity = 0.3;
-        let light3_color = 0.6;
-
-        // DIFFUSE LIGHTING: Lambert's cosine law
-        let diffuse1 =
-            (normal.0 * light1_dir.0 + normal.1 * light1_dir.1 + normal.2 * light1_dir.2).max(0.0)
-                * light1_intensity
-                * light1_color;
-
-        let diffuse2 =
-            (normal.0 * light2_dir.0 + normal.1 * light2_dir.1 + normal.2 * light2_dir.2).max(0.0)
-                * light2_intensity
-                * light2_color;
-
-        let diffuse3 =
-            (normal.0 * light3_dir.0 + normal.1 * light3_dir.1 + normal.2 * light3_dir.2).max(0.0)
-                * light3_intensity
-                * light3_color;
-
-        // SPECULAR LIGHTING: Blinn-Phong reflection
-        let view_dir = (0.0, 0.0, -1.0); // Camera looking down -Z
-
-        // Calculate half-vector for Blinn-Phong
-        let half1 = (
-            (light1_dir.0 + view_dir.0) * 0.5,
-            (light1_dir.1 + view_dir.1) * 0.5,
-            (light1_dir.2 + view_dir.2) * 0.5,
-        );
-        let half1_len = (half1.0 * half1.0 + half1.1 * half1.1 + half1.2 * half1.2).sqrt();
-        let half1_norm = if half1_len > 0.001 {
-            (
-                half1.0 / half1_len,
-                half1.1 / half1_len,
-                half1.2 / half1_len,
-            )
-        } else {
-            (0.0, 0.0, -1.0)
-        };
-
-        let specular_power = 32.0; // Shininess
-        let specular1 =
-            (normal.0 * half1_norm.0 + normal.1 * half1_norm.1 + normal.2 * half1_norm.2)
-                .max(0.0)
-                .powf(specular_power)
-                * light1_intensity
-                * 0.5;
-
-        // AMBIENT LIGHTING: Base illumination
-        let ambient = 0.15;
-
-        // COMBINE LIGHTING: Realistic lighting model
-        let total_diffuse = diffuse1 + diffuse2 + diffuse3 + ambient;
-        let total_specular = specular1;
-
-        // SURFACE DETAIL: Add high-frequency detail for texture with bigger particles
-        let surface_detail = fbm(
-            hit_x * 12.0 + time_offset * 0.5, // Reduced from 20.0 for bigger particles
-            hit_y * 12.0 + time_offset * 0.5,
-            hit_z * 12.0 + time_offset * 0.5,
-            3,
-            0.4,
-        );
-
-        // PARTICLE THRESHOLD: Render all particles - no filtering
-        let particle_threshold = match self.target_state {
-            OrbState::Idle => -1.0,      // Negative threshold = all particles render
-            OrbState::Listening => -1.0, // All particles
-            OrbState::Thinking => -1.0,  // All particles
-            OrbState::Speaking => -1.0,  // All particles
-            OrbState::Error => -1.0,     // All particles
-        };
-
-        // Only render if surface detail exceeds threshold (creates particle effect)
-        let particle_mask = if surface_detail > particle_threshold {
-            1.0
-        } else {
-            0.0
-        };
-
-        // FINAL SHADING: Combine all lighting components with enhanced brightness
-        let base_intensity = (total_diffuse * 0.9 + total_specular * 0.3) * particle_mask; // Increased from 0.8 and 0.2
-
-        // Enhanced glow from specular highlights with more intensity
-        let glow_intensity =
-            (total_specular * 1.2 + (total_diffuse - 0.4).max(0.0) * 0.5) * particle_mask; // Increased multipliers
-
-        // Audio-reactive brightness modulation with higher boost
-        let audio_boost = 1.0 + self.smooth_audio * 0.6; // Increased from 0.4
-        let final_intensity = (base_intensity * audio_boost).clamp(0.0, 1.0);
-
-        // Secondary intensity for dual-color effects
+        
+        // AUDIO REACTIVITY
+        let audio_boost = 1.0 + self.smooth_audio * 0.8;
+        
+        // FINAL OUTPUT: Convert to intensity, glow, secondary
+        let total_intensity = (tone_mapped.0 + tone_mapped.1 + tone_mapped.2) / 3.0;
+        let final_intensity = (total_intensity * state_multiplier * audio_boost).clamp(0.0, 1.0);
+        
+        // Glow from high-frequency components
+        let glow_intensity = (tone_mapped.0.max(tone_mapped.1).max(tone_mapped.2) * 0.7).clamp(0.0, 1.0);
+        
+        // Secondary color from color variation
         let secondary_intensity = if self.composite.secondary.is_some() {
-            let sec_lighting = (diffuse2 + diffuse3) * self.composite.blend * particle_mask;
-            sec_lighting.clamp(0.0, 1.0) * 0.7
+            let color_variation = (tone_mapped.0 - tone_mapped.2).abs() * self.composite.blend;
+            (color_variation * 0.8).clamp(0.0, 1.0)
         } else {
             0.0
         };
-
+        
         (final_intensity, glow_intensity, secondary_intensity)
     }
 

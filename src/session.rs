@@ -5,7 +5,7 @@ use crate::state::SharedState;
 use crate::stats::{LlmTimer, SharedStats};
 use crate::tts::Tts;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 
 pub enum SessionCommand {
@@ -29,39 +29,29 @@ pub enum SessionEvent {
 pub struct SessionManager {
     chat: Chat,
     tts: Tts,
-    tts_playing: Arc<AtomicBool>,
-    tts_enabled: Arc<AtomicBool>,
     event_tx: mpsc::UnboundedSender<SessionEvent>,
     stats: Option<SharedStats>,
-    state: Option<SharedState>,
+    state: SharedState,
 }
 
 impl SessionManager {
     pub fn new(
         chat: Chat,
         tts: Tts,
-        tts_playing: Arc<AtomicBool>,
-        tts_enabled: Arc<AtomicBool>,
+        state: SharedState,
         event_tx: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         Self {
             chat,
             tts,
-            tts_playing,
-            tts_enabled,
             event_tx,
             stats: None,
-            state: None,
+            state,
         }
     }
 
     pub fn with_stats(mut self, stats: SharedStats) -> Self {
         self.stats = Some(stats);
-        self
-    }
-
-    pub fn with_state(mut self, state: SharedState) -> Self {
-        self.state = Some(state);
         self
     }
 
@@ -83,38 +73,20 @@ impl SessionManager {
 
     fn process_message(&mut self, message: &str) {
         // Clear any previous cancel request
-        if let Some(ref state) = self.state {
-            state.clear_cancel();
-        }
+        self.state.clear_cancel();
 
-        self.tts_playing.store(true, Ordering::SeqCst);
-        if let Some(ref state) = self.state {
-            state.tts_playing.store(true, Ordering::SeqCst);
-        }
+        self.state.tts_playing.store(true, Ordering::SeqCst);
         let _ = self.event_tx.send(SessionEvent::Thinking);
 
         self.chat.history_push_user(message);
 
-        // Create TTS controller if state is available, otherwise use legacy sink
-        let _use_controller = self.state.is_some();
-        let (stream, controller, sink) = if let Some(ref state) = self.state {
-            match Tts::create_controller(Arc::clone(state)) {
-                Ok((s, c)) => (s, Some(c), None),
-                Err(e) => {
-                    let _ = self.event_tx.send(SessionEvent::Error(e.to_string()));
-                    self.tts_playing.store(false, Ordering::SeqCst);
-                    state.tts_playing.store(false, Ordering::SeqCst);
-                    return;
-                }
-            }
-        } else {
-            match Tts::create_sink() {
-                Ok((s, sink)) => (s, None, Some(sink)),
-                Err(e) => {
-                    let _ = self.event_tx.send(SessionEvent::Error(e.to_string()));
-                    self.tts_playing.store(false, Ordering::SeqCst);
-                    return;
-                }
+        // Create TTS controller with state
+        let (stream, controller) = match Tts::create_controller(Arc::clone(&self.state)) {
+            Ok((s, c)) => (s, c),
+            Err(e) => {
+                let _ = self.event_tx.send(SessionEvent::Error(e.to_string()));
+                self.state.tts_playing.store(false, Ordering::SeqCst);
+                return;
             }
         };
 
@@ -124,7 +96,7 @@ impl SessionManager {
         let mut full_response = String::new();
 
         let event_tx = self.event_tx.clone();
-        let tts_enabled = Arc::clone(&self.tts_enabled);
+        let state = Arc::clone(&self.state);
 
         // Generate with streaming callback
         let result = self.chat.generate(|token| {
@@ -152,17 +124,12 @@ impl SessionManager {
                     continue;
                 }
 
-                if !sentence_content.is_empty() && tts_enabled.load(Ordering::SeqCst) {
+                if !sentence_content.is_empty() && state.tts_enabled.load(Ordering::SeqCst) {
                     if !speaking_sent {
                         let _ = event_tx.send(SessionEvent::Speaking);
                         speaking_sent = true;
                     }
-                    // Use controller or legacy sink
-                    if let Some(ref ctrl) = controller {
-                        let _ = self.tts.queue_to_controller(sentence_content, ctrl);
-                    } else if let Some(ref s) = sink {
-                        let _ = self.tts.queue(sentence_content, s);
-                    }
+                    let _ = self.tts.queue_to_controller(sentence_content, &controller);
                 }
                 buffer = buffer[sentence_end..].to_string();
                 start_pos = 0;
@@ -178,31 +145,20 @@ impl SessionManager {
         if let Err(e) = result {
             let _ = self.event_tx.send(SessionEvent::Error(e.to_string()));
             self.chat.history_pop();
-            if let Some(ctrl) = controller {
-                ctrl.stop();
-                Tts::finish_controller(stream, ctrl);
-            } else if let Some(s) = sink {
-                Tts::finish(stream, s);
-            }
-            self.tts_playing.store(false, Ordering::SeqCst);
-            if let Some(ref state) = self.state {
-                state.tts_playing.store(false, Ordering::SeqCst);
-            }
+            controller.stop();
+            Tts::finish_controller(stream, controller);
+            self.state.tts_playing.store(false, Ordering::SeqCst);
             let _ = self.event_tx.send(SessionEvent::Ready);
             return;
         }
 
         // Flush remaining
         let remaining = buffer.trim();
-        if !remaining.is_empty() && self.tts_enabled.load(Ordering::SeqCst) {
+        if !remaining.is_empty() && self.state.tts_enabled.load(Ordering::SeqCst) {
             if !speaking_sent {
                 let _ = self.event_tx.send(SessionEvent::Speaking);
             }
-            if let Some(ref ctrl) = controller {
-                let _ = self.tts.queue_to_controller(remaining, ctrl);
-            } else if let Some(ref s) = sink {
-                let _ = self.tts.queue(remaining, s);
-            }
+            let _ = self.tts.queue_to_controller(remaining, &controller);
         }
 
         self.chat.history_push_assistant(&full_response);
@@ -216,32 +172,22 @@ impl SessionManager {
             .send(SessionEvent::ContextWords(self.chat.context_words()));
 
         // Wait for TTS to finish with cancel support
-        if let Some(ctrl) = controller {
-            // Poll for completion with cancel check
-            while ctrl.is_playing() {
-                // Check for cancel request
-                if ctrl.is_cancel_requested() {
-                    ctrl.stop();
-                    if let Some(ref state) = self.state {
-                        state.clear_cancel();
-                    }
-                    break;
-                }
-                // Update volume based on state (for ducking)
-                ctrl.update_volume();
-                std::thread::sleep(std::time::Duration::from_millis(50));
+        // Poll for completion with cancel check
+        while controller.is_playing() {
+            // Check for cancel request
+            if controller.is_cancel_requested() {
+                controller.stop();
+                self.state.clear_cancel();
+                break;
             }
-            Tts::finish_controller(stream, ctrl);
-        } else if let Some(s) = sink {
-            s.sleep_until_end();
-            Tts::finish(stream, s);
+            // Update volume based on state (for ducking)
+            controller.update_volume();
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
+        Tts::finish_controller(stream, controller);
 
         let _ = self.event_tx.send(SessionEvent::SpeakingDone);
         let _ = self.event_tx.send(SessionEvent::Ready);
-        self.tts_playing.store(false, Ordering::SeqCst);
-        if let Some(ref state) = self.state {
-            state.tts_playing.store(false, Ordering::SeqCst);
-        }
+        self.state.tts_playing.store(false, Ordering::SeqCst);
     }
 }

@@ -23,6 +23,8 @@ pub enum AppMode {
     Transcribe = 2,
     /// Note-taking mode
     NoteTaking = 3,
+    /// Command-only mode (no LLM, only processes commands)
+    Command = 4,
 }
 
 impl From<u8> for AppMode {
@@ -32,6 +34,7 @@ impl From<u8> for AppMode {
             1 => AppMode::Chat,
             2 => AppMode::Transcribe,
             3 => AppMode::NoteTaking,
+            4 => AppMode::Command,
             _ => AppMode::Idle,
         }
     }
@@ -44,6 +47,7 @@ impl fmt::Display for AppMode {
             AppMode::Chat => write!(f, "Chat"),
             AppMode::Transcribe => write!(f, "Transcribe"),
             AppMode::NoteTaking => write!(f, "Note"),
+            AppMode::Command => write!(f, "Command"),
         }
     }
 }

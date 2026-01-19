@@ -216,11 +216,9 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     let stats_tts = Arc::clone(&stats);
     let stats_session = Arc::clone(&stats);
 
-    // Legacy flags for backward compatibility (session manager still uses these)
-    let tts_playing = Arc::new(AtomicBool::new(false));
+    // Legacy flags for backward compatibility (VAD processor and transcribe mode)
     let mic_muted = Arc::new(AtomicBool::new(cli.no_stt));
     let tts_enabled = Arc::new(AtomicBool::new(!cli.no_tts));
-    let tts_enabled_session = Arc::clone(&tts_enabled);
     let wake_enabled = Arc::new(AtomicBool::new(!cli.no_stt));
     
     // Clone runtime_state for VAD processor
@@ -524,12 +522,10 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     let session_mgr = session::SessionManager::new(
         llm_chat,
         tts_engine,
-        Arc::clone(&tts_playing),
-        tts_enabled_session,
+        Arc::clone(&runtime_state),
         session_event_tx,
     )
-    .with_stats(stats_session)
-    .with_state(Arc::clone(&runtime_state));
+    .with_stats(stats_session);
     // Spawn session manager on dedicated thread (LLM inference is blocking)
     let _session_handle = std::thread::spawn(move || {
         session_mgr.run_sync(session_rx);
@@ -656,6 +652,33 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                     tui.show_message(&format!("Failed to save note: {}", e));
                                 } else {
                                     tui.show_message(&format!("[Note saved] {}", text));
+                                }
+                            }
+                            TranscriptResult::Command(text) => {
+                                // Command mode: process as command only
+                                let cmd_result = command_processor.process(&text, &runtime_state);
+                                match cmd_result {
+                                    CommandResult::Handled(Some(msg)) => {
+                                        tui.show_message(&msg);
+                                    }
+                                    CommandResult::Handled(None) => {}
+                                    CommandResult::Stop => {
+                                        let _ = session_tx.send(session::SessionCommand::Cancel);
+                                    }
+                                    CommandResult::Shutdown => {
+                                        break;
+                                    }
+                                    CommandResult::ModeChange { mode, announcement } => {
+                                        runtime_state.set_mode(mode);
+                                        tui.set_mode(mode);
+                                        if let Some(msg) = announcement {
+                                            tui.show_message(&msg);
+                                        }
+                                    }
+                                    CommandResult::PassThrough(_) => {
+                                        // In command mode, non-commands are ignored
+                                        tui.show_message(&format!("[Not a command] {}", text));
+                                    }
                                 }
                             }
                             TranscriptResult::None => {

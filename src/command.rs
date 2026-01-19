@@ -97,21 +97,24 @@ impl CommandProcessor {
     /// Process input text, returns command result
     pub fn process(&self, text: &str, state: &SharedState) -> CommandResult {
         let text_lower = text.to_lowercase().trim().to_string();
+        
+        // Trim punctuation for better matching
+        let text_trimmed = text_lower.trim_end_matches(|c: char| c.is_ascii_punctuation());
 
         // 1. Check stop phrases first (highest priority)
-        if self.is_stop_command(&text_lower) {
+        if self.is_stop_command(text_trimmed) {
             return CommandResult::Stop;
         }
 
         // 2. Check built-in commands
         if self.builtin_enabled {
-            if let Some(result) = self.check_builtin(&text_lower, state) {
+            if let Some(result) = self.check_builtin(text_trimmed, state) {
                 return result;
             }
         }
 
         // 3. Check custom commands
-        if let Some(result) = self.check_custom(&text_lower, state) {
+        if let Some(result) = self.check_custom(text_trimmed, state) {
             return result;
         }
 
@@ -157,6 +160,13 @@ impl CommandProcessor {
             return Some(CommandResult::ModeChange {
                 mode: AppMode::Idle,
                 announcement: Some("Returning to normal mode.".to_string()),
+            });
+        }
+
+        if text.contains("command mode") || text.contains("commands only") {
+            return Some(CommandResult::ModeChange {
+                mode: AppMode::Command,
+                announcement: Some("Entering command mode. Only commands will be processed.".to_string()),
             });
         }
 
@@ -224,6 +234,7 @@ fn parse_action(action: &str) -> Option<CommandAction> {
             "chat" => AppMode::Chat,
             "transcribe" => AppMode::Transcribe,
             "note" | "notetaking" => AppMode::NoteTaking,
+            "command" => AppMode::Command,
             _ => return None,
         };
         return Some(CommandAction::Mode(mode));
@@ -340,6 +351,12 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
                 announcement: Some("Normal mode".to_string()),
             })
         }
+        "command" => {
+            Some(CommandResult::ModeChange {
+                mode: AppMode::Command,
+                announcement: Some("Command mode".to_string()),
+            })
+        }
         "stop" => {
             Some(CommandResult::Stop)
         }
@@ -357,8 +374,30 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
             );
             Some(CommandResult::Handled(Some(status)))
         }
-        "help" => {
-            let help = "Commands: /mute /tts /crosstalk /wake /chat /transcribe /note /idle /stop /quit /status /help".to_string();
+        "help" | "commands" => {
+            let help = "\
+Commands:
+  /mute - Toggle microphone
+  /tts - Toggle text-to-speech
+  /crosstalk - Toggle crosstalk (listen during TTS)
+  /wake - Toggle wake word requirement
+  /chat - Enter chat mode (no wake word)
+  /transcribe - Enter transcription mode
+  /note - Enter note-taking mode
+  /command - Enter command-only mode
+  /idle - Return to normal mode
+  /stop - Stop TTS playback
+  /quit - Exit application
+  /status - Show current status
+  /help or /commands - Show this help
+
+Voice commands:
+  'stop', 'quiet', 'hush', 'shush' - Stop TTS
+  'mute' / 'unmute' - Control microphone
+  'enable/disable crosstalk' - Control crosstalk
+  'start chat' - Enter chat mode
+  'command mode' - Enter command-only mode
+  'stand down' - Exit application".to_string();
             Some(CommandResult::Handled(Some(help)))
         }
         _ => None,

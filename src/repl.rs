@@ -19,6 +19,8 @@ pub enum TranscriptResult {
     TranscribeOnly(String),
     /// Text should be appended to notes
     AppendNote(String),
+    /// Text is a command (process as command)
+    Command(String),
     /// No action needed
     None,
 }
@@ -70,6 +72,7 @@ pub fn handle_transcript(
 /// - Chat: No wake word needed, sends to LLM
 /// - Transcribe: STT only, no LLM processing
 /// - NoteTaking: Append to notes file
+/// - Command: Only processes commands, no LLM
 pub fn handle_transcript_with_mode(
     event: TranscriptEvent,
     wake_word: &WakeWord,
@@ -127,6 +130,10 @@ pub fn handle_transcript_with_mode(
                 AppMode::NoteTaking => {
                     // Note-taking mode: append to notes
                     TranscriptResult::AppendNote(text)
+                }
+                AppMode::Command => {
+                    // Command mode: only process commands, no LLM
+                    TranscriptResult::Command(text)
                 }
             }
         }

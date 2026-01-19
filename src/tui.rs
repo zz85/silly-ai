@@ -254,6 +254,7 @@ impl Tui {
             AppMode::Chat => "\x1b[92m💬 Chat\x1b[90m",
             AppMode::Transcribe => "\x1b[93m📝 Transcribe\x1b[90m",
             AppMode::NoteTaking => "\x1b[95m📓 Note\x1b[90m",
+            AppMode::Command => "\x1b[96m⌘ Command\x1b[90m",
         };
         let status_content = format!(
             "{}{} │ {} │ {} │ 📝 {} │ 💬 {}",

@@ -51,6 +51,8 @@ impl OrbState {
 
     fn palette(&self) -> Palette {
         match self {
+            // Enhanced vibrant palette (commented out for now)
+            /*
             OrbState::Idle => Palette {
                 core: hsl(200.0, 0.85, 0.88),   // Soft sky blue core
                 mid: hsl(210.0, 0.90, 0.72),    // Bright blue
@@ -80,6 +82,39 @@ impl OrbState {
                 mid: hsl(0.0, 0.95, 0.68),      // Vibrant red
                 edge: hsl(355.0, 0.90, 0.52),   // Deep crimson
                 glow: hsl(10.0, 0.85, 0.38),    // Dark red glow
+            },
+            */
+            
+            // Previous palette (restored)
+            OrbState::Idle => Palette {
+                core: hsl(220.0, 0.8, 0.85),    // Brighter blue core
+                mid: hsl(230.0, 0.9, 0.70),     // Vibrant blue-purple
+                edge: hsl(240.0, 0.95, 0.55),   // Deep blue-purple
+                glow: hsl(210.0, 0.7, 0.40),    // Darker blue glow
+            },
+            OrbState::Listening => Palette {
+                core: hsl(160.0, 0.95, 0.80),   // Bright cyan-green core
+                mid: hsl(170.0, 0.90, 0.65),    // Vibrant teal
+                edge: hsl(180.0, 0.85, 0.50),   // Deep cyan
+                glow: hsl(165.0, 0.75, 0.35),   // Darker teal glow
+            },
+            OrbState::Thinking => Palette {
+                core: hsl(280.0, 0.90, 0.85),   // Bright magenta core
+                mid: hsl(270.0, 0.95, 0.70),    // Vibrant purple
+                edge: hsl(260.0, 0.95, 0.55),   // Deep purple
+                glow: hsl(275.0, 0.80, 0.40),   // Darker purple glow
+            },
+            OrbState::Speaking => Palette {
+                core: hsl(45.0, 1.0, 0.80),     // Bright golden core
+                mid: hsl(35.0, 1.0, 0.70),      // Vibrant orange-gold
+                edge: hsl(25.0, 0.95, 0.55),    // Deep orange
+                glow: hsl(30.0, 0.85, 0.40),    // Darker orange glow
+            },
+            OrbState::Error => Palette {
+                core: hsl(0.0, 1.0, 0.80),      // Bright red core
+                mid: hsl(10.0, 0.95, 0.65),     // Vibrant red-orange
+                edge: hsl(5.0, 0.90, 0.50),     // Deep red
+                glow: hsl(0.0, 0.80, 0.35),     // Darker red glow
             },
         }
     }

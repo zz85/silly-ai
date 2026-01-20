@@ -18,6 +18,7 @@ mod segmenter;
 mod session;
 mod state;
 mod stats;
+mod status_bar;
 #[cfg(feature = "listen")]
 mod summarize;
 #[cfg(feature = "supertonic")]
@@ -31,7 +32,7 @@ mod wake;
 
 use command::{CommandProcessor, CommandResult};
 use config::{Config, LlmConfig, OrbStyleConfig, TtsConfig, UiModeConfig};
-use render::{OrbStyle, Ui, UiRenderer};
+use render::{OrbStyle, Ui, UiEvent, UiMode, UiRenderer};
 use repl::{TranscriptEvent, TranscriptResult};
 use state::RuntimeState;
 
@@ -44,6 +45,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use vad::VadEngine;
+use std::fs::OpenOptions;
+use std::io::Write;
+
+fn debug_log(msg: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("debug.log")
+    {
+        let _ = writeln!(file, "{}: {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "silly")]
@@ -620,17 +633,59 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     let (async_ui_tx, mut async_ui_rx) = tokio::sync::mpsc::unbounded_channel();
     let ui_rx_bridge = std::thread::spawn(move || {
         while let Ok(event) = ui_rx.recv() {
+            debug_log(&format!("UI bridge received event: {:?}", event));
             if async_ui_tx.send(event).is_err() {
+                debug_log("Failed to send event through async channel");
                 break;
             }
+            debug_log("Event sent through async channel");
         }
+        debug_log("UI bridge thread exiting");
     });
 
     loop {
         tokio::select! {
             // UI events from Ui sender
             Some(event) = async_ui_rx.recv() => {
-                ui_renderer.handle_ui_event(event)?;
+                // Check for UI mode switching events
+                if let UiEvent::SwitchUiMode(new_mode) = &event {
+                    debug_log(&format!("Received SwitchUiMode event: {:?}", new_mode));
+                    let current_mode = ui_renderer.ui_mode();
+                    debug_log(&format!("Current UI mode: {:?}", current_mode));
+                    if *new_mode != current_mode {
+                        debug_log(&format!("Switching UI mode from {:?} to {:?}", current_mode, new_mode));
+                        // Restore terminal state from old UI
+                        ui_renderer.restore()?;
+
+                        // Create new UI renderer
+                        ui_renderer = match *new_mode {
+                            UiMode::Text => {
+                                debug_log("Creating new text UI");
+                                let new_tui = Box::new(tui::Tui::new()?);
+                                debug_log("Text UI created successfully");
+                                new_tui
+                            }
+                            UiMode::Graphical => {
+                                debug_log("Creating new graphical UI");
+                                let mut gui = graphical_ui::GraphicalUi::new()?;
+                                gui.set_visual_style(orb_style);
+                                debug_log("Graphical UI created successfully");
+                                Box::new(gui)
+                            }
+                        };
+
+                        // Sync state with new UI
+                        ui_renderer.set_mic_muted(runtime_state.mic_muted.load(Ordering::SeqCst));
+                        ui_renderer.set_tts_enabled(runtime_state.tts_enabled.load(Ordering::SeqCst));
+                        ui_renderer.set_wake_enabled(runtime_state.wake_enabled.load(Ordering::SeqCst));
+                        ui_renderer.set_mode(runtime_state.mode());
+                        debug_log("UI switch completed");
+                    } else {
+                        debug_log("UI mode already matches, no switch needed");
+                    }
+                } else {
+                    ui_renderer.handle_ui_event(event)?;
+                }
                 ui_renderer.draw()?;
             }
             // Session events - process UI and draw immediately
@@ -764,8 +819,12 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 let mut should_break = false;
                 loop {
                     match ui_renderer.poll_input()? {
-                        None => break,
+                        None => {
+                            debug_log("Main: No keyboard input available");
+                            break;
+                        }
                         Some(line) => {
+                            debug_log(&format!("Main: Keyboard input received: {}", line));
                             if line == "\x03" {
                                 should_break = true;
                                 break;
@@ -775,7 +834,29 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                             if let Some(cmd_result) = command::process_slash_command(&line, &runtime_state) {
                                 match cmd_result {
                                     CommandResult::Handled(Some(msg)) => {
-                                        ui_renderer.show_message(&msg);
+                                        debug_log(&format!("Command result: {}", msg));
+                                        // Check for UI switching commands
+                                        if msg.starts_with("ui_switch:") {
+                                            let new_mode = &msg[10..];
+                                            debug_log(&format!("UI switch requested to: {}", new_mode));
+                                            match new_mode {
+                                                "text" => {
+                                                    debug_log("Requesting switch to text UI");
+                                                    ui.request_ui_mode_switch(UiMode::Text);
+                                                    ui_renderer.show_message("Switching to text UI...");
+                                                }
+                                                "graphical" => {
+                                                    debug_log("Requesting switch to graphical UI");
+                                                    ui.request_ui_mode_switch(UiMode::Graphical);
+                                                    ui_renderer.show_message("Switching to graphical UI...");
+                                                }
+                                                _ => {
+                                                    ui_renderer.show_message(&msg);
+                                                }
+                                            }
+                                        } else {
+                                            ui_renderer.show_message(&msg);
+                                        }
                                     }
                                     CommandResult::Handled(None) => {}
                                     CommandResult::Stop => {
@@ -865,7 +946,45 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
 
                 // Process pending UI events and draw
                 while let Ok(ui_event) = async_ui_rx.try_recv() {
-                    ui_renderer.handle_ui_event(ui_event)?;
+                    // Check for UI mode switching events in the periodic branch too
+                    if let UiEvent::SwitchUiMode(new_mode) = &ui_event {
+                        debug_log(&format!("Received SwitchUiMode event in periodic branch: {:?}", new_mode));
+                        let current_mode = ui_renderer.ui_mode();
+                        debug_log(&format!("Current UI mode: {:?}", current_mode));
+                        if *new_mode != current_mode {
+                            debug_log(&format!("Switching UI mode from {:?} to {:?}", current_mode, new_mode));
+                            // Restore terminal state from old UI
+                            ui_renderer.restore()?;
+
+                            // Create new UI renderer
+                            ui_renderer = match *new_mode {
+                                UiMode::Text => {
+                                    debug_log("Creating new text UI");
+                                    let new_tui = Box::new(tui::Tui::new()?);
+                                    debug_log("Text UI created successfully");
+                                    new_tui
+                                }
+                                UiMode::Graphical => {
+                                    debug_log("Creating new graphical UI");
+                                    let mut gui = graphical_ui::GraphicalUi::new()?;
+                                    gui.set_visual_style(orb_style);
+                                    debug_log("Graphical UI created successfully");
+                                    Box::new(gui)
+                                }
+                            };
+
+                            // Sync state with new UI
+                            ui_renderer.set_mic_muted(runtime_state.mic_muted.load(Ordering::SeqCst));
+                            ui_renderer.set_tts_enabled(runtime_state.tts_enabled.load(Ordering::SeqCst));
+                            ui_renderer.set_wake_enabled(runtime_state.wake_enabled.load(Ordering::SeqCst));
+                            ui_renderer.set_mode(runtime_state.mode());
+                            debug_log("UI switch completed in periodic branch");
+                        } else {
+                            debug_log("UI mode already matches, no switch needed");
+                        }
+                    } else {
+                        ui_renderer.handle_ui_event(ui_event)?;
+                    }
                 }
 
                 // Temporarily mute mic on any keypress

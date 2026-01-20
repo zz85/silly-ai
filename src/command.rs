@@ -8,6 +8,18 @@
 
 use crate::config::Config;
 use crate::fuzzy::{clean_for_matching, fuzzy_match};
+use std::fs::OpenOptions;
+use std::io::Write;
+
+fn debug_log(msg: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("debug.log")
+    {
+        let _ = writeln!(file, "{}: {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
+    }
+}
 use crate::state::{AppMode, SharedState};
 
 /// Result of command processing
@@ -429,6 +441,21 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
         }),
         "stop" => Some(CommandResult::Stop),
         "quit" | "exit" => Some(CommandResult::Shutdown),
+        cmd if cmd.starts_with("ui ") => {
+            let ui_mode = &cmd[3..];
+            debug_log(&format!("Processing /ui command with mode: {}", ui_mode));
+            match ui_mode {
+                "text" => {
+                    debug_log("Returning ui_switch:text");
+                    Some(CommandResult::Handled(Some("ui_switch:text".to_string())))
+                }
+                "graphical" | "graph" | "orb" => {
+                    debug_log("Returning ui_switch:graphical");
+                    Some(CommandResult::Handled(Some("ui_switch:graphical".to_string())))
+                }
+                _ => Some(CommandResult::Handled(Some("Usage: /ui [text|graphical]".to_string()))),
+            }
+        }
         "status" => {
             let status = format!(
                 "Mode: {}, Mic: {}, TTS: {}, Crosstalk: {}, Wake: {}",
@@ -471,6 +498,7 @@ Commands:
   /transcribe - Enter transcription mode
   /note - Enter note-taking mode
   /command - Enter command-only mode
+  /ui [text|graphical] - Switch UI mode
   /stop - Stop TTS playback
   /quit - Exit application
   /status - Show current status

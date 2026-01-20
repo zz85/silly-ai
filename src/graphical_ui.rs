@@ -5,6 +5,7 @@
 
 use crate::render::{OrbStyle, UiEvent, UiMode, UiRenderer};
 use crate::state::AppMode;
+use crate::status_bar::{StatusBarState, StatusRenderer};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::style::Color;
 use crossterm::terminal::{self, ClearType};
@@ -12,6 +13,17 @@ use crossterm::{cursor, execute};
 use std::io::{self, Write, stdout};
 use std::thread;
 use std::time::{Duration, Instant};
+use std::fs::OpenOptions;
+
+fn debug_log(msg: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("debug.log")
+    {
+        let _ = writeln!(file, "{}: {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
+    }
+}
 
 const TAU: f64 = std::f64::consts::TAU;
 
@@ -1065,23 +1077,13 @@ pub struct GraphicalUi {
     orb: Orb,
     last_frame: Instant,
     // State from text UI that we also need
-    status: String,
     preview: String,
     input: String,
     cursor_pos: usize,
-    ready: bool,
     responding: bool,
-    context_words: usize,
-    last_response_words: usize,
-    mic_muted: bool,
-    tts_enabled: bool,
-    wake_enabled: bool,
-    mode: AppMode,
     input_activity: bool,
     keypress_activity: bool,
-    auto_submit_progress: Option<f32>,
-    audio_level: f32,
-    tts_level: f32,
+    status_bar: StatusBarState,
 }
 
 impl GraphicalUi {
@@ -1097,23 +1099,13 @@ impl GraphicalUi {
         Ok(Self {
             orb: Orb::new(OrbStyle::Sphere),
             last_frame: Instant::now(),
-            status: "Loading...".to_string(),
             preview: String::new(),
             input: String::new(),
             cursor_pos: 0,
-            ready: false,
             responding: false,
-            context_words: 0,
-            last_response_words: 0,
-            mic_muted: false,
-            tts_enabled: true,
-            wake_enabled: true,
-            mode: AppMode::Chat,
             input_activity: false,
             keypress_activity: false,
-            auto_submit_progress: None,
-            audio_level: 0.0,
-            tts_level: 0.0,
+            status_bar: StatusBarState::new(),
         })
     }
 
@@ -1135,24 +1127,23 @@ impl UiRenderer for GraphicalUi {
         match event {
             UiEvent::Preview(text) => {
                 self.preview = text;
-                self.status = "Listening".to_string();
+                self.status_bar.status = "Listening".to_string();
                 self.orb.set_state(OrbState::Listening);
             }
             UiEvent::Final(_text) => {
                 self.preview.clear();
-                self.status = "Processing".to_string();
+                self.status_bar.status = "Processing".to_string();
             }
             UiEvent::Thinking => {
-                self.status = "Thinking".to_string();
+                self.status_bar.status = "Thinking".to_string();
                 self.orb.set_state(OrbState::Thinking);
             }
             UiEvent::Speaking => {
-                self.status = "Speaking".to_string();
+                self.status_bar.status = "Speaking".to_string();
                 self.orb.set_state(OrbState::Speaking);
             }
             UiEvent::SpeakingDone => {
-                self.ready = true;
-                self.status = "Ready".to_string();
+                self.status_bar.status = "Ready".to_string();
                 self.orb.set_state(OrbState::Idle);
             }
             UiEvent::ResponseChunk(text) => {
@@ -1165,17 +1156,16 @@ impl UiRenderer for GraphicalUi {
                 self.responding = false;
             }
             UiEvent::Idle => {
-                self.status = if self.ready {
-                    "Ready".to_string()
-                } else {
-                    "Idle".to_string()
-                };
+                self.status_bar.status = "Idle".to_string();
                 self.orb.set_state(OrbState::Idle);
                 self.preview.clear();
             }
             UiEvent::Tick => {}
             UiEvent::ContextWords(count) => {
-                self.context_words = count;
+                self.status_bar.context_words = count;
+            }
+            UiEvent::SwitchUiMode(_) => {
+                // Graphical UI doesn't handle mode switching - this is handled in main loop
             }
         }
         Ok(())
@@ -1188,14 +1178,14 @@ impl UiRenderer for GraphicalUi {
 
         // Update orb with audio levels
         let audio = if self.orb.target_state == OrbState::Listening {
-            self.audio_level as f64
+            self.status_bar.audio_level as f64
         } else if self.orb.target_state == OrbState::Speaking {
-            self.tts_level as f64
+            self.status_bar.tts_level as f64
         } else {
             0.1
         };
         self.orb.set_audio(audio);
-        self.orb.set_secondary_audio(self.tts_level as f64);
+        self.orb.set_secondary_audio(self.status_bar.tts_level as f64);
         self.orb.update(dt);
 
         let (tw, th) = terminal::size()?;
@@ -1235,34 +1225,7 @@ impl UiRenderer for GraphicalUi {
         // Reset color and draw status bar
         out.push_str("\x1b[0m\r\n");
 
-        // Status line
-        let mode_str = match self.mode {
-            AppMode::Chat => "\x1b[92mChat\x1b[0m",
-            AppMode::Paused => "\x1b[33mPaused\x1b[0m",
-            AppMode::Transcribe => "\x1b[93mTranscribe\x1b[0m",
-            AppMode::NoteTaking => "\x1b[95mNote\x1b[0m",
-            AppMode::Command => "\x1b[96mCommand\x1b[0m",
-        };
-
-        let toggles = format!(
-            "{}{}{}",
-            if self.mic_muted {
-                "\x1b[31m[MIC OFF]\x1b[0m"
-            } else {
-                "\x1b[32m[MIC]\x1b[0m"
-            },
-            if self.tts_enabled {
-                "\x1b[32m[TTS]\x1b[0m"
-            } else {
-                "\x1b[31m[TTS OFF]\x1b[0m"
-            },
-            if self.wake_enabled {
-                "\x1b[32m[WAKE]\x1b[0m"
-            } else {
-                "\x1b[33m[NO WAKE]\x1b[0m"
-            },
-        );
-
+        // Status line using modular status bar
         let style_name = match self.orb.style {
             OrbStyle::Orbs => "Orbs",
             OrbStyle::Blob => "Blob",
@@ -1270,29 +1233,23 @@ impl UiRenderer for GraphicalUi {
             OrbStyle::Sphere => "Sphere",
         };
 
-        out.push_str(&format!(
-            " \x1b[1m{}\x1b[0m | {} | {} | Style: {} | Shades: {} | Ctx: {} | Resp: {}",
-            self.status,
-            mode_str,
-            toggles,
+        let status_line = format!(
+            "{} | Style: {} | Shades: {} | Display: {} | Tab: Switch to Text UI",
+            self.status_bar.render_status(self.status_bar.display_style, None),
             style_name,
             self.orb.shade_pattern.name(),
-            self.context_words,
-            self.last_response_words
-        ));
+            self.status_bar.display_style.name()
+        );
+
+        out.push_str(&status_line);
 
         // Input line
         out.push_str("\r\n");
 
         // Auto-submit progress bar
-        if let Some(progress) = self.auto_submit_progress {
-            const BLOCKS: &[char] = &[' ', '|', '|', '|', '|'];
-            let total = 4;
-            let filled = (progress * total as f32) as usize;
-            let bar: String = (0..total)
-                .map(|i| if i < filled { BLOCKS[4] } else { BLOCKS[0] })
-                .collect();
-            out.push_str(&format!("\x1b[33m[{}]\x1b[0m ", bar));
+        let timer_bar = self.status_bar.auto_submit_bar();
+        if !timer_bar.is_empty() {
+            out.push_str(&timer_bar);
         }
 
         // Preview text
@@ -1323,8 +1280,14 @@ impl UiRenderer for GraphicalUi {
                     return Ok(Some("/mute".to_string()));
                 }
 
-                // Tab to cycle through visual styles
+                // Tab to switch to text UI mode
                 if key.code == KeyCode::Tab {
+                    debug_log("Tab key pressed, returning /ui text command");
+                    return Ok(Some("/ui text".to_string()));
+                }
+
+                // Shift+Tab to cycle through visual styles
+                if key.code == KeyCode::BackTab {
                     let new_style = match self.orb.style {
                         OrbStyle::Orbs => OrbStyle::Blob,
                         OrbStyle::Blob => OrbStyle::Ring,
@@ -1339,6 +1302,12 @@ impl UiRenderer for GraphicalUi {
                 if key.code == KeyCode::Char('`') {
                     let new_pattern = self.orb.shade_pattern.next();
                     self.orb.set_shade_pattern(new_pattern);
+                    continue;
+                }
+
+                // 'd' key to toggle display style (emoji vs text)
+                if key.code == KeyCode::Char('d') {
+                    self.status_bar.toggle_display_style();
                     continue;
                 }
 
@@ -1438,45 +1407,44 @@ impl UiRenderer for GraphicalUi {
         // In graphical mode, we could show messages in a floating panel
         // For now, update status with last message
         if let Some(line) = text.lines().last() {
-            self.status = line.to_string();
+            self.status_bar.status = line.to_string();
         }
     }
 
     fn set_auto_submit_progress(&mut self, progress: Option<f32>) {
-        self.auto_submit_progress = progress;
+        self.status_bar.auto_submit_progress = progress;
     }
 
     fn set_mic_muted(&mut self, muted: bool) {
-        self.mic_muted = muted;
+        self.status_bar.mic_muted = muted;
     }
 
     fn set_tts_enabled(&mut self, enabled: bool) {
-        self.tts_enabled = enabled;
+        self.status_bar.tts_enabled = enabled;
     }
 
     fn set_wake_enabled(&mut self, enabled: bool) {
-        self.wake_enabled = enabled;
+        self.status_bar.wake_enabled = enabled;
     }
 
     fn set_mode(&mut self, mode: AppMode) {
-        self.mode = mode;
+        self.status_bar.mode = mode;
     }
 
     fn set_ready(&mut self) {
-        self.ready = true;
-        self.status = "Ready".to_string();
+        self.status_bar.status = "Ready".to_string();
     }
 
     fn set_last_response_words(&mut self, words: usize) {
-        self.last_response_words = words;
+        self.status_bar.last_response_words = words;
     }
 
     fn set_audio_level(&mut self, level: f32) {
-        self.audio_level = level;
+        self.status_bar.audio_level = level;
     }
 
     fn set_tts_level(&mut self, level: f32) {
-        self.tts_level = level;
+        self.status_bar.tts_level = level;
     }
 
     fn has_input_activity(&mut self) -> bool {
@@ -1516,11 +1484,38 @@ impl UiRenderer for GraphicalUi {
     fn set_visual_style(&mut self, style: OrbStyle) {
         self.orb.set_style(style);
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 impl Drop for GraphicalUi {
     fn drop(&mut self) {
         let _ = self.restore();
+    }
+}
+
+// Implement StatusRenderer trait for GraphicalUi
+impl StatusRenderer for GraphicalUi {
+    fn update_status(&mut self, state: &StatusBarState) {
+        self.status_bar = state.clone();
+    }
+
+    fn status_state(&self) -> &StatusBarState {
+        &self.status_bar
+    }
+
+    fn status_state_mut(&mut self) -> &mut StatusBarState {
+        &mut self.status_bar
+    }
+
+    fn preferred_display_style(&self) -> crate::status_bar::StatusDisplayStyle {
+        crate::status_bar::StatusDisplayStyle::Emoji
     }
 }
 
@@ -1737,7 +1732,7 @@ pub fn run_orb_demo() -> io::Result<()> {
         if auto_cycle && frame_count % 180 == 0 {
             let (state, state_name) = states[state_index];
             ui.orb.set_state(state);
-            ui.status = format!("{} - Auto Demo", state_name);
+            ui.status_bar.status = format!("{} - Auto Demo", state_name);
             state_index = (state_index + 1) % states.len();
         }
 

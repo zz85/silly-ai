@@ -2,8 +2,20 @@
 
 use crate::state::AppMode;
 use std::io;
+use std::fs::OpenOptions;
+use std::io::Write;
 
-#[derive(Clone)]
+fn debug_log(msg: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("debug.log")
+    {
+        let _ = writeln!(file, "{}: {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum UiEvent {
     Preview(String),
     Final(String),
@@ -15,6 +27,7 @@ pub enum UiEvent {
     Idle,
     Tick,
     ContextWords(usize),
+    SwitchUiMode(UiMode),
 }
 
 /// UI mode selection
@@ -106,6 +119,12 @@ pub trait UiRenderer: Send {
     fn set_visual_style(&mut self, _style: OrbStyle) {
         // Default no-op for text UI
     }
+
+    /// Downcast to Any for type checking
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Downcast to Any for mutable type checking
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
 #[derive(Clone)]
@@ -157,5 +176,11 @@ impl Ui {
 
     pub fn set_context_words(&self, count: usize) {
         let _ = self.tx.send(UiEvent::ContextWords(count));
+    }
+
+    pub fn request_ui_mode_switch(&self, mode: UiMode) {
+        debug_log(&format!("request_ui_mode_switch called with mode: {:?}", mode));
+        let _ = self.tx.send(UiEvent::SwitchUiMode(mode));
+        debug_log("SwitchUiMode event sent");
     }
 }

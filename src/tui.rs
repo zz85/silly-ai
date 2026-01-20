@@ -2,95 +2,73 @@
 
 use crate::render::{OrbStyle, UiEvent, UiMode, UiRenderer};
 use crate::state::AppMode;
+use crate::status_bar::{StatusBarState, StatusRenderer, SpinnerType};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{self, ClearType};
 use crossterm::{cursor, execute, queue};
 use std::io::{self, Write, stdout};
 use unicode_width::UnicodeWidthStr;
+use std::fs::OpenOptions;
 
-const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const MUSIC: [&str; 4] = ["♪", "♫", "♪", "♬"];
-const BARS: [&str; 5] = ["▁", "▂", "▄", "▆", "█"];
-
-#[derive(Clone, Copy, PartialEq)]
-enum SpinnerType {
-    None,
-    Dots,
-    Music,
-    Bars,
+fn debug_log(msg: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("debug.log")
+    {
+        let _ = writeln!(file, "{}: {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
+    }
 }
 
 pub struct Tui {
     preview: String,
-    status: String,
-    context_words: usize,
-    last_response_words: usize,
     input: String,
     cursor_pos: usize,
     status_drawn: bool,
     last_drawn_lines: usize, // track how many lines were drawn
     responding: bool,
-    ready: bool,
-    spinner_type: SpinnerType,
-    spin_frame: usize,
-    audio_level: f32,
-    tts_level: f32,
     input_activity: bool,
     keypress_activity: bool,
-    mic_muted: bool,
-    tts_enabled: bool,
-    wake_enabled: bool,
-    auto_submit_progress: Option<f32>, // 1.0 = full, 0.0 = about to submit
-    mode: AppMode,
+    status_bar: StatusBarState,
 }
 
 impl Tui {
     pub fn new() -> io::Result<Self> {
+        debug_log("TUI: Creating new TUI instance");
         terminal::enable_raw_mode()?;
         execute!(stdout(), cursor::Hide)?;
+        debug_log("TUI: Raw mode enabled, cursor hidden");
         Ok(Self {
             preview: String::new(),
-            status: "⏳ Loading".to_string(),
-            context_words: 0,
-            last_response_words: 0,
             input: String::new(),
             cursor_pos: 0,
             status_drawn: false,
             last_drawn_lines: 0,
             responding: false,
-            ready: false,
-            spinner_type: SpinnerType::Dots,
-            spin_frame: 0,
-            audio_level: 0.0,
-            tts_level: 0.0,
             input_activity: false,
             keypress_activity: false,
-            mic_muted: false,
-            tts_enabled: true,
-            wake_enabled: true,
-            auto_submit_progress: None,
-            mode: AppMode::Chat,
+            status_bar: StatusBarState::new(),
         })
     }
 
     pub fn set_auto_submit_progress(&mut self, progress: Option<f32>) {
-        self.auto_submit_progress = progress;
+        self.status_bar.auto_submit_progress = progress;
     }
 
     pub fn set_mic_muted(&mut self, muted: bool) {
-        self.mic_muted = muted;
+        self.status_bar.mic_muted = muted;
     }
 
     pub fn set_tts_enabled(&mut self, enabled: bool) {
-        self.tts_enabled = enabled;
+        self.status_bar.tts_enabled = enabled;
     }
 
     pub fn set_wake_enabled(&mut self, enabled: bool) {
-        self.wake_enabled = enabled;
+        self.status_bar.wake_enabled = enabled;
     }
 
     pub fn set_mode(&mut self, mode: AppMode) {
-        self.mode = mode;
+        self.status_bar.mode = mode;
     }
 
     pub fn restore(&self) -> io::Result<()> {
@@ -147,27 +125,26 @@ impl Tui {
         match event {
             UiEvent::Preview(text) => {
                 self.preview = text;
-                self.status = "🎤 Listening".to_string();
-                self.spinner_type = SpinnerType::Bars;
+                self.status_bar.status = "🎤 Listening".to_string();
+                self.status_bar.spinner_type = SpinnerType::Bars;
             }
             UiEvent::Final(text) => {
                 self.print_content(&format!("\x1b[32m>\x1b[0m {}", text))?;
                 self.preview.clear();
-                self.status = "⏳ Sending".to_string();
-                self.spinner_type = SpinnerType::Dots;
+                self.status_bar.status = "⏳ Sending".to_string();
+                self.status_bar.spinner_type = SpinnerType::Dots;
             }
             UiEvent::Thinking => {
-                self.status = "💭 Thinking".to_string();
-                self.spinner_type = SpinnerType::Dots;
+                self.status_bar.status = "💭 Thinking".to_string();
+                self.status_bar.spinner_type = SpinnerType::Dots;
             }
             UiEvent::Speaking => {
-                self.status = "🔊 Speaking".to_string();
-                self.spinner_type = SpinnerType::Music;
+                self.status_bar.status = "🔊 Speaking".to_string();
+                self.status_bar.spinner_type = SpinnerType::Music;
             }
             UiEvent::SpeakingDone => {
-                self.ready = true;
-                self.status = "✓ Ready".to_string();
-                self.spinner_type = SpinnerType::None;
+                self.status_bar.status = "✓ Ready".to_string();
+                self.status_bar.spinner_type = SpinnerType::None;
             }
             UiEvent::ResponseChunk(text) => {
                 if self.status_drawn {
@@ -190,17 +167,16 @@ impl Tui {
                 self.responding = false;
             }
             UiEvent::Idle => {
-                self.status = if self.ready {
-                    "✓ Ready".to_string()
-                } else {
-                    "⏸ Idle".to_string()
-                };
-                self.spinner_type = SpinnerType::None;
+                self.status_bar.status = "⏸ Idle".to_string();
+                self.status_bar.spinner_type = SpinnerType::None;
                 self.preview.clear();
             }
             UiEvent::Tick => {}
             UiEvent::ContextWords(count) => {
-                self.context_words = count;
+                self.status_bar.context_words = count;
+            }
+            UiEvent::SwitchUiMode(_) => {
+                // Text UI doesn't handle mode switching - this is handled in main loop
             }
         }
         Ok(())
@@ -227,80 +203,14 @@ impl Tui {
             terminal::Clear(ClearType::FromCursorDown)
         )?;
 
-        // Status line with optional spinner (bright color)
-        let spinner_str = match self.spinner_type {
-            SpinnerType::None => String::new(),
-            SpinnerType::Dots => {
-                self.spin_frame = (self.spin_frame + 1) % SPINNER.len();
-                format!("\x1b[93m{}\x1b[90m ", SPINNER[self.spin_frame])
-            }
-            SpinnerType::Music => {
-                self.spin_frame = (self.spin_frame + 1) % MUSIC.len();
-                format!("\x1b[95m{}\x1b[90m ", MUSIC[self.spin_frame])
-            }
-            SpinnerType::Bars => {
-                // Use audio level to select bar height
-                let idx = ((self.audio_level * 50.0).min(1.0) * (BARS.len() - 1) as f32) as usize;
-                format!("\x1b[92m{}\x1b[90m ", BARS[idx])
-            }
-        };
-        let toggles = format!(
-            "{}{}{}",
-            if self.mic_muted { "🔇" } else { "🎙" },
-            if self.tts_enabled { "🔊" } else { "🔈" },
-            if self.wake_enabled { "👂" } else { "💤" },
-        );
-        // TTS output level visualization (animated bars)
-        let tts_viz = if self.spinner_type == SpinnerType::Music && self.tts_level > 0.0 {
-            let idx = ((self.tts_level * 30.0).min(1.0) * (BARS.len() - 1) as f32) as usize;
-            format!(" │ \x1b[95m{}\x1b[90m", BARS[idx])
-        } else {
-            String::new()
-        };
-        // Mode indicator with color coding
-        let mode_str = match self.mode {
-            AppMode::Chat => "\x1b[92m💬 Chat\x1b[90m",
-            AppMode::Paused => "\x1b[33m⏸ Paused\x1b[90m",
-            AppMode::Transcribe => "\x1b[93m📝 Transcribe\x1b[90m",
-            AppMode::NoteTaking => "\x1b[95m📓 Note\x1b[90m",
-            AppMode::Command => "\x1b[96m⌘ Command\x1b[90m",
-        };
-        let status_content = format!(
-            "{}{} │ {} │ {}{} │ 📝 {} │ 💬 {}",
-            spinner_str,
-            self.status,
-            mode_str,
-            toggles,
-            tts_viz,
-            self.context_words,
-            self.last_response_words
-        );
-        let status_width = status_content.width();
-        let padding = if term_width > status_width {
-            (term_width - status_width) / 2
-        } else {
-            0
-        };
-        let status = format!("\x1b[90m{}{}\x1b[0m", " ".repeat(padding), status_content);
+        // Update spinner frame
+        self.status_bar.update_spinner();
+
+        // Status line using modular status bar
+        let status = self.status_bar.render_status(self.status_bar.display_style, Some(term_width));
 
         // Input line with optional preview and auto-submit timer
-        let timer_bar = if let Some(progress) = self.auto_submit_progress {
-            const BLOCKS: &[char] = &[' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
-            let total_steps = 4 * 8;
-            let step = (progress * total_steps as f32) as usize;
-            let full = step / 8;
-            let partial = step % 8;
-            let mut bar = "█".repeat(full);
-            if full < 4 {
-                bar.push(BLOCKS[partial]);
-                bar.push_str(&" ".repeat(3 - full));
-            }
-            self.spin_frame = self.spin_frame.wrapping_add(1);
-            let spinner = SPINNER[self.spin_frame % SPINNER.len()];
-            format!("\x1b[33m{}{}\x1b[0m ", bar, spinner)
-        } else {
-            String::new()
-        };
+        let timer_bar = self.status_bar.auto_submit_bar();
         let prompt = if self.preview.is_empty() {
             format!("{}\x1b[32m>\x1b[0m {}", timer_bar, self.input)
         } else {
@@ -310,7 +220,7 @@ impl Tui {
             )
         };
         let cursor_offset = if self.preview.is_empty() {
-            2 + if self.auto_submit_progress.is_some() {
+            2 + if self.status_bar.auto_submit_progress.is_some() {
                 6
             } else {
                 0
@@ -318,7 +228,7 @@ impl Tui {
         } else {
             self.preview.width()
                 + 4
-                + if self.auto_submit_progress.is_some() {
+                + if self.status_bar.auto_submit_progress.is_some() {
                     6
                 } else {
                     0
@@ -349,10 +259,13 @@ impl Tui {
     }
 
     pub fn poll_input(&mut self) -> io::Result<Option<String>> {
+        debug_log("TUI: poll_input called");
         let mut pending_submit = None;
 
         while event::poll(std::time::Duration::from_millis(0))? {
+            debug_log("TUI: Event available");
             if let Event::Key(key) = event::read()? {
+                debug_log(&format!("TUI: Key event: {:?}", key));
                 self.keypress_activity = true;
 
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -360,6 +273,12 @@ impl Tui {
                 }
                 if key.code == KeyCode::Char('m') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     return Ok(Some("/mute".to_string()));
+                }
+
+                // 'd' key to toggle display style (emoji vs text)
+                if key.code == KeyCode::Char('d') && !key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.status_bar.toggle_display_style();
+                    continue;
                 }
 
                 match key.code {
@@ -488,20 +407,19 @@ impl Tui {
     }
 
     pub fn set_ready(&mut self) {
-        self.ready = true;
-        self.status = "✓ Ready".to_string();
+        self.status_bar.status = "✓ Ready".to_string();
     }
 
     pub fn set_last_response_words(&mut self, words: usize) {
-        self.last_response_words = words;
+        self.status_bar.last_response_words = words;
     }
 
     pub fn set_audio_level(&mut self, level: f32) {
-        self.audio_level = level;
+        self.status_bar.audio_level = level;
     }
 
     pub fn set_tts_level(&mut self, level: f32) {
-        self.tts_level = level;
+        self.status_bar.tts_level = level;
     }
 
     /// Check if there was input activity (keypress) since last call
@@ -533,6 +451,25 @@ impl Tui {
 impl Drop for Tui {
     fn drop(&mut self) {
         let _ = self.restore();
+    }
+}
+
+// Implement StatusRenderer trait for Tui
+impl StatusRenderer for Tui {
+    fn update_status(&mut self, state: &StatusBarState) {
+        self.status_bar = state.clone();
+    }
+
+    fn status_state(&self) -> &StatusBarState {
+        &self.status_bar
+    }
+
+    fn status_state_mut(&mut self) -> &mut StatusBarState {
+        &mut self.status_bar
+    }
+
+    fn preferred_display_style(&self) -> crate::status_bar::StatusDisplayStyle {
+        crate::status_bar::StatusDisplayStyle::Emoji
     }
 }
 
@@ -616,5 +553,13 @@ impl UiRenderer for Tui {
 
     fn set_visual_style(&mut self, _style: OrbStyle) {
         // No-op for text UI
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

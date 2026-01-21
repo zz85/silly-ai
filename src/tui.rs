@@ -2,13 +2,13 @@
 
 use crate::render::{OrbStyle, UiEvent, UiMode, UiRenderer};
 use crate::state::AppMode;
-use crate::status_bar::{StatusBarState, StatusRenderer, SpinnerType};
+use crate::status_bar::{SpinnerType, StatusBarState, StatusRenderer};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{self, ClearType};
 use crossterm::{cursor, execute, queue};
+use std::fs::OpenOptions;
 use std::io::{self, Write, stdout};
 use unicode_width::UnicodeWidthStr;
-use std::fs::OpenOptions;
 
 fn debug_log(msg: &str) {
     if let Ok(mut file) = OpenOptions::new()
@@ -16,7 +16,12 @@ fn debug_log(msg: &str) {
         .append(true)
         .open("debug.log")
     {
-        let _ = writeln!(file, "{}: {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
+        let _ = writeln!(
+            file,
+            "{}: {}",
+            chrono::Utc::now().format("%H:%M:%S%.3f"),
+            msg
+        );
     }
 }
 
@@ -72,6 +77,16 @@ impl Tui {
     }
 
     pub fn restore(&self) -> io::Result<()> {
+        execute!(stdout(), cursor::Show, cursor::MoveToColumn(0))?;
+        // Don't disable raw mode here - let the new UI handle terminal mode
+        // or let the final cleanup disable it
+        // terminal::disable_raw_mode()?;
+        println!();
+        Ok(())
+    }
+
+    pub fn cleanup(&self) -> io::Result<()> {
+        // Final cleanup when exiting the application
         execute!(stdout(), cursor::Show, cursor::MoveToColumn(0))?;
         terminal::disable_raw_mode()?;
         println!();
@@ -207,7 +222,9 @@ impl Tui {
         self.status_bar.update_spinner();
 
         // Status line using modular status bar
-        let status = self.status_bar.render_status(self.status_bar.display_style, Some(term_width));
+        let status = self
+            .status_bar
+            .render_status(self.status_bar.display_style, Some(term_width));
 
         // Input line with optional preview and auto-submit timer
         let timer_bar = self.status_bar.auto_submit_bar();
@@ -276,7 +293,8 @@ impl Tui {
                 }
 
                 // 'd' key to toggle display style (emoji vs text)
-                if key.code == KeyCode::Char('d') && !key.modifiers.contains(KeyModifiers::CONTROL) {
+                if key.code == KeyCode::Char('d') && !key.modifiers.contains(KeyModifiers::CONTROL)
+                {
                     self.status_bar.toggle_display_style();
                     continue;
                 }
@@ -491,6 +509,10 @@ impl UiRenderer for Tui {
 
     fn restore(&self) -> io::Result<()> {
         Tui::restore(self)
+    }
+
+    fn cleanup(&self) -> io::Result<()> {
+        Tui::cleanup(self)
     }
 
     fn show_message(&mut self, text: &str) {

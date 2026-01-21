@@ -1,8 +1,8 @@
 //! UI event types and sender for cross-thread communication
 
 use crate::state::AppMode;
-use std::io;
 use std::fs::OpenOptions;
+use std::io;
 use std::io::Write;
 
 fn debug_log(msg: &str) {
@@ -11,7 +11,12 @@ fn debug_log(msg: &str) {
         .append(true)
         .open("debug.log")
     {
-        let _ = writeln!(file, "{}: {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
+        let _ = writeln!(
+            file,
+            "{}: {}",
+            chrono::Utc::now().format("%H:%M:%S%.3f"),
+            msg
+        );
     }
 }
 
@@ -66,8 +71,14 @@ pub trait UiRenderer: Send {
     /// Poll for keyboard input, returns submitted text if any
     fn poll_input(&mut self) -> io::Result<Option<String>>;
 
-    /// Restore terminal state on exit
+    /// Restore terminal state when switching UI modes (keeps raw mode enabled)
     fn restore(&self) -> io::Result<()>;
+
+    /// Final cleanup when exiting application (disables raw mode)
+    fn cleanup(&self) -> io::Result<()> {
+        // Default implementation calls restore for backwards compatibility
+        self.restore()
+    }
 
     /// Show a multi-line message
     fn show_message(&mut self, text: &str);
@@ -182,7 +193,10 @@ impl Ui {
     }
 
     pub fn request_ui_mode_switch(&self, mode: UiMode) {
-        debug_log(&format!("request_ui_mode_switch called with mode: {:?}", mode));
+        debug_log(&format!(
+            "request_ui_mode_switch called with mode: {:?}",
+            mode
+        ));
         let _ = self.tx.send(UiEvent::SwitchUiMode(mode));
         debug_log("SwitchUiMode event sent");
     }

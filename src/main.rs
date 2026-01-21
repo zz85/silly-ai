@@ -38,6 +38,8 @@ use state::RuntimeState;
 
 use clap::{Parser, Subcommand};
 use std::error::Error;
+use std::fs::OpenOptions;
+use std::io::Write;
 #[cfg(feature = "listen")]
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -45,8 +47,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use vad::VadEngine;
-use std::fs::OpenOptions;
-use std::io::Write;
 
 fn debug_log(msg: &str) {
     if let Ok(mut file) = OpenOptions::new()
@@ -54,7 +54,12 @@ fn debug_log(msg: &str) {
         .append(true)
         .open("debug.log")
     {
-        let _ = writeln!(file, "{}: {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
+        let _ = writeln!(
+            file,
+            "{}: {}",
+            chrono::Utc::now().format("%H:%M:%S%.3f"),
+            msg
+        );
     }
 }
 
@@ -679,6 +684,9 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                         ui_renderer.set_tts_enabled(runtime_state.tts_enabled.load(Ordering::SeqCst));
                         ui_renderer.set_wake_enabled(runtime_state.wake_enabled.load(Ordering::SeqCst));
                         ui_renderer.set_mode(runtime_state.mode());
+
+                        // Force an immediate draw to ensure UI is visible
+                        ui_renderer.draw()?;
                         debug_log("UI switch completed");
                     } else {
                         debug_log("UI mode already matches, no switch needed");
@@ -980,6 +988,9 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                             ui_renderer.set_tts_enabled(runtime_state.tts_enabled.load(Ordering::SeqCst));
                             ui_renderer.set_wake_enabled(runtime_state.wake_enabled.load(Ordering::SeqCst));
                             ui_renderer.set_mode(runtime_state.mode());
+
+                            // Force an immediate draw to ensure UI is visible
+                            ui_renderer.draw()?;
                             debug_log("UI switch completed in periodic branch");
                         } else {
                             debug_log("UI mode already matches, no switch needed");
@@ -1044,6 +1055,8 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         }
     }
 
+    // Final cleanup before dropping UI
+    ui_renderer.cleanup()?;
     drop(ui_renderer);
     drop(ui_rx_bridge);
 

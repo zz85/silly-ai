@@ -17,7 +17,12 @@ fn debug_log(msg: &str) {
         .append(true)
         .open("debug.log")
     {
-        let _ = writeln!(file, "{}: {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
+        let _ = writeln!(
+            file,
+            "{}: {}",
+            chrono::Utc::now().format("%H:%M:%S%.3f"),
+            msg
+        );
     }
 }
 use crate::state::{AppMode, SharedState};
@@ -451,9 +456,13 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
                 }
                 "graphical" | "graph" | "orb" => {
                     debug_log("Returning ui_switch:graphical");
-                    Some(CommandResult::Handled(Some("ui_switch:graphical".to_string())))
+                    Some(CommandResult::Handled(Some(
+                        "ui_switch:graphical".to_string(),
+                    )))
                 }
-                _ => Some(CommandResult::Handled(Some("Usage: /ui [text|graphical]".to_string()))),
+                _ => Some(CommandResult::Handled(Some(
+                    "Usage: /ui [text|graphical]".to_string(),
+                ))),
             }
         }
         "status" => {

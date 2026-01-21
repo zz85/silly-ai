@@ -199,11 +199,7 @@ impl StatusBarState {
             ),
             StatusDisplayStyle::Text => format!(
                 " \x1b[1m{}\x1b[0m | {} | {} | Ctx: {} | Resp: {}",
-                self.status,
-                mode_str,
-                toggles,
-                self.context_words,
-                self.last_response_words
+                self.status, mode_str, toggles, self.context_words, self.last_response_words
             ),
         };
 
@@ -236,10 +232,10 @@ impl StatusBarState {
 pub trait StatusRenderer {
     /// Update the status bar state
     fn update_status(&mut self, state: &StatusBarState);
-    
+
     /// Get the current status bar state
     fn status_state(&self) -> &StatusBarState;
-    
+
     /// Get a mutable reference to the status bar state
     fn status_state_mut(&mut self) -> &mut StatusBarState;
 

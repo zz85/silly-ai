@@ -10,10 +10,10 @@ use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::style::Color;
 use crossterm::terminal::{self, ClearType};
 use crossterm::{cursor, execute};
+use std::fs::OpenOptions;
 use std::io::{self, Write, stdout};
 use std::thread;
 use std::time::{Duration, Instant};
-use std::fs::OpenOptions;
 
 fn debug_log(msg: &str) {
     if let Ok(mut file) = OpenOptions::new()
@@ -21,7 +21,12 @@ fn debug_log(msg: &str) {
         .append(true)
         .open("debug.log")
     {
-        let _ = writeln!(file, "{}: {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
+        let _ = writeln!(
+            file,
+            "{}: {}",
+            chrono::Utc::now().format("%H:%M:%S%.3f"),
+            msg
+        );
     }
 }
 
@@ -838,27 +843,29 @@ impl Orb {
     // Advanced volumetric raymarching sphere renderer inspired by shader art
     fn sample_sphere(&self, x: f64, y: f64, max_r: f64) -> (f64, f64, f64) {
         let time = self.time * self.current_frequency();
-        
+
         // COORDINATE SETUP: Proper centering and camera distance
         // Normalize coordinates to [-1, 1] range, centered at origin
         let u = (x / max_r, y / max_r);
-        
+
         // Scale down the sphere to move it further from camera and center it properly
         let sphere_scale = 2.0; // Set to 2.0 to make orb smaller
         let u = (u.0 * sphere_scale, u.1 * sphere_scale);
-        
+
         // VOLUMETRIC RAYMARCHING: Multiple samples through volume
         let mut color_accumulator = (0.0, 0.0, 0.0);
         let mut depth = 0.1 * self.smooth_audio; // Audio-reactive initial depth
         let max_steps = 64; // Reduced from 64 for better performance
-        
+
         for step in 0..max_steps {
-            if step as f64 >= 100.0 { break; } // Match shader's 1e2 limit
-            
+            if step as f64 >= 100.0 {
+                break;
+            } // Match shader's 1e2 limit
+
             // RAYMARCHING POSITION: Move sphere further back and center it
             let mut p = (u.0 * depth, u.1 * depth, depth - 25.0); // Increased from -16.0 to -25.0
             let mut q = p;
-            
+
             // ROTATION: p.xy *= mat2(cos(t+p.z*.2+vec4(0,33,11,0)))
             let rotation_angle = time + p.2 * 0.2;
             let cos_rot = rotation_angle.cos();
@@ -867,22 +874,22 @@ impl Orb {
             let rotated_y = p.0 * sin_rot + p.1 * cos_rot;
             p.0 = rotated_x;
             p.1 = rotated_y;
-            
+
             // TURBULENCE: Multi-octave distortion like the shader
             for octave in 1..=6 {
                 let s = octave as f64;
-                
+
                 // q += sin(.3*t+p.xzy*s*.3)*.3
                 q.0 += (0.3 * time + p.0 * s * 0.3).sin() * 0.3;
                 q.1 += (0.3 * time + p.2 * s * 0.3).sin() * 0.3;
                 q.2 += (0.3 * time + p.1 * s * 0.3).sin() * 0.3;
-                
+
                 // p += sin(.4*t+q.yzx*s*.4)*.3
                 p.0 += (0.4 * time + q.1 * s * 0.4).sin() * 0.3;
                 p.1 += (0.4 * time + q.2 * s * 0.4).sin() * 0.3;
                 p.2 += (0.4 * time + q.0 * s * 0.4).sin() * 0.3;
             }
-            
+
             // DISTANCE FIELD: Complex sphere field calculation
             // abs(p-floor(p)-.5) creates repeating cells
             let cell_p = (
@@ -890,18 +897,18 @@ impl Orb {
                 (p.1 - p.1.floor() - 0.5).abs(),
                 (p.2 - p.2.floor() - 0.5).abs(),
             );
-            
+
             // dot(abs(p-floor(p)-.5), vec3(1)) - distance to cell edges
             let cell_distance = cell_p.0 + cell_p.1 + cell_p.2;
-            
+
             // Sphere distances with audio-reactive scaling - adjusted for smaller orb size
             let sphere_scale = 6.0 + self.smooth_audio * 1.5; // Reduced from 8.0 to 6.0
             let p_sphere = (p.0 * p.0 + p.1 * p.1 + p.2 * p.2).sqrt() - sphere_scale;
             let q_sphere = (q.0 * q.0 + q.1 * q.1 + q.2 * q.2).sqrt() - sphere_scale;
-            
+
             // min(dot(...), max(length(p)-6., length(q)-6.))
             let field_distance = cell_distance.min(p_sphere.max(q_sphere)).abs();
-            
+
             // WARPING: s = .005+abs(mix(s, .001/abs(p.y), length(u)))
             let u_length = (u.0 * u.0 + u.1 * u.1).sqrt();
             let warp_factor = if p.1.abs() > 0.001 {
@@ -911,10 +918,10 @@ impl Orb {
             };
             let mixed_distance = field_distance * (1.0 - u_length) + warp_factor * u_length;
             let step_size = 0.005 + mixed_distance.abs();
-            
+
             // ACCUMULATE DISTANCE: d += s
             depth += step_size;
-            
+
             // COLOR ACCUMULATION: Multi-component color like the shader
             if field_distance < 0.1 {
                 // (1.+cos(p.z+vec4(6,4,2,0))) / s
@@ -923,26 +930,26 @@ impl Orb {
                     (1.0 + (p.2 + 4.0).cos()) / step_size,
                     (1.0 + (p.2 + 2.0).cos()) / step_size,
                 );
-                
+
                 // (1.+cos(q.z+vec4(3,1,0,0))) / s
                 let q_color = (
                     (1.0 + (q.2 + 3.0).cos()) / step_size,
                     (1.0 + (q.2 + 1.0).cos()) / step_size,
                     (1.0 + q.2.cos()) / step_size,
                 );
-                
+
                 // Combine colors
                 color_accumulator.0 += p_color.0 + q_color.0;
                 color_accumulator.1 += p_color.1 + q_color.1;
                 color_accumulator.2 += p_color.2 + q_color.2;
             }
-            
+
             // Early exit if we've accumulated enough or gone too far
             if depth > 20.0 || color_accumulator.0 > 10.0 {
                 break;
             }
         }
-        
+
         // TONE MAPPING: tanh(o*o/8e7) - compress dynamic range
         let scale_factor = 1.0 / 80000.0; // Adjusted for ASCII rendering
         let tone_mapped = (
@@ -950,7 +957,7 @@ impl Orb {
             (color_accumulator.1 * color_accumulator.1 * scale_factor).tanh(),
             (color_accumulator.2 * color_accumulator.2 * scale_factor).tanh(),
         );
-        
+
         // STATE-DEPENDENT INTENSITY SCALING
         let state_multiplier = match self.target_state {
             OrbState::Idle => 0.6,
@@ -959,17 +966,18 @@ impl Orb {
             OrbState::Speaking => 1.0,
             OrbState::Error => 1.5,
         };
-        
+
         // AUDIO REACTIVITY
         let audio_boost = 1.0 + self.smooth_audio * 0.8;
-        
+
         // FINAL OUTPUT: Convert to intensity, glow, secondary
         let total_intensity = (tone_mapped.0 + tone_mapped.1 + tone_mapped.2) / 3.0;
         let final_intensity = (total_intensity * state_multiplier * audio_boost).clamp(0.0, 1.0);
-        
+
         // Glow from high-frequency components
-        let glow_intensity = (tone_mapped.0.max(tone_mapped.1).max(tone_mapped.2) * 0.7).clamp(0.0, 1.0);
-        
+        let glow_intensity =
+            (tone_mapped.0.max(tone_mapped.1).max(tone_mapped.2) * 0.7).clamp(0.0, 1.0);
+
         // Secondary color from color variation
         let secondary_intensity = if self.composite.secondary.is_some() {
             let color_variation = (tone_mapped.0 - tone_mapped.2).abs() * self.composite.blend;
@@ -977,7 +985,7 @@ impl Orb {
         } else {
             0.0
         };
-        
+
         (final_intensity, glow_intensity, secondary_intensity)
     }
 
@@ -1185,7 +1193,8 @@ impl UiRenderer for GraphicalUi {
             0.1
         };
         self.orb.set_audio(audio);
-        self.orb.set_secondary_audio(self.status_bar.tts_level as f64);
+        self.orb
+            .set_secondary_audio(self.status_bar.tts_level as f64);
         self.orb.update(dt);
 
         let (tw, th) = terminal::size()?;
@@ -1235,7 +1244,8 @@ impl UiRenderer for GraphicalUi {
 
         let status_line = format!(
             "{} | Style: {} | Shades: {} | Display: {} | Tab: Switch to Text UI",
-            self.status_bar.render_status(self.status_bar.display_style, None),
+            self.status_bar
+                .render_status(self.status_bar.display_style, None),
             style_name,
             self.orb.shade_pattern.name(),
             self.status_bar.display_style.name()
@@ -1398,6 +1408,15 @@ impl UiRenderer for GraphicalUi {
     }
 
     fn restore(&self) -> io::Result<()> {
+        execute!(stdout(), cursor::Show, terminal::LeaveAlternateScreen)?;
+        // Don't disable raw mode here - let the new UI handle terminal mode
+        // or let the final cleanup disable it
+        // terminal::disable_raw_mode()?;
+        Ok(())
+    }
+
+    fn cleanup(&self) -> io::Result<()> {
+        // Final cleanup when exiting the application
         execute!(stdout(), cursor::Show, terminal::LeaveAlternateScreen)?;
         terminal::disable_raw_mode()?;
         Ok(())

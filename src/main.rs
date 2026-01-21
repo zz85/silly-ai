@@ -842,13 +842,6 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                 break;
                             }
 
-                            // Handle Esc key from orb mode (switch to text mode)
-                            if line == "\x1b[TEXT_MODE]" {
-                                debug_log("Esc pressed in orb mode, switching to text");
-                                ui.request_ui_mode_switch(UiMode::Text);
-                                continue;
-                            }
-
                             // Check for slash commands first
                             if let Some(cmd_result) = command::process_slash_command(&line, &runtime_state) {
                                 match cmd_result {

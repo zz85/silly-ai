@@ -1300,35 +1300,29 @@ impl UiRenderer for GraphicalUi {
                     return Ok(Some("/ui text".to_string()));
                 }
 
-                // Shift+Tab to cycle through visual styles
-                if key.code == KeyCode::BackTab {
-                    let new_style = match self.orb.style {
-                        OrbStyle::Orbs => OrbStyle::Blob,
-                        OrbStyle::Blob => OrbStyle::Ring,
-                        OrbStyle::Ring => OrbStyle::Sphere,
-                        OrbStyle::Sphere => OrbStyle::Orbs,
-                    };
-                    self.orb.set_style(new_style);
-                    continue;
-                }
-
-                // Tab to cycle through orb styles
+                // Tab to cycle through orb styles (forward)
+                // Shift+Tab to cycle backward
                 if key.code == KeyCode::Tab {
                     let current_style = self.orb.style;
-                    let new_style = match current_style {
-                        OrbStyle::Blob => OrbStyle::Ring,
-                        OrbStyle::Ring => OrbStyle::Orbs,
-                        OrbStyle::Orbs => OrbStyle::Sphere,
-                        OrbStyle::Sphere => OrbStyle::Blob,
+                    let new_style = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                        // Shift+Tab: cycle backward
+                        match current_style {
+                            OrbStyle::Blob => OrbStyle::Sphere,
+                            OrbStyle::Sphere => OrbStyle::Orbs,
+                            OrbStyle::Orbs => OrbStyle::Ring,
+                            OrbStyle::Ring => OrbStyle::Blob,
+                        }
+                    } else {
+                        // Tab: cycle forward
+                        match current_style {
+                            OrbStyle::Blob => OrbStyle::Ring,
+                            OrbStyle::Ring => OrbStyle::Orbs,
+                            OrbStyle::Orbs => OrbStyle::Sphere,
+                            OrbStyle::Sphere => OrbStyle::Blob,
+                        }
                     };
                     self.orb.set_style(new_style);
                     continue;
-                }
-
-                // Esc to switch back to text mode
-                if key.code == KeyCode::Esc {
-                    // Return a special marker to trigger UI switch
-                    return Ok(Some("\x1b[TEXT_MODE]".to_string()));
                 }
 
                 // Backtick to cycle through shade patterns

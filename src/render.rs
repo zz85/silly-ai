@@ -42,8 +42,8 @@ pub enum UiMode {
     /// Text-based terminal UI (default)
     #[default]
     Text,
-    /// Graphical orb visualization
-    Graphical,
+    /// Orb visualization mode
+    Orb,
 }
 
 /// Visual style for the graphical orb UI

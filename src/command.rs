@@ -454,14 +454,14 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
                     debug_log("Returning ui_switch:text");
                     Some(CommandResult::Handled(Some("ui_switch:text".to_string())))
                 }
-                "graphical" | "graph" | "orb" => {
-                    debug_log("Returning ui_switch:graphical");
+                "orb" | "o" => {
+                    debug_log("Returning ui_switch:orb");
                     Some(CommandResult::Handled(Some(
-                        "ui_switch:graphical".to_string(),
+                        "ui_switch:orb".to_string(),
                     )))
                 }
                 _ => Some(CommandResult::Handled(Some(
-                    "Usage: /ui [text|graphical]".to_string(),
+                    "Usage: /ui [text|orb]".to_string(),
                 ))),
             }
         }
@@ -507,7 +507,7 @@ Commands:
   /transcribe - Enter transcription mode
   /note - Enter note-taking mode
   /command - Enter command-only mode
-  /ui [text|graphical] - Switch UI mode
+  /ui [text|orb] - Switch UI mode
   /stop - Stop TTS playback
   /quit - Exit application
   /status - Show current status

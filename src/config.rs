@@ -50,8 +50,8 @@ pub enum UiModeConfig {
     /// Text-based terminal UI (default)
     #[default]
     Text,
-    /// Graphical orb visualization
-    Graphical,
+    /// Orb visualization mode
+    Orb,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]

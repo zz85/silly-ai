@@ -77,9 +77,9 @@ struct Cli {
     #[arg(long)]
     no_tts: bool,
 
-    /// Use graphical orb UI instead of text UI
-    #[arg(long, short = 'g')]
-    graphical: bool,
+    /// Use orb visualization UI instead of text UI
+    #[arg(long, short = 'o')]
+    orb: bool,
 
     /// Use text UI (default, overrides config)
     #[arg(long, short = 't')]
@@ -592,8 +592,8 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     // Determine UI mode from CLI flags or config
     let ui_mode = if cli.text {
         UiModeConfig::Text
-    } else if cli.graphical {
-        UiModeConfig::Graphical
+    } else if cli.orb {
+        UiModeConfig::Orb
     } else {
         config.ui.mode
     };
@@ -613,7 +613,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     // Initialize UI based on mode
     let mut ui_renderer: Box<dyn UiRenderer> = match ui_mode {
         UiModeConfig::Text => Box::new(tui::Tui::new()?),
-        UiModeConfig::Graphical => {
+        UiModeConfig::Orb => {
             let mut gui = graphical_ui::GraphicalUi::new()?;
             gui.set_visual_style(orb_style);
             Box::new(gui)
@@ -670,11 +670,11 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                 debug_log("Text UI created successfully");
                                 new_tui
                             }
-                            UiMode::Graphical => {
-                                debug_log("Creating new graphical UI");
+                            UiMode::Orb => {
+                                debug_log("Creating new orb UI");
                                 let mut gui = graphical_ui::GraphicalUi::new()?;
                                 gui.set_visual_style(orb_style);
-                                debug_log("Graphical UI created successfully");
+                                debug_log("Orb UI created successfully");
                                 Box::new(gui)
                             }
                         };
@@ -855,10 +855,10 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                                     ui.request_ui_mode_switch(UiMode::Text);
                                                     ui_renderer.show_message("Switching to text UI...");
                                                 }
-                                                "graphical" => {
-                                                    debug_log("Requesting switch to graphical UI");
-                                                    ui.request_ui_mode_switch(UiMode::Graphical);
-                                                    ui_renderer.show_message("Switching to graphical UI...");
+                                                "orb" | "o" => {
+                                                    debug_log("Requesting switch to orb UI");
+                                                    ui.request_ui_mode_switch(UiMode::Orb);
+                                                    ui_renderer.show_message("Switching to orb UI...");
                                                 }
                                                 _ => {
                                                     ui_renderer.show_message(&msg);
@@ -974,11 +974,11 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                     debug_log("Text UI created successfully");
                                     new_tui
                                 }
-                                UiMode::Graphical => {
-                                    debug_log("Creating new graphical UI");
+                                UiMode::Orb => {
+                                    debug_log("Creating new orb UI");
                                     let mut gui = graphical_ui::GraphicalUi::new()?;
                                     gui.set_visual_style(orb_style);
-                                    debug_log("Graphical UI created successfully");
+                                    debug_log("Orb UI created successfully");
                                     Box::new(gui)
                                 }
                             };

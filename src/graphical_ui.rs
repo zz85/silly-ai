@@ -1503,7 +1503,7 @@ impl UiRenderer for GraphicalUi {
     }
 
     fn ui_mode(&self) -> UiMode {
-        UiMode::Graphical
+        UiMode::Orb
     }
 
     fn set_visual_style(&mut self, style: OrbStyle) {

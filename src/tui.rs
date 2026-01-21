@@ -2,7 +2,7 @@
 
 use crate::render::{OrbStyle, UiEvent, UiMode, UiRenderer};
 use crate::state::AppMode;
-use crate::status_bar::{SpinnerType, StatusBarState, StatusRenderer};
+use crate::status_bar::{SpinnerType, StatusBarState, StatusDisplayStyle, StatusRenderer};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{self, ClearType};
 use crossterm::{cursor, execute, queue};
@@ -43,6 +43,9 @@ impl Tui {
         terminal::enable_raw_mode()?;
         execute!(stdout(), cursor::Hide)?;
         debug_log("TUI: Raw mode enabled, cursor hidden");
+        let mut status_bar = StatusBarState::new();
+        // Text UI always uses emoji style
+        status_bar.display_style = StatusDisplayStyle::Emoji;
         Ok(Self {
             preview: String::new(),
             input: String::new(),
@@ -52,7 +55,7 @@ impl Tui {
             responding: false,
             input_activity: false,
             keypress_activity: false,
-            status_bar: StatusBarState::new(),
+            status_bar,
         })
     }
 

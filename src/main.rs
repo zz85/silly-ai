@@ -835,9 +835,18 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                         }
                         Some(line) => {
                             debug_log(&format!("Main: Keyboard input received: {}", line));
+                            
+                            // Handle Ctrl+C
                             if line == "\x03" {
                                 should_break = true;
                                 break;
+                            }
+
+                            // Handle Esc key from orb mode (switch to text mode)
+                            if line == "\x1b[TEXT_MODE]" {
+                                debug_log("Esc pressed in orb mode, switching to text");
+                                ui.request_ui_mode_switch(UiMode::Text);
+                                continue;
                             }
 
                             // Check for slash commands first
@@ -855,10 +864,19 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                                     ui.request_ui_mode_switch(UiMode::Text);
                                                     ui_renderer.show_message("Switching to text UI...");
                                                 }
-                                                "orb" | "o" => {
+                                                "orb" => {
                                                     debug_log("Requesting switch to orb UI");
                                                     ui.request_ui_mode_switch(UiMode::Orb);
                                                     ui_renderer.show_message("Switching to orb UI...");
+                                                }
+                                                "toggle" => {
+                                                    let current = ui_renderer.ui_mode();
+                                                    let new = match current {
+                                                        UiMode::Text => UiMode::Orb,
+                                                        UiMode::Orb => UiMode::Text,
+                                                    };
+                                                    debug_log(&format!("Toggling UI from {:?} to {:?}", current, new));
+                                                    ui.request_ui_mode_switch(new);
                                                 }
                                                 _ => {
                                                     ui_renderer.show_message(&msg);

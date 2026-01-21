@@ -446,11 +446,16 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
         }),
         "stop" => Some(CommandResult::Stop),
         "quit" | "exit" => Some(CommandResult::Shutdown),
+        "ui" => {
+            // Toggle between text and orb modes
+            debug_log("Returning ui_switch:toggle");
+            Some(CommandResult::Handled(Some("ui_switch:toggle".to_string())))
+        }
         cmd if cmd.starts_with("ui ") => {
             let ui_mode = &cmd[3..];
             debug_log(&format!("Processing /ui command with mode: {}", ui_mode));
             match ui_mode {
-                "text" => {
+                "text" | "t" => {
                     debug_log("Returning ui_switch:text");
                     Some(CommandResult::Handled(Some("ui_switch:text".to_string())))
                 }
@@ -461,7 +466,7 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
                     )))
                 }
                 _ => Some(CommandResult::Handled(Some(
-                    "Usage: /ui [text|orb]".to_string(),
+                    "Usage: /ui [text|orb] (no args to toggle)".to_string(),
                 ))),
             }
         }

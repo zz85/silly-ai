@@ -5,7 +5,7 @@
 
 use crate::render::{OrbStyle, UiEvent, UiMode, UiRenderer};
 use crate::state::AppMode;
-use crate::status_bar::{StatusBarState, StatusRenderer};
+use crate::status_bar::{StatusBarState, StatusDisplayStyle, StatusRenderer};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::style::Color;
 use crossterm::terminal::{self, ClearType};
@@ -1104,6 +1104,10 @@ impl GraphicalUi {
             terminal::Clear(ClearType::All)
         )?;
 
+        let mut status_bar = StatusBarState::new();
+        // Orb UI uses text style for cleaner look
+        status_bar.display_style = StatusDisplayStyle::Text;
+
         Ok(Self {
             orb: Orb::new(OrbStyle::Sphere),
             last_frame: Instant::now(),
@@ -1113,7 +1117,7 @@ impl GraphicalUi {
             responding: false,
             input_activity: false,
             keypress_activity: false,
-            status_bar: StatusBarState::new(),
+            status_bar,
         })
     }
 
@@ -1306,6 +1310,25 @@ impl UiRenderer for GraphicalUi {
                     };
                     self.orb.set_style(new_style);
                     continue;
+                }
+
+                // Tab to cycle through orb styles
+                if key.code == KeyCode::Tab {
+                    let current_style = self.orb.style;
+                    let new_style = match current_style {
+                        OrbStyle::Blob => OrbStyle::Ring,
+                        OrbStyle::Ring => OrbStyle::Orbs,
+                        OrbStyle::Orbs => OrbStyle::Sphere,
+                        OrbStyle::Sphere => OrbStyle::Blob,
+                    };
+                    self.orb.set_style(new_style);
+                    continue;
+                }
+
+                // Esc to switch back to text mode
+                if key.code == KeyCode::Esc {
+                    // Return a special marker to trigger UI switch
+                    return Ok(Some("\x1b[TEXT_MODE]".to_string()));
                 }
 
                 // Backtick to cycle through shade patterns

@@ -381,6 +381,8 @@ impl Tui {
         }
         self.input.push_str(text);
         self.cursor_pos = self.char_count();
+        // Don't set input_activity here - this is for voice input
+        // input_activity is only for keyboard input
     }
 
     /// Convert character index to byte index
@@ -537,6 +539,10 @@ impl UiRenderer for Tui {
 
     fn has_keypress_activity(&mut self) -> bool {
         Tui::has_keypress_activity(self)
+    }
+
+    fn has_pending_input(&self) -> bool {
+        !self.input.trim().is_empty()
     }
 
     fn take_input(&mut self) -> Option<String> {

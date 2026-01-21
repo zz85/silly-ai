@@ -736,7 +736,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                     }
                     DisplayEvent::Preview(text) => {
                         // Use mode-aware transcript handling
-                        let result = repl::handle_transcript_with_mode(
+                        let _result = repl::handle_transcript_with_mode(
                             TranscriptEvent::Preview(text),
                             &wake_word,
                             last_interaction,
@@ -745,10 +745,8 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                             &command_processor,
                             &ui,
                         );
-                        // Preview always returns None, but we still cancel auto-submit
-                        if !matches!(result, TranscriptResult::None) {
-                            auto_submit_deadline = None;
-                        }
+                        // Preview events mean user is still speaking - cancel auto-submit timer
+                        auto_submit_deadline = None;
                     }
                     DisplayEvent::Final(text) => {
                         // Use mode-aware transcript handling
@@ -1003,7 +1001,8 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                     }
                 }
 
-                // Cancel auto-submit timer on any keypress
+                // Cancel auto-submit timer on keyboard input only
+                // (Voice input timer is managed by Final event handler)
                 if ui_renderer.has_input_activity() {
                     auto_submit_deadline = None;
                 }

@@ -1459,6 +1459,10 @@ impl UiRenderer for GraphicalUi {
         activity
     }
 
+    fn has_pending_input(&self) -> bool {
+        !self.input.trim().is_empty()
+    }
+
     fn take_input(&mut self) -> Option<String> {
         if self.input.is_empty() {
             None
@@ -1475,6 +1479,8 @@ impl UiRenderer for GraphicalUi {
         }
         self.input.push_str(text);
         self.cursor_pos = self.char_count();
+        // Don't set input_activity here - this is for voice input
+        // input_activity is only for keyboard input
     }
 
     fn ui_mode(&self) -> UiMode {

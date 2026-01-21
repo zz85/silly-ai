@@ -105,6 +105,9 @@ pub trait UiRenderer: Send {
     /// Check if there was any keypress since last call
     fn has_keypress_activity(&mut self) -> bool;
 
+    /// Check if there is pending input in the buffer
+    fn has_pending_input(&self) -> bool;
+
     /// Take the current input buffer and clear it
     fn take_input(&mut self) -> Option<String>;
 

@@ -746,6 +746,8 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                             &ui,
                         );
                         // Preview events mean user is still speaking - cancel auto-submit timer
+                        // IMPORTANT: This must ALWAYS cancel, regardless of result value
+                        // See docs/auto_submit_timer.md for rationale
                         auto_submit_deadline = None;
                     }
                     DisplayEvent::Final(text) => {
@@ -763,7 +765,9 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                         match result {
                             TranscriptResult::SendToLlm(input_text) => {
                                 ui_renderer.append_input(&input_text);
-                                // Start auto-submit timer
+                                // Start/restart auto-submit timer with fresh deadline
+                                // IMPORTANT: This must set a NEW deadline, not check if one exists
+                                // See docs/auto_submit_timer.md for rationale
                                 auto_submit_deadline = Some(tokio::time::Instant::now() + auto_submit_delay);
                             }
                             TranscriptResult::TranscribeOnly(text) => {

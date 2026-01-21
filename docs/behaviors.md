@@ -10,13 +10,16 @@
 
 ## Auto-Submit Timer
 
-- On final transcription, a 1.5 second timer starts
+- On final transcription, a 1.5 second timer starts (or restarts if already running)
 - If timer expires without activity, REPL buffer is automatically submitted to LLM
-- Activity that cancels the timer:
-  - New preview transcription
-  - New final transcription
+- Activity that **cancels** the timer:
+  - New preview transcription (user is speaking)
   - Any keyboard input (typing, backspace, delete)
   - Manual Enter key submission
+- Activity that **restarts** the timer (fresh 1.5s countdown):
+  - New final transcription (user stopped speaking)
+
+**Important**: Preview events always cancel the timer (user is still speaking). Final events always restart the timer with a fresh deadline (user finished speaking, start countdown again).
 
 ## LLM Streaming
 

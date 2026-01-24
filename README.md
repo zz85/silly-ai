@@ -220,6 +220,8 @@ silly summarize -i transcript.txt
 cargo build --release --features listen
 ```
 
+**Note**: The listen feature uses ScreenCaptureKit for system audio capture, which requires Swift runtime libraries. The `.cargo/config.toml` includes the necessary linker flags.
+
 ## Usage
 
 Say the wake word ("Hey Silly" by default) to activate, then speak your question. The CLI will:

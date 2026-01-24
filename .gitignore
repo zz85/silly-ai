@@ -1,5 +1,8 @@
 /target
 models/
 Cargo.lock
-config.toml
+/config.toml
 .DS_Store
+debug.log
+debug.sh
+UI_MODULAR_STATUS_SUMMARY.md

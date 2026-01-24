@@ -182,6 +182,9 @@ cargo build --release --no-default-features --features supertonic,llama-cpp
 
 # With Ollama instead
 cargo build --release --no-default-features --features supertonic,ollama
+
+# With acoustic echo cancellation (AEC)
+cargo build --release --features aec
 ```
 
 **Note**: On Apple Silicon (M1/M2/M3), hardware acceleration is automatically enabled:
@@ -243,6 +246,7 @@ After responding, the assistant listens for follow-up questions for 30 seconds (
 | `/speak` | `/tts` | Toggle TTS output |
 | `/wake` | | Toggle wake word requirement |
 | `/crosstalk` | | Toggle crosstalk mode (listen during TTS) |
+| `/aec` | `/echo` | Toggle acoustic echo cancellation |
 | `/mode <mode>` | | Switch mode: `chat`, `transcribe`, `note` |
 | `/stats` | | Show inference performance stats |
 | `/help` | `/h`, `/?` | Show available commands |
@@ -317,6 +321,9 @@ speed = 1.1
 # Enable processing input while TTS is playing
 crosstalk = false
 
+# Enable acoustic echo cancellation (requires --features aec)
+aec = false
+
 # Volume level when user speaks during TTS (0.0-1.0)
 duck_volume = 0.2
 
@@ -332,6 +339,7 @@ stop_phrases = ["stop", "quiet", "shut up", "enough"]
 | `wake_word` | "Hey Silly" | Phrase to activate the assistant |
 | `wake_timeout_secs` | 30 | After responding, how long to wait for follow-up questions before requiring the wake word again |
 | `interaction.crosstalk` | false | When true, continue listening while TTS plays (enables barge-in) |
+| `interaction.aec` | false | When true, apply acoustic echo cancellation to remove TTS from mic input |
 | `interaction.duck_volume` | 0.2 | TTS volume (0.0-1.0) when user speaks during playback |
 | `interaction.stop_phrases` | ["stop", ...] | Phrases that stop TTS without triggering LLM |
 
@@ -439,11 +447,12 @@ The application maintains a centralized, thread-safe runtime state that can be q
 | `tts_volume` | Current TTS volume (0.0-1.0) |
 | `tts_level` | Current TTS output RMS level (0.0-1.0) for real-time visualization |
 | `crosstalk_enabled` | Whether to process audio during TTS |
+| `aec_enabled` | Whether acoustic echo cancellation is active |
 | `wake_enabled` | Whether wake word is required |
 | `in_conversation` | Whether within wake timeout window |
 | `mode` | Current application mode (Idle/Chat/Transcribe/Note) |
 
-All state can be toggled via keyboard commands (e.g., `/mute`, `/crosstalk`).
+All state can be toggled via keyboard commands (e.g., `/mute`, `/crosstalk`, `/aec`).
 
 ### Audio Visualization
 

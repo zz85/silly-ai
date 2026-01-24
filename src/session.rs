@@ -8,6 +8,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 
+#[cfg(feature = "aec")]
+use crate::aec::AecRenderTx;
+
 pub enum SessionCommand {
     UserInput(String),
     Greet,
@@ -32,6 +35,8 @@ pub struct SessionManager {
     event_tx: mpsc::UnboundedSender<SessionEvent>,
     stats: Option<SharedStats>,
     state: SharedState,
+    #[cfg(feature = "aec")]
+    aec_tx: Option<AecRenderTx>,
 }
 
 impl SessionManager {
@@ -47,7 +52,15 @@ impl SessionManager {
             event_tx,
             stats: None,
             state,
+            #[cfg(feature = "aec")]
+            aec_tx: None,
         }
+    }
+
+    #[cfg(feature = "aec")]
+    pub fn with_aec_tx(mut self, tx: Option<AecRenderTx>) -> Self {
+        self.aec_tx = tx;
+        self
     }
 
     pub fn with_stats(mut self, stats: SharedStats) -> Self {
@@ -80,9 +93,17 @@ impl SessionManager {
 
         self.chat.history_push_user(message);
 
-        // Create TTS controller with state
+        // Create TTS controller with state (and optional AEC channel)
         let (stream, controller) = match Tts::create_controller(Arc::clone(&self.state)) {
-            Ok((s, c)) => (s, c),
+            Ok((s, c)) => {
+                #[cfg(feature = "aec")]
+                let c = if let Some(ref tx) = self.aec_tx {
+                    c.with_aec_tx(tx.clone())
+                } else {
+                    c
+                };
+                (s, c)
+            }
             Err(e) => {
                 let _ = self.event_tx.send(SessionEvent::Error(e.to_string()));
                 self.state.tts_playing.store(false, Ordering::SeqCst);

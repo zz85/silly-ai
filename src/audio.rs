@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender};
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "aec")]
+use crate::aec::AecProcessor;
 use crate::state::SharedState;
 use crate::vad::VadEngine;
 
@@ -323,14 +325,44 @@ fn process_vad_frame(
 /// - Ducks TTS volume when speech is detected
 /// - Supports barge-in (speech during TTS can interrupt)
 ///
+/// When AEC is enabled:
+/// - Applies echo cancellation to mic input before VAD processing
+///
 /// final_tx: preserves all events, preview_tx: lossy (capacity 1)
+#[cfg(feature = "aec")]
 pub fn run_vad_processor_with_state(
+    rx: Receiver<Vec<f32>>,
+    final_tx: Sender<Arc<[f32]>>,
+    preview_tx: SyncSender<Arc<[f32]>>,
+    vad: Option<VadEngine>,
+    state: SharedState,
+    level_tx: Sender<crate::DisplayEvent>,
+    aec: Option<AecProcessor>,
+) {
+    run_vad_processor_inner(rx, final_tx, preview_tx, vad, state, level_tx, aec)
+}
+
+#[cfg(not(feature = "aec"))]
+pub fn run_vad_processor_with_state(
+    rx: Receiver<Vec<f32>>,
+    final_tx: Sender<Arc<[f32]>>,
+    preview_tx: SyncSender<Arc<[f32]>>,
+    vad: Option<VadEngine>,
+    state: SharedState,
+    level_tx: Sender<crate::DisplayEvent>,
+) {
+    run_vad_processor_inner(rx, final_tx, preview_tx, vad, state, level_tx)
+}
+
+#[cfg(feature = "aec")]
+fn run_vad_processor_inner(
     rx: Receiver<Vec<f32>>,
     final_tx: Sender<Arc<[f32]>>,
     preview_tx: SyncSender<Arc<[f32]>>,
     mut vad: Option<VadEngine>,
     state: SharedState,
     level_tx: Sender<crate::DisplayEvent>,
+    mut aec: Option<AecProcessor>,
 ) {
     let mut vad_state = VadState::Idle;
     let mut speech_buf: Vec<f32> = Vec::with_capacity(MAX_SPEECH_BUFFER_SIZE);
@@ -339,14 +371,24 @@ pub fn run_vad_processor_with_state(
     let mut last_level = Instant::now();
     let chunk_size = (TARGET_RATE as f32 * CHUNK_SECONDS) as usize;
 
-    // Track if we're in a barge-in situation (speech detected during TTS)
     let mut barge_in_active = false;
     let mut speech_during_tts = false;
 
     loop {
-        let frame = match rx.recv() {
+        let raw_frame = match rx.recv() {
             Ok(f) => f,
             Err(_) => break,
+        };
+
+        // Apply AEC if enabled
+        let frame = if let Some(ref mut aec_proc) = aec {
+            if state.aec_enabled.load(Ordering::SeqCst) {
+                aec_proc.process_capture(&raw_frame)
+            } else {
+                raw_frame
+            }
+        } else {
+            raw_frame
         };
 
         // Send audio level every 50ms
@@ -490,6 +532,159 @@ pub fn run_vad_processor_with_state(
             // No VAD - fixed chunks (legacy behavior)
             speech_buf.extend_from_slice(&frame);
 
+            let now = Instant::now();
+            if speech_buf.len() >= chunk_size {
+                let samples: Arc<[f32]> = speech_buf.drain(..chunk_size).collect();
+                let _ = final_tx.send(samples);
+                last_preview = now;
+            } else if now.duration_since(last_preview) >= PREVIEW_INTERVAL
+                && speech_buf.len() > MIN_PREVIEW_SAMPLES
+            {
+                let _ = preview_tx.try_send(Arc::from(speech_buf.as_slice()));
+                last_preview = now;
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "aec"))]
+fn run_vad_processor_inner(
+    rx: Receiver<Vec<f32>>,
+    final_tx: Sender<Arc<[f32]>>,
+    preview_tx: SyncSender<Arc<[f32]>>,
+    mut vad: Option<VadEngine>,
+    state: SharedState,
+    level_tx: Sender<crate::DisplayEvent>,
+) {
+    let mut vad_state = VadState::Idle;
+    let mut speech_buf: Vec<f32> = Vec::with_capacity(MAX_SPEECH_BUFFER_SIZE);
+    let mut prefill = PrefillRing::new(VAD_FRAME_SAMPLES, VAD_PREFILL_FRAMES);
+    let mut last_preview = Instant::now();
+    let mut last_level = Instant::now();
+    let chunk_size = (TARGET_RATE as f32 * CHUNK_SECONDS) as usize;
+
+    let mut barge_in_active = false;
+    let mut speech_during_tts = false;
+
+    loop {
+        let frame = match rx.recv() {
+            Ok(f) => f,
+            Err(_) => break,
+        };
+
+        let now = Instant::now();
+        if now.duration_since(last_level) >= Duration::from_millis(50) {
+            let rms = (frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32).sqrt();
+            let _ = level_tx.send(crate::DisplayEvent::AudioLevel(rms));
+            state.set_mic_level(rms);
+            last_level = now;
+        }
+
+        if state.mic_muted.load(Ordering::SeqCst) {
+            vad_state = VadState::Idle;
+            speech_buf.clear();
+            barge_in_active = false;
+            speech_during_tts = false;
+            continue;
+        }
+
+        let tts_playing = state.tts_playing.load(Ordering::SeqCst);
+        let crosstalk_enabled = state.crosstalk_enabled.load(Ordering::SeqCst);
+
+        if tts_playing && !crosstalk_enabled {
+            vad_state = VadState::Idle;
+            speech_buf.clear();
+            barge_in_active = false;
+            speech_during_tts = false;
+            continue;
+        }
+
+        if let Some(ref mut vad_engine) = vad {
+            let is_speaking = matches!(vad_state, VadState::Speaking(_));
+            let is_speech = vad_engine.is_speech(&frame, is_speaking);
+
+            if tts_playing && crosstalk_enabled {
+                if is_speech && !speech_during_tts {
+                    state.duck_tts();
+                    speech_during_tts = true;
+                } else if !is_speech && speech_during_tts && !is_speaking {
+                    state.restore_tts_volume();
+                    speech_during_tts = false;
+                }
+            } else if speech_during_tts {
+                state.restore_tts_volume();
+                speech_during_tts = false;
+            }
+
+            match vad_state {
+                VadState::Idle => {
+                    prefill.push(&frame);
+                    if is_speech {
+                        vad_state = VadState::Onset(1);
+                    }
+                }
+                VadState::Onset(count) => {
+                    prefill.push(&frame);
+                    if is_speech {
+                        let new_count = count + 1;
+                        if new_count >= VAD_ONSET_FRAMES {
+                            prefill.drain_to(&mut speech_buf);
+                            vad_state = VadState::Speaking(0);
+                            if tts_playing && crosstalk_enabled {
+                                barge_in_active = true;
+                            }
+                        } else {
+                            vad_state = VadState::Onset(new_count);
+                        }
+                    } else {
+                        vad_state = VadState::Idle;
+                        speech_buf.clear();
+                    }
+                }
+                VadState::Speaking(silence_count) => {
+                    speech_buf.extend_from_slice(&frame);
+                    vad_state = if is_speech {
+                        VadState::Speaking(0)
+                    } else {
+                        VadState::Speaking(silence_count + 1)
+                    };
+                }
+            }
+
+            let should_emit = matches!(vad_state, VadState::Speaking(s) if s >= VAD_SILENCE_FRAMES_TO_END)
+                || speech_buf.len() >= MAX_SPEECH_BUFFER_SIZE;
+
+            if should_emit {
+                if speech_buf.len() >= VAD_MIN_SPEECH_SAMPLES {
+                    if barge_in_active {
+                        state.request_cancel();
+                        barge_in_active = false;
+                    }
+                    let samples: Arc<[f32]> = std::mem::take(&mut speech_buf).into();
+                    let _ = final_tx.send(samples);
+                } else {
+                    speech_buf.clear();
+                }
+                vad_state = VadState::Idle;
+                last_preview = Instant::now();
+                if speech_during_tts {
+                    state.restore_tts_volume();
+                    speech_during_tts = false;
+                }
+                continue;
+            }
+
+            if matches!(vad_state, VadState::Speaking(_)) {
+                let now = Instant::now();
+                if speech_buf.len() > VAD_MIN_SPEECH_SAMPLES
+                    && now.duration_since(last_preview) >= PREVIEW_INTERVAL
+                {
+                    let _ = preview_tx.try_send(Arc::from(speech_buf.as_slice()));
+                    last_preview = now;
+                }
+            }
+        } else {
+            speech_buf.extend_from_slice(&frame);
             let now = Instant::now();
             if speech_buf.len() >= chunk_size {
                 let samples: Arc<[f32]> = speech_buf.drain(..chunk_size).collect();

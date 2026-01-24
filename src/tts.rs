@@ -5,6 +5,9 @@ use rodio::{OutputStreamBuilder, Sink, Source};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "aec")]
+use crate::aec::AecRenderTx;
+
 pub trait TtsEngine: Send + Sync {
     fn synthesize(&self, text: &str) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error>>;
 }
@@ -21,6 +24,8 @@ where
 {
     input: I,
     state: SharedState,
+    #[cfg(feature = "aec")]
+    aec_tx: Option<AecRenderTx>,
     buffer: Vec<f32>,
     last_update: Instant,
     update_interval: Duration,
@@ -35,10 +40,18 @@ where
         Self {
             input,
             state,
+            #[cfg(feature = "aec")]
+            aec_tx: None,
             buffer: Vec::new(),
             last_update: Instant::now(),
-            update_interval: Duration::from_millis(50), // Update every 50ms
+            update_interval: Duration::from_millis(50),
         }
+    }
+
+    #[cfg(feature = "aec")]
+    pub fn with_aec_tx(mut self, tx: AecRenderTx) -> Self {
+        self.aec_tx = Some(tx);
+        self
     }
 
     fn update_level(&mut self) {
@@ -50,6 +63,15 @@ where
         let rms =
             (self.buffer.iter().map(|s| s * s).sum::<f32>() / self.buffer.len() as f32).sqrt();
         self.state.set_tts_level(rms);
+
+        // Feed to AEC if enabled
+        #[cfg(feature = "aec")]
+        if let Some(ref tx) = self.aec_tx {
+            if self.state.aec_enabled.load(Ordering::SeqCst) {
+                let _ = tx.send(self.buffer.clone());
+            }
+        }
+
         self.buffer.clear();
     }
 }
@@ -112,7 +134,9 @@ where
 /// - Integration with RuntimeState for coordinated control
 pub struct TtsController {
     sink: Sink,
-    state: SharedState,
+    pub state: SharedState,
+    #[cfg(feature = "aec")]
+    pub aec_tx: Option<AecRenderTx>,
     base_volume: f32,
 }
 
@@ -122,8 +146,16 @@ impl TtsController {
         Self {
             sink,
             state,
+            #[cfg(feature = "aec")]
+            aec_tx: None,
             base_volume: 1.0,
         }
+    }
+
+    #[cfg(feature = "aec")]
+    pub fn with_aec_tx(mut self, tx: AecRenderTx) -> Self {
+        self.aec_tx = Some(tx);
+        self
     }
 
     /// Stop playback immediately and clear the queue
@@ -392,6 +424,16 @@ impl Tts {
         let source = rodio::buffer::SamplesBuffer::new(1, sample_rate, audio);
 
         // Wrap it in a monitored source that tracks audio levels in real-time
+        #[cfg(feature = "aec")]
+        let monitored_source = {
+            let ms = MonitoredSource::new(source, controller.state.clone());
+            if let Some(ref tx) = controller.aec_tx {
+                ms.with_aec_tx(tx.clone())
+            } else {
+                ms
+            }
+        };
+        #[cfg(not(feature = "aec"))]
         let monitored_source = MonitoredSource::new(source, controller.state.clone());
 
         controller.sink().append(monitored_source);

@@ -79,6 +79,7 @@ enum ToggleTarget {
     Mute,
     Tts,
     Crosstalk,
+    Aec,
     Wake,
 }
 
@@ -307,6 +308,7 @@ fn parse_action(action: &str) -> Option<CommandAction> {
             "mute" => ToggleTarget::Mute,
             "tts" => ToggleTarget::Tts,
             "crosstalk" => ToggleTarget::Crosstalk,
+            "aec" => ToggleTarget::Aec,
             "wake" => ToggleTarget::Wake,
             _ => return None,
         };
@@ -356,6 +358,17 @@ fn execute_action(action: &CommandAction, state: &SharedState) -> CommandResult 
                             "Crosstalk enabled."
                         } else {
                             "Crosstalk disabled."
+                        },
+                    )
+                }
+                ToggleTarget::Aec => {
+                    let new = state.toggle_aec();
+                    (
+                        new,
+                        if new {
+                            "Echo cancellation enabled."
+                        } else {
+                            "Echo cancellation disabled."
                         },
                     )
                 }
@@ -416,6 +429,14 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
                 "Crosstalk disabled".to_string()
             })))
         }
+        "aec" | "echo" => {
+            let enabled = state.toggle_aec();
+            Some(CommandResult::Handled(Some(if enabled {
+                "Echo cancellation enabled".to_string()
+            } else {
+                "Echo cancellation disabled".to_string()
+            })))
+        }
         "wake" => {
             let enabled = state.toggle_wake();
             Some(CommandResult::Handled(Some(if enabled {
@@ -470,7 +491,7 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
         }
         "status" => {
             let status = format!(
-                "Mode: {}, Mic: {}, TTS: {}, Crosstalk: {}, Wake: {}",
+                "Mode: {}, Mic: {}, TTS: {}, Crosstalk: {}, AEC: {}, Wake: {}",
                 state.mode(),
                 if state.mic_muted.load(std::sync::atomic::Ordering::SeqCst) {
                     "muted"
@@ -490,6 +511,11 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
                 } else {
                     "off"
                 },
+                if state.aec_enabled.load(std::sync::atomic::Ordering::SeqCst) {
+                    "on"
+                } else {
+                    "off"
+                },
                 if state.wake_enabled.load(std::sync::atomic::Ordering::SeqCst) {
                     "required"
                 } else {
@@ -504,6 +530,7 @@ Commands:
   /mute - Toggle microphone
   /tts - Toggle text-to-speech
   /crosstalk - Toggle crosstalk (listen during TTS)
+  /aec - Toggle echo cancellation
   /wake - Toggle wake word requirement
   /chat - Resume conversation mode
   /pause - Pause conversation (requires wake word to resume)

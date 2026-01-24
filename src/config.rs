@@ -96,10 +96,13 @@ pub struct InteractionConfig {
     pub crosstalk: bool,
 
     /// Volume level when user speaks during TTS (0.0-1.0)
-    /// Used in Phase 2 (TTS Controller) and Phase 3 (Crosstalk)
     #[serde(default = "default_duck_volume")]
     #[allow(dead_code)]
     pub duck_volume: f32,
+
+    /// Enable acoustic echo cancellation (removes TTS audio from mic input)
+    #[serde(default)]
+    pub aec: bool,
 }
 
 impl Default for InteractionConfig {
@@ -107,6 +110,7 @@ impl Default for InteractionConfig {
         Self {
             crosstalk: default_crosstalk(),
             duck_volume: default_duck_volume(),
+            aec: false,
         }
     }
 }

@@ -100,6 +100,8 @@ pub struct RuntimeState {
     // ========================================================================
     /// Continue processing audio while TTS is playing
     pub crosstalk_enabled: AtomicBool,
+    /// Acoustic echo cancellation enabled
+    pub aec_enabled: AtomicBool,
     /// Require wake word to activate
     pub wake_enabled: AtomicBool,
     /// Currently in an active conversation (within wake timeout)
@@ -144,6 +146,7 @@ impl RuntimeState {
 
             // Interaction
             crosstalk_enabled: AtomicBool::new(config.interaction.crosstalk),
+            aec_enabled: AtomicBool::new(config.interaction.aec),
             wake_enabled: AtomicBool::new(true),
             in_conversation: AtomicBool::new(false),
             last_interaction_ms: AtomicU64::new(0),
@@ -310,6 +313,14 @@ impl RuntimeState {
         new_state
     }
 
+    /// Toggle AEC enabled state, returns new state
+    pub fn toggle_aec(&self) -> bool {
+        let current = self.aec_enabled.load(Ordering::SeqCst);
+        let new_state = !current;
+        self.aec_enabled.store(new_state, Ordering::SeqCst);
+        new_state
+    }
+
     /// Toggle wake word requirement, returns new state
     pub fn toggle_wake(&self) -> bool {
         let current = self.wake_enabled.load(Ordering::SeqCst);
@@ -330,6 +341,7 @@ impl fmt::Debug for RuntimeState {
                 "crosstalk_enabled",
                 &self.crosstalk_enabled.load(Ordering::SeqCst),
             )
+            .field("aec_enabled", &self.aec_enabled.load(Ordering::SeqCst))
             .field("wake_enabled", &self.wake_enabled.load(Ordering::SeqCst))
             .field(
                 "in_conversation",

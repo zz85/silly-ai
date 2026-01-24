@@ -1,4 +1,6 @@
 mod audio;
+#[cfg(feature = "aec")]
+mod aec;
 #[cfg(feature = "listen")]
 mod capture;
 mod chat;
@@ -267,6 +269,16 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     let tts_enabled = Arc::new(AtomicBool::new(!cli.no_tts));
     let wake_enabled = Arc::new(AtomicBool::new(!cli.no_stt));
 
+    // Initialize AEC channel if enabled
+    #[cfg(feature = "aec")]
+    let (aec_render_tx, aec_render_rx) = if config.interaction.aec {
+        let (tx, rx) = mpsc::channel::<Vec<f32>>();
+        eprintln!("AEC: Enabled");
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+
     // Clone runtime_state for VAD processor
     let runtime_state_vad = Arc::clone(&runtime_state);
 
@@ -347,8 +359,17 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
             Some(VadEngine::energy())
         };
 
-        // Use the new crosstalk-enabled VAD processor
-        if let Some(vad_engine) = vad {
+        // Use the crosstalk-enabled VAD processor (with optional AEC)
+        let vad_engine = vad.unwrap_or_else(|| {
+            eprintln!("Failed to initialize VAD engine");
+            VadEngine::energy()
+        });
+
+        #[cfg(feature = "aec")]
+        {
+            let aec = aec_render_rx.and_then(|rx| {
+                aec::AecProcessor::new(rx).ok()
+            });
             audio::run_vad_processor_with_state(
                 audio_rx,
                 final_tx,
@@ -356,19 +377,19 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 Some(vad_engine),
                 runtime_state_vad,
                 display_tx_audio,
-            );
-        } else {
-            eprintln!("Failed to initialize VAD engine");
-            // Continue with energy-based VAD as fallback
-            audio::run_vad_processor_with_state(
-                audio_rx,
-                final_tx,
-                preview_tx,
-                Some(VadEngine::energy()),
-                runtime_state_vad,
-                display_tx_audio,
+                aec,
             );
         }
+
+        #[cfg(not(feature = "aec"))]
+        audio::run_vad_processor_with_state(
+            audio_rx,
+            final_tx,
+            preview_tx,
+            Some(vad_engine),
+            runtime_state_vad,
+            display_tx_audio,
+        );
     });
 
     // Preview transcription thread
@@ -586,6 +607,17 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         tokio::sync::mpsc::unbounded_channel::<session::SessionEvent>();
 
     // Spawn session manager
+    #[cfg(feature = "aec")]
+    let session_mgr = session::SessionManager::new(
+        llm_chat,
+        tts_engine,
+        Arc::clone(&runtime_state),
+        session_event_tx,
+    )
+    .with_aec_tx(aec_render_tx)
+    .with_stats(stats_session);
+
+    #[cfg(not(feature = "aec"))]
     let session_mgr = session::SessionManager::new(
         llm_chat,
         tts_engine,
@@ -593,6 +625,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         session_event_tx,
     )
     .with_stats(stats_session);
+
     // Spawn session manager on dedicated thread (LLM inference is blocking)
     let _session_handle = std::thread::spawn(move || {
         session_mgr.run_sync(session_rx);
@@ -1133,8 +1166,14 @@ async fn run_probe(prompt: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
     };
 
     let messages = vec![
-        llm::Message { role: llm::Role::System, content: system_prompt },
-        llm::Message { role: llm::Role::User, content: prompt.to_string() },
+        llm::Message {
+            role: llm::Role::System,
+            content: system_prompt,
+        },
+        llm::Message {
+            role: llm::Role::User,
+            content: prompt.to_string(),
+        },
     ];
 
     print!("\x1b[36m"); // cyan

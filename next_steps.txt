@@ -1,10 +1,19 @@
 
  .opencode/plans/llama-metadata-auto-config.md
 
+[ ] orb ui fixes / poke
+[ ] huggingface
+[ ] echo cancellation
 
 Sleep command
 TUI testing
 TUI automated testing
-llamma app changes
-client cleanup
+
+[ ] llammacpp changes
+
+[x] ureq client cleanup
+[ ] ollama client cleanup
 api rector
+[ ] renames. departement -> silly-experts
+[ ] sily-experts-web
+[ ] 

@@ -129,42 +129,53 @@ curl -L "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-fil
 cd ..
 ```
 
-### 5. Build and run
+### 5. Configure your LLM backend
 
-Start LM Studio with a model loaded, then build and run:
+Create or edit `config.toml`:
+
+**Option A: Use LM Studio (OpenAI-compatible API)**
+```toml
+[llm]
+backend = "openai-compat"
+preset = "lm_studio"
+model = "your-model-name"
+```
+
+Start LM Studio with a model loaded.
+
+**Option B: Use llama.cpp (fully offline)**
+```toml
+[llm]
+backend = "llama-cpp"
+hf_repo = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
+hf_file = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+prompt_format = "chatml"
+```
+
+**Option C: Use Ollama**
+```toml
+[llm]
+backend = "ollama"
+model = "mistral:7b-instruct"
+```
+
+Start Ollama server: `ollama serve`
+
+### 6. Build and run
 
 ```bash
 cargo build --release
 ./target/release/silly
 ```
 
-### 6. (Optional) Use llama.cpp instead
-
-For fully offline operation with auto-downloaded models:
+### 7. Build variants
 
 ```bash
-cargo build --release --no-default-features --features supertonic,llama-cpp
-```
-
-The LLM model (TinyLlama by default) will be **automatically downloaded** from HuggingFace on first run.
-
-### 7. (Optional) Use Ollama instead
-
-If you prefer Ollama, start the server and build with the ollama feature:
-
-```bash
-ollama serve  # in another terminal
-cargo build --release --no-default-features --features supertonic,ollama
-```
-
-### 8. Build variants
-
-```bash
-# Default (LM Studio + Supertonic TTS with CoreML)
+# Default (OpenAI-compatible API + Supertonic TTS with CoreML)
 cargo build --release
 
 # With Kokoro TTS instead
-cargo build --release --no-default-features --features lm-studio,kokoro
+cargo build --release --no-default-features --features openai-compat,kokoro
 
 # With llama.cpp instead (Metal GPU, auto-downloads models)
 cargo build --release --no-default-features --features supertonic,llama-cpp
@@ -174,7 +185,7 @@ cargo build --release --no-default-features --features supertonic,ollama
 ```
 
 **Note**: On Apple Silicon (M1/M2/M3), hardware acceleration is automatically enabled:
-- LLM: Metal GPU via llama.cpp
+- LLM: Metal GPU via llama.cpp or CoreML
 - VAD: CoreML (Silero)
 - TTS: CoreML (Supertonic)
 - Transcription: CoreML (Parakeet)
@@ -284,11 +295,12 @@ prompt_format = "chatml"  # chatml, mistral, or llama3
 # Or use a local model:
 # model_path = "models/my-model.gguf"
 
-# Or use LM Studio:
+# Or use OpenAI-compatible API (LM Studio, OpenAI, etc.):
 # [llm]
-# backend = "lm-studio"
-# base_url = "http://localhost:1234"
-# model = "default"
+# backend = "openai-compat"
+# preset = "lm_studio"  # or "openai" or "ollama"
+# model = "model-name"
+# api_key = "${OPENAI_API_KEY}"  # optional, for OpenAI
 
 [tts]
 engine = "supertonic"

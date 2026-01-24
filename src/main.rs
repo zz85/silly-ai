@@ -734,7 +734,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                         ui_renderer.set_ready();
                     }
                     session::SessionEvent::Error(e) => {
-                        eprintln!("Session error: {}", e);
+                        ui.show_error(&e);
                         ui.set_idle();
                     }
                 }

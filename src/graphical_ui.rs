@@ -1179,6 +1179,10 @@ impl UiRenderer for GraphicalUi {
             UiEvent::SwitchUiMode(_) => {
                 // Graphical UI doesn't handle mode switching - this is handled in main loop
             }
+            UiEvent::Error(msg) => {
+                self.status_bar.status = format!("Error: {}", msg);
+                self.orb.set_state(OrbState::Idle);
+            }
         }
         Ok(())
     }

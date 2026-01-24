@@ -33,6 +33,7 @@ pub enum UiEvent {
     Tick,
     ContextWords(usize),
     SwitchUiMode(UiMode),
+    Error(String),
 }
 
 /// UI mode selection
@@ -166,6 +167,10 @@ impl Ui {
 
     pub fn set_idle(&self) {
         let _ = self.tx.send(UiEvent::Idle);
+    }
+
+    pub fn show_error(&self, msg: &str) {
+        let _ = self.tx.send(UiEvent::Error(msg.to_string()));
     }
 
     pub fn show_final(&self, text: &str) {

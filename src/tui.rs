@@ -196,6 +196,9 @@ impl Tui {
             UiEvent::SwitchUiMode(_) => {
                 // Text UI doesn't handle mode switching - this is handled in main loop
             }
+            UiEvent::Error(msg) => {
+                self.print_content(&format!("\x1b[31mError: {}\x1b[0m", msg))?;
+            }
         }
         Ok(())
     }

@@ -252,6 +252,25 @@ pub enum LlmConfig {
         #[serde(default = "default_kalosm_model")]
         model: String,
     },
+    #[serde(rename = "openai-compat")]
+    OpenAiCompat {
+        /// Base URL - can use preset or explicit URL
+        #[serde(default)]
+        base_url: String,
+        /// Preset shortcuts: "lm_studio", "openai", "ollama"
+        preset: Option<String>,
+        /// Model name
+        model: String,
+        /// API key (supports ${ENV_VAR} syntax)
+        #[serde(default)]
+        api_key: Option<String>,
+        // Sampling parameters
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+        max_tokens: Option<u32>,
+        presence_penalty: Option<f32>,
+        frequency_penalty: Option<f32>,
+    },
 }
 
 impl Default for LlmConfig {
@@ -305,6 +324,98 @@ fn default_lm_studio_model() -> String {
 
 fn default_kalosm_model() -> String {
     "qwen-1.5b".into()
+}
+
+/// Expand ${VAR} to environment variable values
+fn expand_env_vars(s: &str) -> String {
+    let mut result = s.to_string();
+
+    // Handle ${VAR} syntax
+    while let Some(start) = result.find("${") {
+        if let Some(end) = result[start..].find('}') {
+            let var_name = &result[start + 2..start + end];
+            let value = std::env::var(var_name).unwrap_or_else(|_| {
+                eprintln!("Warning: Environment variable '{}' not found", var_name);
+                String::new()
+            });
+            result.replace_range(start..start + end + 1, &value);
+        } else {
+            break;
+        }
+    }
+
+    result
+}
+
+impl LlmConfig {
+    /// Migrate deprecated config types
+    pub fn migrate_deprecated(&mut self) {
+        if let LlmConfig::LmStudio {
+            base_url,
+            model,
+            temperature,
+            top_p,
+            ..
+        } = self
+        {
+            eprintln!("⚠️  Warning: 'lm-studio' backend is deprecated.");
+            eprintln!("   Please update your config.toml:");
+            eprintln!("   [llm]");
+            eprintln!("   backend = \"openai-compat\"");
+            eprintln!("   preset = \"lm_studio\"");
+            eprintln!();
+
+            // Auto-convert to OpenAiCompat
+            *self = LlmConfig::OpenAiCompat {
+                base_url: base_url.clone(),
+                preset: Some("lm_studio".to_string()),
+                model: model.clone(),
+                api_key: None,
+                temperature: *temperature,
+                top_p: *top_p,
+                max_tokens: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+            };
+        }
+    }
+
+    /// Resolve preset to base_url if needed, and expand env vars in api_key
+    pub fn resolve_presets(&mut self) {
+        if let LlmConfig::OpenAiCompat {
+            base_url,
+            preset,
+            api_key,
+            ..
+        } = self
+        {
+            // Resolve preset to base_url
+            if base_url.is_empty() {
+                if let Some(preset_name) = preset {
+                    *base_url = match preset_name.as_str() {
+                        "lm_studio" => "http://localhost:1234".to_string(),
+                        "openai" => "https://api.openai.com/v1".to_string(),
+                        "ollama" => "http://localhost:11434/v1".to_string(),
+                        _ => {
+                            eprintln!(
+                                "Warning: Unknown preset '{}', using LM Studio default",
+                                preset_name
+                            );
+                            "http://localhost:1234".to_string()
+                        }
+                    };
+                } else {
+                    // No preset and no base_url - default to LM Studio
+                    *base_url = "http://localhost:1234".to_string();
+                }
+            }
+
+            // Expand environment variables in api_key
+            if let Some(key) = api_key {
+                *key = expand_env_vars(key);
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -379,13 +490,21 @@ fn default_tts_speed() -> f32 {
 impl Config {
     pub fn load() -> Self {
         let path = Path::new("config.toml");
-        if path.exists() {
+        let mut config = if path.exists() {
             fs::read_to_string(path)
                 .ok()
                 .and_then(|s| toml::from_str(&s).ok())
                 .unwrap_or_default()
         } else {
             Config::default()
-        }
+        };
+
+        // Migrate deprecated configs
+        config.llm.migrate_deprecated();
+
+        // Resolve presets
+        config.llm.resolve_presets();
+
+        config
     }
 }

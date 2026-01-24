@@ -543,6 +543,31 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         LlmConfig::LmStudio { .. } => {
             panic!("LM Studio not enabled. Build with --features lm-studio");
         }
+        #[cfg(feature = "openai-compat")]
+        LlmConfig::OpenAiCompat {
+            ref base_url,
+            ref model,
+            ref api_key,
+            temperature,
+            top_p,
+            max_tokens,
+            presence_penalty,
+            frequency_penalty,
+            ..
+        } => Box::new(llm::openai_compat::OpenAiCompatBackend::new(
+            base_url.clone(),
+            model.clone(),
+            api_key.clone(),
+            temperature,
+            top_p,
+            max_tokens,
+            presence_penalty,
+            frequency_penalty,
+        )?),
+        #[cfg(not(feature = "openai-compat"))]
+        LlmConfig::OpenAiCompat { .. } => {
+            panic!("OpenAI-compatible backend not enabled. Build with --features openai-compat");
+        }
         #[cfg(feature = "kalosm")]
         LlmConfig::Kalosm { ref model } => {
             use kalosm_llama::LlamaSource;
@@ -835,7 +860,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                         }
                         Some(line) => {
                             debug_log(&format!("Main: Keyboard input received: {}", line));
-                            
+
                             // Handle Ctrl+C
                             if line == "\x03" {
                                 should_break = true;

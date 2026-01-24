@@ -32,10 +32,89 @@ prompt_format = "chatml"  # chatml, mistral, or llama3
 #   hf_file = "Meta-Llama-3-8B-Instruct.Q4_K_M.gguf"
 #   prompt_format = "llama3"
 
+# =============================================================================
+# OpenAI-Compatible API (Recommended for API-based inference)
+# =============================================================================
+# Works with: LM Studio, OpenAI, Ollama (via API), Together.ai, Groq, etc.
+
+# Option 1: Use preset for common providers
+# [llm]
+# backend = "openai-compat"
+# preset = "lm_studio"  # Options: "lm_studio", "openai", "ollama"
+# model = "local-model"
+# temperature = 0.7
+# top_p = 0.9
+# max_tokens = 1024
+
+# Option 2: Specify base_url directly
+# [llm]
+# backend = "openai-compat"
+# base_url = "http://localhost:1234"
+# model = "your-model"
+# temperature = 0.7
+
+# Option 3: Use with OpenAI (requires API key)
+# [llm]
+# backend = "openai-compat"
+# preset = "openai"
+# model = "gpt-4"
+# api_key = "${OPENAI_API_KEY}"  # Supports environment variables
+# temperature = 0.7
+# max_tokens = 1024
+
+# =============================================================================
+# Provider-Specific Examples
+# =============================================================================
+
+# LM Studio (local inference with GUI)
+# [llm]
+# backend = "openai-compat"
+# preset = "lm_studio"  # or base_url = "http://localhost:1234"
+# model = "model-name"
+
+# OpenAI
+# [llm]
+# backend = "openai-compat"
+# preset = "openai"
+# model = "gpt-4o"
+# api_key = "${OPENAI_API_KEY}"
+
+# Together.ai
+# [llm]
+# backend = "openai-compat"
+# base_url = "https://api.together.xyz/v1"
+# model = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+# api_key = "${TOGETHER_API_KEY}"
+
+# Groq
+# [llm]
+# backend = "openai-compat"
+# base_url = "https://api.groq.com/openai/v1"
+# model = "mixtral-8x7b-32768"
+# api_key = "${GROQ_API_KEY}"
+
+# LocalAI (self-hosted)
+# [llm]
+# backend = "openai-compat"
+# base_url = "http://localhost:8080/v1"
+# model = "model-name"
+
+# =============================================================================
+# Ollama Backend (native SDK)
+# =============================================================================
 # Or use Ollama (requires ollama server running):
 # [llm]
 # backend = "ollama"
 # model = "mistral:7b-instruct"
+
+# =============================================================================
+# Deprecated: lm-studio (will be removed in future version)
+# =============================================================================
+# Use openai-compat instead. Old configs auto-migrate with warning.
+# [llm]
+# backend = "lm-studio"  # DEPRECATED
+# base_url = "http://localhost:1234"
+# model = "local-model"
 
 # TTS Configuration
 [tts]

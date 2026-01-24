@@ -216,5 +216,35 @@ fn create_backend(
         LlmConfig::LmStudio { .. } => {
             Err("LM Studio not enabled. Build with --features lm-studio".into())
         }
+        #[cfg(feature = "openai-compat")]
+        LlmConfig::OpenAiCompat {
+            base_url,
+            model,
+            api_key,
+            temperature,
+            top_p,
+            max_tokens,
+            presence_penalty,
+            frequency_penalty,
+            ..
+        } => Ok(Box::new(
+            crate::llm::openai_compat::OpenAiCompatBackend::new(
+                base_url.clone(),
+                model.clone(),
+                api_key.clone(),
+                *temperature,
+                *top_p,
+                *max_tokens,
+                *presence_penalty,
+                *frequency_penalty,
+            )?,
+        )),
+        #[cfg(not(feature = "openai-compat"))]
+        LlmConfig::OpenAiCompat { .. } => {
+            Err("OpenAI-compatible backend not enabled. Build with --features openai-compat".into())
+        }
+        LlmConfig::Kalosm { .. } => {
+            Err("Kalosm backend not supported for summarize command".into())
+        }
     }
 }

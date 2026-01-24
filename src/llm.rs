@@ -474,6 +474,190 @@ pub mod lm_studio {
 }
 
 // ============================================================================
+// OpenAI-Compatible API backend
+// ============================================================================
+
+#[cfg(feature = "openai-compat")]
+pub mod openai_compat {
+    use super::{LlmBackend, Message, Role};
+    use reqwest::blocking::Client;
+    use serde::{Deserialize, Serialize};
+    use std::io::{BufRead, BufReader};
+    use std::time::Duration;
+
+    #[derive(Serialize)]
+    struct ChatRequest {
+        model: String,
+        messages: Vec<ChatMessage>,
+        stream: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        temperature: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        top_p: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        max_tokens: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        presence_penalty: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        frequency_penalty: Option<f32>,
+    }
+
+    #[derive(Serialize)]
+    struct ChatMessage {
+        role: String,
+        content: String,
+    }
+
+    #[derive(Deserialize)]
+    struct ChatChunk {
+        choices: Vec<ChunkChoice>,
+    }
+
+    #[derive(Deserialize)]
+    struct ChunkChoice {
+        delta: Delta,
+        #[allow(dead_code)]
+        finish_reason: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct Delta {
+        content: Option<String>,
+    }
+
+    pub struct OpenAiCompatBackend {
+        client: Client,
+        base_url: String,
+        model: String,
+        api_key: Option<String>,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+        max_tokens: Option<u32>,
+        presence_penalty: Option<f32>,
+        frequency_penalty: Option<f32>,
+    }
+
+    impl OpenAiCompatBackend {
+        pub fn new(
+            base_url: String,
+            model: String,
+            api_key: Option<String>,
+            temperature: Option<f32>,
+            top_p: Option<f32>,
+            max_tokens: Option<u32>,
+            presence_penalty: Option<f32>,
+            frequency_penalty: Option<f32>,
+        ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+            let client = Client::builder()
+                .timeout(Duration::from_secs(300))
+                .build()?;
+
+            Ok(Self {
+                client,
+                base_url: base_url.trim_end_matches('/').to_string(),
+                model,
+                api_key,
+                temperature,
+                top_p,
+                max_tokens,
+                presence_penalty,
+                frequency_penalty,
+            })
+        }
+    }
+
+    impl LlmBackend for OpenAiCompatBackend {
+        fn generate(
+            &mut self,
+            messages: &[Message],
+            on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            // Build message array
+            let chat_messages: Vec<ChatMessage> = messages
+                .iter()
+                .map(|msg| {
+                    let role = match msg.role {
+                        Role::System => "system",
+                        Role::User => "user",
+                        Role::Assistant => "assistant",
+                    };
+                    ChatMessage {
+                        role: role.to_string(),
+                        content: msg.content.clone(),
+                    }
+                })
+                .collect();
+
+            let request = ChatRequest {
+                model: self.model.clone(),
+                messages: chat_messages,
+                stream: true,
+                temperature: self.temperature,
+                top_p: self.top_p,
+                max_tokens: self.max_tokens,
+                presence_penalty: self.presence_penalty,
+                frequency_penalty: self.frequency_penalty,
+            };
+
+            // Build HTTP request
+            let mut req = self
+                .client
+                .post(&format!("{}/chat/completions", self.base_url))
+                .json(&request);
+
+            // Add auth header if api_key provided
+            if let Some(ref key) = self.api_key {
+                req = req.header("Authorization", format!("Bearer {}", key));
+            }
+
+            let response = req.send()?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_text = response
+                    .text()
+                    .unwrap_or_else(|_| "Unknown error".to_string());
+                return Err(format!("API error {}: {}", status, error_text).into());
+            }
+
+            // Parse SSE stream
+            let reader = BufReader::new(response);
+            let mut full_response = String::new();
+
+            for line in reader.lines() {
+                let line = line?;
+
+                if line.is_empty() {
+                    continue;
+                }
+
+                if line == "data: [DONE]" {
+                    break;
+                }
+
+                if let Some(json_str) = line.strip_prefix("data: ") {
+                    match serde_json::from_str::<ChatChunk>(json_str) {
+                        Ok(chunk) => {
+                            if let Some(choice) = chunk.choices.first() {
+                                if let Some(content) = &choice.delta.content {
+                                    on_token(content);
+                                    full_response.push_str(content);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Failed to parse chunk: {}", e);
+                        }
+                    }
+                }
+            }
+
+            Ok(full_response)
+        }
+    }
+}
+
+// ============================================================================
 // Kalosm (Floneum) backend
 // ============================================================================
 

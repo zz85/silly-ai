@@ -318,6 +318,76 @@ stop_phrases = ["stop", "quiet", "shut up", "enough"]
 | `interaction.duck_volume` | 0.2 | TTS volume (0.0-1.0) when user speaks during playback |
 | `interaction.stop_phrases` | ["stop", ...] | Phrases that stop TTS without triggering LLM |
 
+### LLM Backends
+
+Silly supports multiple LLM backends:
+
+#### OpenAI-Compatible API (Recommended)
+
+Works with LM Studio, OpenAI, Together.ai, Groq, and any OpenAI-compatible endpoint.
+
+```toml
+[llm]
+backend = "openai-compat"
+preset = "lm_studio"  # or "openai" or "ollama"
+model = "model-name"
+```
+
+**Presets:**
+- `lm_studio` - Local LM Studio server (port 1234)
+- `openai` - OpenAI API (requires `api_key`)
+- `ollama` - Ollama API mode (port 11434)
+
+**Custom endpoints:**
+```toml
+[llm]
+backend = "openai-compat"
+base_url = "https://api.together.xyz/v1"
+model = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+api_key = "${TOGETHER_API_KEY}"  # Supports environment variables
+```
+
+**Supported providers:**
+- LM Studio (local)
+- OpenAI (gpt-4, gpt-4o, etc.)
+- Together.ai
+- Groq
+- LocalAI
+- Text Generation WebUI
+- Any OpenAI-compatible endpoint
+
+#### Ollama
+
+Uses the native Ollama Rust SDK for specialized features.
+
+```toml
+[llm]
+backend = "ollama"
+model = "mistral:7b-instruct"
+```
+
+#### llama.cpp
+
+Local inference with GGUF models (auto-downloads from HuggingFace).
+
+```toml
+[llm]
+backend = "llama-cpp"
+hf_repo = "TheBloke/Mistral-7B-Instruct-v0.2-GGUF"
+hf_file = "mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+prompt_format = "mistral"
+```
+
+#### Kalosm
+
+Pure Rust inference library.
+
+```toml
+[llm]
+backend = "kalosm"
+model = "phi3"
+```
+
 ### LLM Models
 
 | Model | Size | prompt_format | hf_repo | hf_file |

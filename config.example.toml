@@ -107,15 +107,6 @@ prompt_format = "chatml"  # chatml, mistral, or llama3
 # backend = "ollama"
 # model = "mistral:7b-instruct"
 
-# =============================================================================
-# Deprecated: lm-studio (will be removed in future version)
-# =============================================================================
-# Use openai-compat instead. Old configs auto-migrate with warning.
-# [llm]
-# backend = "lm-studio"  # DEPRECATED
-# base_url = "http://localhost:1234"
-# model = "local-model"
-
 # TTS Configuration
 [tts]
 engine = "supertonic"

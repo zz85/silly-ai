@@ -521,28 +521,6 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         LlmConfig::Ollama { .. } => {
             panic!("Ollama not enabled. Build with --features ollama");
         }
-        #[cfg(feature = "lm-studio")]
-        LlmConfig::LmStudio {
-            ref base_url,
-            ref model,
-            temperature,
-            top_p,
-            top_k,
-            repetition_penalty,
-            ..
-        } => Box::new(llm::lm_studio::LmStudioBackend::new(
-            base_url,
-            model,
-            &system_prompt,
-            temperature,
-            top_p,
-            top_k,
-            repetition_penalty,
-        )),
-        #[cfg(not(feature = "lm-studio"))]
-        LlmConfig::LmStudio { .. } => {
-            panic!("LM Studio not enabled. Build with --features lm-studio");
-        }
         #[cfg(feature = "openai-compat")]
         LlmConfig::OpenAiCompat {
             ref base_url,

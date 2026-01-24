@@ -194,28 +194,6 @@ fn create_backend(
         ))),
         #[cfg(not(feature = "ollama"))]
         LlmConfig::Ollama { .. } => Err("Ollama not enabled. Build with --features ollama".into()),
-        #[cfg(feature = "lm-studio")]
-        LlmConfig::LmStudio {
-            base_url,
-            model,
-            temperature,
-            top_p,
-            top_k,
-            repetition_penalty,
-            ..
-        } => Ok(Box::new(crate::llm::lm_studio::LmStudioBackend::new(
-            base_url,
-            model,
-            system_prompt,
-            *temperature,
-            *top_p,
-            *top_k,
-            *repetition_penalty,
-        ))),
-        #[cfg(not(feature = "lm-studio"))]
-        LlmConfig::LmStudio { .. } => {
-            Err("LM Studio not enabled. Build with --features lm-studio".into())
-        }
         #[cfg(feature = "openai-compat")]
         LlmConfig::OpenAiCompat {
             base_url,

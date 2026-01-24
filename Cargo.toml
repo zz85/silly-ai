@@ -60,14 +60,8 @@ supertonic = ["ndarray", "ort", "rand", "rand_distr", "regex", "unicode-normaliz
 llama-cpp = ["llama-cpp-2", "hf-hub", "encoding_rs"]
 ollama = ["ollama-rs"]
 openai-compat = ["reqwest", "serde_json"]
-lm-studio = ["openai-compat", "ureq"]
 listen = ["screencapturekit", "lewton", "ogg", "vorbis_rs"]
 kalosm = ["kalosm-llama"]
-
-[dependencies.ureq]
-version = "3"
-features = ["json"]
-optional = true
 
 [dependencies.reqwest]
 version = "0.12"

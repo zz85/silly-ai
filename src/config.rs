@@ -233,19 +233,6 @@ pub enum LlmConfig {
         #[serde(default = "default_ollama_model")]
         model: String,
     },
-    #[serde(rename = "lm-studio")]
-    LmStudio {
-        #[serde(default = "default_lm_studio_url")]
-        base_url: String,
-        #[serde(default = "default_lm_studio_model")]
-        model: String,
-        #[serde(default = "default_ctx_size")]
-        ctx_size: u32,
-        temperature: Option<f32>,
-        top_p: Option<f32>,
-        top_k: Option<u32>,
-        repetition_penalty: Option<f32>,
-    },
     #[serde(rename = "kalosm")]
     Kalosm {
         /// Model preset: "phi3", "llama3-8b", "mistral-7b", "qwen-0.5b", "qwen-1.5b"
@@ -314,14 +301,6 @@ fn default_ollama_model() -> String {
     "mistral:7b-instruct".into()
 }
 
-fn default_lm_studio_url() -> String {
-    "http://localhost:1234".into()
-}
-
-fn default_lm_studio_model() -> String {
-    "default".into()
-}
-
 fn default_kalosm_model() -> String {
     "qwen-1.5b".into()
 }
@@ -348,38 +327,6 @@ fn expand_env_vars(s: &str) -> String {
 }
 
 impl LlmConfig {
-    /// Migrate deprecated config types
-    pub fn migrate_deprecated(&mut self) {
-        if let LlmConfig::LmStudio {
-            base_url,
-            model,
-            temperature,
-            top_p,
-            ..
-        } = self
-        {
-            eprintln!("⚠️  Warning: 'lm-studio' backend is deprecated.");
-            eprintln!("   Please update your config.toml:");
-            eprintln!("   [llm]");
-            eprintln!("   backend = \"openai-compat\"");
-            eprintln!("   preset = \"lm_studio\"");
-            eprintln!();
-
-            // Auto-convert to OpenAiCompat
-            *self = LlmConfig::OpenAiCompat {
-                base_url: base_url.clone(),
-                preset: Some("lm_studio".to_string()),
-                model: model.clone(),
-                api_key: None,
-                temperature: *temperature,
-                top_p: *top_p,
-                max_tokens: None,
-                presence_penalty: None,
-                frequency_penalty: None,
-            };
-        }
-    }
-
     /// Resolve preset to base_url if needed, and expand env vars in api_key
     pub fn resolve_presets(&mut self) {
         if let LlmConfig::OpenAiCompat {
@@ -498,9 +445,6 @@ impl Config {
         } else {
             Config::default()
         };
-
-        // Migrate deprecated configs
-        config.llm.migrate_deprecated();
 
         // Resolve presets
         config.llm.resolve_presets();

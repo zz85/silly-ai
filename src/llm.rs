@@ -410,7 +410,7 @@ pub mod openai_compat {
             frequency_penalty: Option<f32>,
         ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
             let client = Client::builder()
-                .timeout(Duration::from_secs(300))
+                .timeout(Duration::from_secs(180)) // 3 min timeout for entire request/response
                 .build()?;
 
             Ok(Self {

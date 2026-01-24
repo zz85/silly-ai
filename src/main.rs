@@ -151,6 +151,11 @@ enum Command {
         #[arg(short, long)]
         input: PathBuf,
     },
+    /// Quick test of LLM backend
+    Probe {
+        /// Question to ask
+        prompt: String,
+    },
 }
 
 const VAD_MODEL_PATH: &str = "models/silero_vad_v4.onnx";
@@ -226,6 +231,9 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         #[cfg(feature = "listen")]
         Some(Command::TranscribeWav { input }) => {
             return listen::transcribe_wav(input.clone());
+        }
+        Some(Command::Probe { prompt }) => {
+            return run_probe(prompt).await;
         }
         None => {}
     }
@@ -1086,6 +1094,61 @@ enum DisplayEvent {
     Final(String),
     AudioLevel(f32),
     TtsLevel(f32),
+}
+
+async fn run_probe(prompt: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let config = Config::load();
+    let system_prompt = chat::system_prompt(&config.name);
+
+    let mut backend: Box<dyn llm::LlmBackend> = match &config.llm {
+        #[cfg(feature = "openai-compat")]
+        LlmConfig::OpenAiCompat {
+            base_url,
+            model,
+            api_key,
+            temperature,
+            top_p,
+            max_tokens,
+            presence_penalty,
+            frequency_penalty,
+            ..
+        } => Box::new(llm::openai_compat::OpenAiCompatBackend::new(
+            base_url.clone(),
+            model.clone(),
+            api_key.clone(),
+            *temperature,
+            *top_p,
+            *max_tokens,
+            *presence_penalty,
+            *frequency_penalty,
+        )?),
+        #[cfg(feature = "ollama")]
+        LlmConfig::Ollama { model } => {
+            Box::new(llm::ollama::OllamaBackend::new(model, &system_prompt))
+        }
+        _ => {
+            eprintln!("Probe requires openai-compat or ollama backend");
+            return Ok(());
+        }
+    };
+
+    let messages = vec![
+        llm::Message { role: llm::Role::System, content: system_prompt },
+        llm::Message { role: llm::Role::User, content: prompt.to_string() },
+    ];
+
+    print!("\x1b[36m"); // cyan
+    let result = backend.generate(&messages, &mut |token| {
+        print!("{}", token);
+        use std::io::Write;
+        std::io::stdout().flush().ok();
+    });
+    println!("\x1b[0m"); // reset
+
+    if let Err(e) = result {
+        eprintln!("Error: {}", e);
+    }
+    Ok(())
 }
 
 async fn run_transcribe_mode() -> Result<(), Box<dyn Error + Send + Sync>> {

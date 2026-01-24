@@ -461,9 +461,7 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
                 }
                 "orb" | "o" => {
                     debug_log("Returning ui_switch:orb");
-                    Some(CommandResult::Handled(Some(
-                        "ui_switch:orb".to_string(),
-                    )))
+                    Some(CommandResult::Handled(Some("ui_switch:orb".to_string())))
                 }
                 _ => Some(CommandResult::Handled(Some(
                     "Usage: /ui [text|orb] (no args to toggle)".to_string(),

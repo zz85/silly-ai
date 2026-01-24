@@ -340,7 +340,7 @@ impl LlmConfig {
             if base_url.is_empty() {
                 if let Some(preset_name) = preset {
                     *base_url = match preset_name.as_str() {
-                        "lm_studio" => "http://localhost:1234".to_string(),
+                        "lm_studio" => "http://localhost:1234/v1".to_string(),
                         "openai" => "https://api.openai.com/v1".to_string(),
                         "ollama" => "http://localhost:11434/v1".to_string(),
                         _ => {
@@ -348,12 +348,12 @@ impl LlmConfig {
                                 "Warning: Unknown preset '{}', using LM Studio default",
                                 preset_name
                             );
-                            "http://localhost:1234".to_string()
+                            "http://localhost:1234/v1".to_string()
                         }
                     };
                 } else {
                     // No preset and no base_url - default to LM Studio
-                    *base_url = "http://localhost:1234".to_string();
+                    *base_url = "http://localhost:1234/v1".to_string();
                 }
             }
 

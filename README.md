@@ -199,6 +199,9 @@ silly
 # Transcription-only mode (no LLM/TTS)
 silly transcribe
 
+# Quick LLM test
+silly probe "What is the capital of France?"
+
 # Test UI rendering without audio
 silly test-ui [scene]  # scenes: idle, preview, thinking, speaking, response, all
 

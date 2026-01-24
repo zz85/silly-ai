@@ -1,0 +1,10 @@
+
+ .opencode/plans/llama-metadata-auto-config.md
+
+
+Sleep command
+TUI testing
+TUI automated testing
+llamma app changes
+client cleanup
+api rector

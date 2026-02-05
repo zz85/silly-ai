@@ -121,6 +121,12 @@ speed = 1.1  # 0.5 to 2.0
 # voices = "models/voices-v1.0.bin"
 # speed = 1.1
 
+# Interaction settings
+[interaction]
+crosstalk = false  # Continue listening while TTS plays (enables barge-in)
+aec = false        # Acoustic echo cancellation (requires --features aec)
+duck_volume = 0.2  # TTS volume when user speaks during playback (0.0-1.0)
+
 # Hardware acceleration (CoreML on Apple Silicon)
 [acceleration]
 tts_gpu = true   # CoreML for TTS

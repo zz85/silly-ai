@@ -90,6 +90,11 @@ struct Cli {
     /// Visual style for graphical UI: orbs, blob, or ring
     #[arg(long, value_parser = ["orbs", "blob", "ring"])]
     orb_style: Option<String>,
+
+    /// Debug AEC: save mic/aec/render audio to WAV files with this prefix
+    #[cfg(feature = "aec")]
+    #[arg(long)]
+    debug_aec: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -269,14 +274,19 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     let tts_enabled = Arc::new(AtomicBool::new(!cli.no_tts));
     let wake_enabled = Arc::new(AtomicBool::new(!cli.no_stt));
 
-    // Initialize AEC channel if enabled
+    // Initialize AEC channel if enabled (or if debug requested)
     #[cfg(feature = "aec")]
-    let (aec_render_tx, aec_render_rx) = if config.interaction.aec {
-        let (tx, rx) = mpsc::channel::<Vec<f32>>();
-        eprintln!("AEC: Enabled");
-        (Some(tx), Some(rx))
-    } else {
-        (None, None)
+    let (aec_render_tx, aec_render_rx, aec_debug_prefix) = {
+        let aec_enabled = config.interaction.aec || cli.debug_aec.is_some();
+        if aec_enabled {
+            // Ensure runtime state has AEC enabled (--debug-aec implies AEC on)
+            runtime_state.aec_enabled.store(true, Ordering::SeqCst);
+            let (tx, rx) = mpsc::channel::<aec::RenderFrame>();
+            eprintln!("AEC: Enabled{}", if cli.debug_aec.is_some() { " (debug mode)" } else { "" });
+            (Some(tx), Some(rx), cli.debug_aec.clone())
+        } else {
+            (None, None, None)
+        }
     };
 
     // Clone runtime_state for VAD processor
@@ -368,7 +378,21 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         #[cfg(feature = "aec")]
         {
             let aec = aec_render_rx.and_then(|rx| {
-                aec::AecProcessor::new(rx).ok()
+                match aec::AecProcessor::new(rx) {
+                    Ok(proc) => {
+                        eprintln!("AEC: Processor initialized");
+                        Some(if let Some(ref prefix) = aec_debug_prefix {
+                            eprintln!("AEC: Debug output to {}_*.wav", prefix);
+                            proc.with_debug(prefix)
+                        } else {
+                            proc
+                        })
+                    }
+                    Err(e) => {
+                        eprintln!("AEC: Failed to create processor: {}", e);
+                        None
+                    }
+                }
             });
             audio::run_vad_processor_with_state(
                 audio_rx,

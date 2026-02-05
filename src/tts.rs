@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "aec")]
-use crate::aec::AecRenderTx;
+use crate::aec::{AecRenderTx, RenderFrame};
 
 pub trait TtsEngine: Send + Sync {
     fn synthesize(&self, text: &str) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error>>;
@@ -26,6 +26,8 @@ where
     state: SharedState,
     #[cfg(feature = "aec")]
     aec_tx: Option<AecRenderTx>,
+    #[cfg(feature = "aec")]
+    sample_rate: u32,
     buffer: Vec<f32>,
     last_update: Instant,
     update_interval: Duration,
@@ -37,11 +39,15 @@ where
     I::Item: Sample,
 {
     pub fn new(input: I, state: SharedState) -> Self {
+        #[cfg(feature = "aec")]
+        let sample_rate = input.sample_rate();
         Self {
             input,
             state,
             #[cfg(feature = "aec")]
             aec_tx: None,
+            #[cfg(feature = "aec")]
+            sample_rate,
             buffer: Vec::new(),
             last_update: Instant::now(),
             update_interval: Duration::from_millis(50),
@@ -59,16 +65,17 @@ where
             return;
         }
 
-        // Calculate RMS of the buffered samples
         let rms =
             (self.buffer.iter().map(|s| s * s).sum::<f32>() / self.buffer.len() as f32).sqrt();
         self.state.set_tts_level(rms);
 
-        // Feed to AEC if enabled
         #[cfg(feature = "aec")]
         if let Some(ref tx) = self.aec_tx {
             if self.state.aec_enabled.load(Ordering::SeqCst) {
-                let _ = tx.send(self.buffer.clone());
+                let _ = tx.send(RenderFrame {
+                    samples: self.buffer.clone(),
+                    sample_rate: self.sample_rate,
+                });
             }
         }
 

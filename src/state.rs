@@ -94,6 +94,8 @@ pub struct RuntimeState {
     pub tts_volume: AtomicF32,
     /// Current TTS output RMS level (0.0-1.0)
     pub tts_level: AtomicF32,
+    /// Duck volume level from config
+    duck_volume: AtomicF32,
 
     // ========================================================================
     // Interaction state
@@ -143,6 +145,7 @@ impl RuntimeState {
             tts_playing: AtomicBool::new(false),
             tts_volume: AtomicF32::new(1.0),
             tts_level: AtomicF32::new(0.0),
+            duck_volume: AtomicF32::new(config.interaction.duck_volume),
 
             // Interaction
             crosstalk_enabled: AtomicBool::new(config.interaction.crosstalk),
@@ -202,9 +205,10 @@ impl RuntimeState {
     // TTS volume helpers
     // ========================================================================
 
-    /// Duck TTS volume (reduce to 20%)
+    /// Duck TTS volume (reduce to configured duck_volume)
     pub fn duck_tts(&self) {
-        self.tts_volume.store(0.2, Ordering::SeqCst);
+        let duck = self.duck_volume.load(Ordering::SeqCst);
+        self.tts_volume.store(duck, Ordering::SeqCst);
     }
 
     /// Restore TTS volume to full

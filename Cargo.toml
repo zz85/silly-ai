@@ -62,8 +62,13 @@ ollama = ["ollama-rs"]
 openai-compat = ["reqwest", "serde_json"]
 listen = ["screencapturekit", "lewton", "ogg", "vorbis_rs"]
 kalosm = ["kalosm-llama"]
+dhat-heap = ["dhat"]
 aec = ["aec3"]
 typing = ["enigo", "arboard", "rdev"]
+
+[dependencies.dhat]
+version = "0.3"
+optional = true
 
 [dependencies.aec3]
 version = "0.1"

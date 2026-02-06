@@ -1,3 +1,7 @@
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 mod audio;
 #[cfg(feature = "aec")]
 mod aec;
@@ -191,6 +195,9 @@ const TARGET_RATE: usize = 16000;
 
 #[hotpath::main]
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
     let cli = Cli::parse();
 
     // Handle sync commands before starting async runtime

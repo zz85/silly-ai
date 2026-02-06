@@ -6,8 +6,8 @@
 #![allow(dead_code)] // Many fields/methods will be used in future phases
 
 use std::fmt;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use crate::config::Config;
 
@@ -25,6 +25,8 @@ pub enum AppMode {
     NoteTaking = 3,
     /// Command-only mode (no LLM, only processes commands)
     Command = 4,
+    /// Typing mode - transcribe speech directly to active application
+    Typing = 5,
 }
 
 impl From<u8> for AppMode {
@@ -35,6 +37,7 @@ impl From<u8> for AppMode {
             2 => AppMode::Transcribe,
             3 => AppMode::NoteTaking,
             4 => AppMode::Command,
+            5 => AppMode::Typing,
             _ => AppMode::Chat,
         }
     }
@@ -48,6 +51,7 @@ impl fmt::Display for AppMode {
             AppMode::Transcribe => write!(f, "Transcribe"),
             AppMode::NoteTaking => write!(f, "Note"),
             AppMode::Command => write!(f, "Command"),
+            AppMode::Typing => write!(f, "Typing"),
         }
     }
 }

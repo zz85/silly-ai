@@ -63,6 +63,7 @@ openai-compat = ["reqwest", "serde_json"]
 listen = ["screencapturekit", "lewton", "ogg", "vorbis_rs"]
 kalosm = ["kalosm-llama"]
 aec = ["aec3"]
+typing = ["enigo", "arboard", "rdev"]
 
 [dependencies.aec3]
 version = "0.1"
@@ -72,3 +73,18 @@ optional = true
 version = "0.12"
 features = ["blocking", "json", "stream"]
 optional = true
+
+[dependencies.enigo]
+version = "0.3"
+optional = true
+
+[dependencies.arboard]
+version = "3.4"
+optional = true
+
+[dependencies.rdev]
+version = "0.5"
+optional = true
+
+[profile.release]
+debug = true

@@ -29,6 +29,8 @@ mod test_ui;
 mod transcriber;
 mod tts;
 mod tui;
+#[cfg(feature = "typing")]
+mod typing;
 mod vad;
 mod wake;
 
@@ -163,6 +165,25 @@ enum Command {
         /// Question to ask
         prompt: String,
     },
+    /// Voice-to-keyboard: type speech into active application
+    #[cfg(feature = "typing")]
+    Typing {
+        /// Input method: "direct" (default) or "clipboard"
+        #[arg(long, default_value = "direct")]
+        input_method: String,
+        /// Disable feedback sounds/visual
+        #[arg(long)]
+        no_feedback: bool,
+        /// Verbose logging - show parsed input and commands
+        #[arg(long, short)]
+        verbose: bool,
+        /// Show all available voice commands and exit
+        #[arg(long)]
+        commands: bool,
+        /// Minimum pause (ms) for short phrases to be recognized as commands
+        #[arg(long, default_value = "100")]
+        command_pause_ms: u32,
+    },
 }
 
 const VAD_MODEL_PATH: &str = "models/silero_vad_v4.onnx";
@@ -241,6 +262,20 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         }
         Some(Command::Probe { prompt }) => {
             return run_probe(prompt).await;
+        }
+        #[cfg(feature = "typing")]
+        Some(Command::Typing {
+            input_method,
+            no_feedback,
+            verbose,
+            commands,
+            command_pause_ms,
+        }) => {
+            if *commands {
+                typing::CommandParser::print_help();
+                return Ok(());
+            }
+            return run_typing_mode(input_method.clone(), !no_feedback, *verbose, *command_pause_ms).await;
         }
         None => {}
     }
@@ -695,6 +730,26 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     let auto_submit_delay = std::time::Duration::from_millis(2000);
     let mut auto_submit_deadline: Option<tokio::time::Instant> = None;
 
+    // Initialize typing processor if feature is enabled
+    #[cfg(feature = "typing")]
+    let mut typing_processor: Option<typing::TypingProcessor> = {
+        let method = typing::InputMethod::from_str(&config.typing.input_method);
+        match typing::TypingProcessor::new(
+            method,
+            config.typing.undo_buffer_size,
+            config.typing.feedback,
+            config.typing.command_pause_ms,
+        ) {
+            Ok(proc) => Some(proc),
+            Err(e) => {
+                eprintln!("Warning: Failed to initialize typing processor: {}", e);
+                None
+            }
+        }
+    };
+    #[cfg(not(feature = "typing"))]
+    let mut typing_processor: Option<()> = None;
+
     // Temporary mic mute on keypress
     let keypress_mute_duration = std::time::Duration::from_secs(1);
     let mut keypress_mute_until: Option<std::time::Instant> = None;
@@ -856,6 +911,41 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                                     ui_renderer.show_message(&format!("Failed to save note: {}", e));
                                 } else {
                                     ui_renderer.show_message(&format!("[Note saved] {}", text));
+                                }
+                            }
+                            TranscriptResult::TypeText(text) => {
+                                // Typing mode: type into active application
+                                #[cfg(feature = "typing")]
+                                if let Some(ref mut typing_proc) = typing_processor {
+                                    // Use a default pause duration for now (could track from VAD)
+                                    match typing_proc.process_segment(&text, 300) {
+                                        Ok(typing::ProcessResult::Stop) => {
+                                            // Exit typing mode, go back to chat
+                                            runtime_state.set_mode(state::AppMode::Chat);
+                                            ui_renderer.set_mode(state::AppMode::Chat);
+                                            ui_renderer.show_message("Exited typing mode");
+                                        }
+                                        Ok(typing::ProcessResult::Pause) => {
+                                            runtime_state.mic_muted.store(true, Ordering::SeqCst);
+                                            mic_muted.store(true, Ordering::SeqCst);
+                                            ui_renderer.set_mic_muted(true);
+                                        }
+                                        Ok(typing::ProcessResult::Resume) => {
+                                            runtime_state.mic_muted.store(false, Ordering::SeqCst);
+                                            mic_muted.store(false, Ordering::SeqCst);
+                                            ui_renderer.set_mic_muted(false);
+                                        }
+                                        Ok(typing::ProcessResult::Continue) => {
+                                            // Normal operation, continue
+                                        }
+                                        Err(e) => {
+                                            ui_renderer.show_message(&format!("Typing error: {}", e));
+                                        }
+                                    }
+                                }
+                                #[cfg(not(feature = "typing"))]
+                                {
+                                    ui_renderer.show_message("Typing feature not enabled. Build with --features typing");
                                 }
                             }
                             TranscriptResult::CommandHandled(msg) => {
@@ -1268,5 +1358,196 @@ async fn run_transcribe_mode() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     }
 
+    Ok(())
+}
+
+/// Standalone typing mode - voice-to-keyboard transcription
+#[cfg(feature = "typing")]
+async fn run_typing_mode(
+    input_method: String,
+    feedback: bool,
+    verbose: bool,
+    command_pause_ms: u32,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    use typing::{HotkeyConfig, HotkeyEvent, InputMethod, ProcessResult, TypingProcessor};
+
+    eprintln!("═══════════════════════════════════════════════════════════════");
+    eprintln!("                    SILLY TYPING MODE");
+    eprintln!("═══════════════════════════════════════════════════════════════");
+    eprintln!("Speech will be typed into the active application.");
+    eprintln!("Use --commands to see all voice commands.");
+    eprintln!();
+    eprintln!("Quick reference:");
+    eprintln!("  Hotkeys:  Double-tap Cmd (toggle) | Ctrl+Space (push-to-talk)");
+    eprintln!("  Voice:    'Silly pause' / 'pause Silly' | 'Silly type' | 'stop Silly'");
+    eprintln!("  Exit:     Ctrl+C or say 'Silly stop' / 'stop Silly'");
+    if verbose {
+        eprintln!();
+        eprintln!("Verbose mode enabled - will show parsed input and commands.");
+    }
+    eprintln!("═══════════════════════════════════════════════════════════════");
+    eprintln!();
+
+    // Initialize typing processor (must stay on main thread - Enigo isn't Send)
+    let method = InputMethod::from_str(&input_method);
+    let mut processor = TypingProcessor::new(method, 50, feedback, command_pause_ms)
+        .map_err(|e| format!("Failed to initialize typing: {}", e))?
+        .with_verbose(verbose);
+
+    // Start global hotkey listener
+    let (hotkey_rx, hotkey_running) = typing::start_hotkey_listener(HotkeyConfig::default())
+        .map_err(|e| format!("Failed to start hotkey listener: {}", e))?;
+
+    // Set up audio pipeline
+    let (audio_tx, audio_rx) = mpsc::channel::<Vec<f32>>();
+    let (final_tx, final_rx) = mpsc::channel::<Arc<[f32]>>();
+    let (preview_tx, _) = mpsc::sync_channel::<Arc<[f32]>>(1);
+    let (display_tx, _display_rx) = mpsc::channel::<DisplayEvent>();
+
+    // Channel to send transcribed text from transcriber thread to main thread
+    let (text_tx, text_rx) = mpsc::channel::<String>();
+
+    let _stream = audio::start_capture(audio_tx)?;
+
+    let tts_playing = Arc::new(AtomicBool::new(false));
+    let mic_muted = Arc::new(AtomicBool::new(false));
+    let mic_muted_main = Arc::clone(&mic_muted);
+    let tts_playing_vad = Arc::clone(&tts_playing);
+    let mic_muted_vad = Arc::clone(&mic_muted);
+
+    // VAD processor thread
+    thread::spawn(move || {
+        let vad = if std::path::Path::new(VAD_MODEL_PATH).exists() {
+            VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE).ok()
+        } else {
+            Some(VadEngine::energy())
+        };
+        audio::run_vad_processor(
+            audio_rx,
+            final_tx,
+            preview_tx,
+            vad,
+            tts_playing_vad,
+            mic_muted_vad,
+            display_tx,
+        );
+    });
+
+    // Transcription thread - sends text to main thread
+    let running = Arc::new(AtomicBool::new(true));
+    let running_transcribe = Arc::clone(&running);
+
+    thread::spawn(move || {
+        let mut transcriber =
+            match transcriber::Transcriber::new("models/parakeet-tdt-0.6b-v3-int8") {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Failed to initialize transcriber: {}", e);
+                    return;
+                }
+            };
+
+        while running_transcribe.load(Ordering::SeqCst) {
+            match final_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(samples) => {
+                    if let Ok(text) = transcriber.transcribe(&samples) {
+                        if !text.is_empty() {
+                            if text_tx.send(text).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    });
+
+    // Set up Ctrl+C handler
+    let running_ctrlc = Arc::clone(&running);
+    ctrlc::set_handler(move || {
+        running_ctrlc.store(false, Ordering::SeqCst);
+    })?;
+
+    // Track state for hotkey control
+    let mut typing_enabled = true; // Toggle state (double-tap Cmd)
+    let mut ptt_active = false; // Push-to-talk state (Ctrl+Space)
+
+    // Main loop - process transcribed text with TypingProcessor (on main thread)
+    while running.load(Ordering::SeqCst) {
+        // Check for hotkey events (non-blocking)
+        while let Ok(event) = hotkey_rx.try_recv() {
+            match event {
+                HotkeyEvent::Toggle => {
+                    typing_enabled = !typing_enabled;
+                    if typing_enabled {
+                        mic_muted_main.store(false, Ordering::SeqCst);
+                        eprintln!("[Typing ON] - Double-tap Cmd to toggle off");
+                    } else {
+                        mic_muted_main.store(true, Ordering::SeqCst);
+                        eprintln!("[Typing OFF] - Double-tap Cmd to toggle on");
+                    }
+                }
+                HotkeyEvent::PushToTalkStart => {
+                    if typing_enabled {
+                        ptt_active = true;
+                        mic_muted_main.store(false, Ordering::SeqCst);
+                        eprint!("[PTT] ");
+                    }
+                }
+                HotkeyEvent::PushToTalkEnd => {
+                    if ptt_active {
+                        ptt_active = false;
+                        // Don't mute if typing is enabled (continuous mode)
+                        // Only mute if we want PTT-only mode
+                        eprintln!("[/PTT]");
+                    }
+                }
+            }
+        }
+
+        // Only process transcriptions when typing is active
+        let active = typing_enabled; // Simplified: just use toggle state
+        if active {
+            match text_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                Ok(text) => {
+                    match processor.process_segment(&text, 300) {
+                        Ok(ProcessResult::Stop) => {
+                            eprintln!("\nStopping typing mode...");
+                            running.store(false, Ordering::SeqCst);
+                            break;
+                        }
+                        Ok(ProcessResult::Pause) => {
+                            typing_enabled = false;
+                            mic_muted_main.store(true, Ordering::SeqCst);
+                            eprintln!("[Typing OFF]");
+                        }
+                        Ok(ProcessResult::Resume) => {
+                            typing_enabled = true;
+                            mic_muted_main.store(false, Ordering::SeqCst);
+                            eprintln!("[Typing ON]");
+                        }
+                        Ok(ProcessResult::Continue) => {
+                            // Normal operation
+                        }
+                        Err(e) => {
+                            eprintln!("Typing error: {}", e);
+                        }
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            // When disabled, just sleep briefly
+            thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    // Stop hotkey listener
+    hotkey_running.store(false, Ordering::SeqCst);
+
+    eprintln!("\nTyping mode ended.");
     Ok(())
 }

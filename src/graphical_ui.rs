@@ -11,7 +11,7 @@ use crossterm::style::Color;
 use crossterm::terminal::{self, ClearType};
 use crossterm::{cursor, execute};
 use std::fs::OpenOptions;
-use std::io::{self, Write, stdout};
+use std::io::{self, stdout, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -1624,7 +1624,7 @@ mod tests {
             if frame_count % frames_per_state == 0 {
                 let (state, state_name) = states[state_index];
                 ui.orb.set_state(state);
-                ui.status = format!("{} (Frame: {})", state_name, frame_count);
+                ui.status_bar.status = format!("{} (Frame: {})", state_name, frame_count);
                 state_index = (state_index + 1) % states.len();
             }
 

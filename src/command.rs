@@ -204,6 +204,19 @@ impl CommandProcessor {
             });
         }
 
+        // Typing mode (voice-to-keyboard)
+        if text.contains("typing mode")
+            || text.contains("start typing")
+            || text.contains("dictation mode")
+        {
+            return Some(CommandResult::ModeChange {
+                mode: AppMode::Typing,
+                announcement: Some(
+                    "Entering typing mode. Speech will be typed into active app.".to_string(),
+                ),
+            });
+        }
+
         // Toggle commands
         if text == "mute" || text == "mute mic" || text == "mute microphone" {
             state
@@ -465,6 +478,10 @@ pub fn process_slash_command(input: &str, state: &SharedState) -> Option<Command
             mode: AppMode::Command,
             announcement: Some("Command mode".to_string()),
         }),
+        "typing" | "dictate" => Some(CommandResult::ModeChange {
+            mode: AppMode::Typing,
+            announcement: Some("Typing mode - speech will be typed into active app".to_string()),
+        }),
         "stop" => Some(CommandResult::Stop),
         "quit" | "exit" => Some(CommandResult::Shutdown),
         "ui" => {
@@ -537,6 +554,7 @@ Commands:
   /transcribe - Enter transcription mode
   /note - Enter note-taking mode
   /command - Enter command-only mode
+  /typing - Enter typing mode (voice-to-keyboard)
   /ui [text|orb] - Switch UI mode
   /stop - Stop TTS playback
   /quit - Exit application
@@ -549,9 +567,17 @@ Voice commands:
   'resume' - Resume conversation
   'mute' / 'unmute' - Control microphone
   'enable/disable crosstalk' - Control crosstalk
+  'typing mode' - Enter typing mode
   'command mode' - Enter command-only mode
   'stand down' - Exit application
   
+Typing mode commands:
+  'period', 'comma', 'question mark' - Insert punctuation
+  'enter', 'new line', 'tab' - Key presses
+  'undo', 'redo' - Edit history
+  'select all', 'go to end of line' - Navigation
+  'stop typing' - Exit typing mode
+   
 Wake word: Say wake phrase when paused to resume"
                 .to_string();
             Some(CommandResult::Handled(Some(help)))

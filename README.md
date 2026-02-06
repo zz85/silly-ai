@@ -185,6 +185,9 @@ cargo build --release --no-default-features --features supertonic,ollama
 
 # With acoustic echo cancellation (AEC)
 cargo build --release --features aec
+
+# With voice-to-keyboard typing
+cargo build --release --features typing
 ```
 
 **Note**: On Apple Silicon (M1/M2/M3), hardware acceleration is automatically enabled:
@@ -218,6 +221,10 @@ silly listen -s mic -o notes.txt  # Custom output file
 
 # Summarize a transcription file
 silly summarize -i transcript.txt
+
+# Voice-to-keyboard typing mode (requires --features typing)
+silly typing                      # Type speech into active application
+silly typing --input-method direct  # Use direct typing instead of clipboard
 ```
 
 ### Building with Listen feature
@@ -227,6 +234,14 @@ cargo build --release --features listen
 ```
 
 **Note**: The listen feature uses ScreenCaptureKit for system audio capture, which requires Swift runtime libraries. The `.cargo/config.toml` includes the necessary linker flags.
+
+### Building with Typing feature
+
+```bash
+cargo build --release --features typing
+```
+
+The typing feature allows you to dictate text directly into any application. Speech is transcribed and typed into the currently focused window.
 
 ## Usage
 
@@ -265,6 +280,7 @@ These commands are recognized from speech and processed before the LLM:
 | Start Chat | "start chat", "let's chat" | Enter chat mode |
 | Start Transcription | "start transcription" | Enter transcribe mode |
 | Take Note | "take a note" | Enter note-taking mode |
+| Typing Mode | "typing mode", "start typing" | Enter voice-to-keyboard mode |
 | Stand Down | "stand down" | Graceful shutdown |
 
 ### Application Modes
@@ -275,6 +291,26 @@ These commands are recognized from speech and processed before the LLM:
 | **Chat** | Conversational mode. No wake word needed, continuous conversation. |
 | **Transcribe** | Speech-to-text only. No LLM processing, just transcription. |
 | **Note** | Note-taking mode. Transcriptions are appended to a notes file with timestamps. |
+| **Typing** | Voice-to-keyboard. Speech is typed into the active application. (requires `--features typing`) |
+
+### Typing Mode Commands
+
+When in typing mode, special voice commands control punctuation, navigation, and editing:
+
+| Category | Commands | Action |
+|----------|----------|--------|
+| **Punctuation** | "period", "comma", "question mark", "exclamation point" | Insert punctuation |
+| **Whitespace** | "enter", "new line", "tab" | Send key press |
+| **Editing** | "undo", "redo", "delete", "backspace", "delete word" | Edit operations |
+| **Navigation** | "go to end of line", "go to start of line", "select all" | Cursor movement |
+| **Control** | "stop typing", "stop", "pause", "resume" | Control typing mode |
+
+**Smart command detection**: Commands are distinguished from text based on:
+- Pause duration before speaking (longer pauses suggest commands)
+- Phrase length (short phrases like "enter" are likely commands)
+- Pattern matching (recognized command phrases)
+
+**Inline punctuation**: Say "hello comma world" and it will type "hello, world"
 
 The current mode is displayed in the status bar with color coding.
 

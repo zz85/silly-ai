@@ -22,6 +22,8 @@ pub struct Config {
     pub commands: CommandsConfig,
     #[serde(default)]
     pub ui: UiConfig,
+    #[serde(default)]
+    pub typing: TypingConfig,
 }
 
 impl Default for Config {
@@ -36,6 +38,7 @@ impl Default for Config {
             interaction: InteractionConfig::default(),
             commands: CommandsConfig::default(),
             ui: UiConfig::default(),
+            typing: TypingConfig::default(),
         }
     }
 }
@@ -121,6 +124,66 @@ fn default_crosstalk() -> bool {
 
 fn default_duck_volume() -> f32 {
     0.2
+}
+
+// ============================================================================
+// Typing Config (voice-to-keyboard)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct TypingConfig {
+    /// Input method: "direct" (default) or "clipboard"
+    #[serde(default = "default_typing_input_method")]
+    pub input_method: String,
+
+    /// Enable audio/visual feedback when commands are recognized
+    #[serde(default = "default_typing_feedback")]
+    pub feedback: bool,
+
+    /// Number of operations to track in undo buffer
+    #[serde(default = "default_typing_undo_buffer_size")]
+    pub undo_buffer_size: usize,
+
+    /// Minimum pause duration (ms) for short phrases to be recognized as commands
+    #[serde(default = "default_typing_command_pause_ms")]
+    pub command_pause_ms: u32,
+
+    /// Phrase to exit typing mode (reserved for future customization)
+    #[serde(default = "default_typing_stop_phrase")]
+    #[allow(dead_code)]
+    pub stop_phrase: String,
+}
+
+impl Default for TypingConfig {
+    fn default() -> Self {
+        Self {
+            input_method: default_typing_input_method(),
+            feedback: default_typing_feedback(),
+            undo_buffer_size: default_typing_undo_buffer_size(),
+            command_pause_ms: default_typing_command_pause_ms(),
+            stop_phrase: default_typing_stop_phrase(),
+        }
+    }
+}
+
+fn default_typing_input_method() -> String {
+    "direct".to_string()
+}
+
+fn default_typing_feedback() -> bool {
+    true
+}
+
+fn default_typing_undo_buffer_size() -> usize {
+    50
+}
+
+fn default_typing_command_pause_ms() -> u32 {
+    100 // 100ms - lower threshold makes commands more responsive
+}
+
+fn default_typing_stop_phrase() -> String {
+    "silly stop".to_string()
 }
 
 // ============================================================================

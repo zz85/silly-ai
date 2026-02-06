@@ -20,6 +20,8 @@ pub enum TranscriptResult {
     TranscribeOnly(String),
     /// Text should be appended to notes
     AppendNote(String),
+    /// Text should be typed into active application (typing mode)
+    TypeText(String),
     /// Command was handled (with optional response message)
     CommandHandled(Option<String>),
     /// Stop command (cancel TTS)
@@ -154,10 +156,11 @@ pub fn handle_transcript_with_mode(
                     }
                 }
             } else {
-                // Transcribe and NoteTaking modes don't process commands
+                // Transcribe, NoteTaking, and Typing modes don't process commands
                 match mode {
                     AppMode::Transcribe => TranscriptResult::TranscribeOnly(text),
                     AppMode::NoteTaking => TranscriptResult::AppendNote(text),
+                    AppMode::Typing => TranscriptResult::TypeText(text),
                     _ => TranscriptResult::None,
                 }
             }

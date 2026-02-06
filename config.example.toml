@@ -132,3 +132,11 @@ duck_volume = 0.2  # TTS volume when user speaks during playback (0.0-1.0)
 tts_gpu = true   # CoreML for TTS
 vad_gpu = false  # CoreML for VAD (small model, CPU is fine)
 
+# Voice-to-keyboard typing (requires --features typing)
+[typing]
+input_method = "direct"     # "direct" (default) or "clipboard" (may have issues on macOS)
+feedback = true             # Audio/visual feedback when commands recognized
+undo_buffer_size = 50       # Number of operations to track for undo
+command_pause_ms = 100      # Min pause (ms) for short phrases to be recognized as commands
+stop_phrase = "silly stop"  # Phrase to pause typing mode (use "silly terminate" to exit)
+

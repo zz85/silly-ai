@@ -23,6 +23,7 @@ mod stats;
 mod status_bar;
 #[cfg(feature = "listen")]
 mod summarize;
+mod rephrase;
 #[cfg(feature = "supertonic")]
 mod supertonic;
 mod test_ui;
@@ -44,7 +45,6 @@ use clap::{Parser, Subcommand};
 use std::error::Error;
 use std::fs::OpenOptions;
 use std::io::Write;
-#[cfg(feature = "listen")]
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -153,6 +153,14 @@ enum Command {
         #[arg(short, long)]
         input: PathBuf,
     },
+    /// Rephrase text in multiple tones (concise, professional, casual, academic) with spelling/grammar/fact checks
+    Rephrase {
+        /// Text to rephrase (omit to read from stdin)
+        text: Option<String>,
+        /// Input file to rephrase
+        #[arg(short, long)]
+        input: Option<PathBuf>,
+    },
     /// Transcribe a WAV file (for debugging)
     #[cfg(feature = "listen")]
     TranscribeWav {
@@ -197,6 +205,10 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     #[cfg(feature = "listen")]
     if let Some(Command::Summarize { input }) = &cli.command {
         return summarize::run_summarize(input.clone());
+    }
+
+    if let Some(Command::Rephrase { text, input }) = &cli.command {
+        return rephrase::run_rephrase(text.clone(), input.clone());
     }
 
     tokio::runtime::Builder::new_multi_thread()
@@ -256,6 +268,7 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
         }
         #[cfg(feature = "listen")]
         Some(Command::Summarize { .. }) => unreachable!("handled in main()"),
+        Some(Command::Rephrase { .. }) => unreachable!("handled in main()"),
         #[cfg(feature = "listen")]
         Some(Command::TranscribeWav { input }) => {
             return listen::transcribe_wav(input.clone());

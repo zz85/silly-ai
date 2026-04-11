@@ -292,7 +292,7 @@ pub fn load_text_to_speech<P: AsRef<Path>>(
                 .with_subgraphs(true)
                 .build()])
             {
-                Ok(builder) => builder.commit_from_file(model_path),
+                Ok(mut builder) => builder.commit_from_file(model_path),
                 Err(e) => {
                     eprintln!(
                         "CoreML EP failed for {}, falling back to CPU: {}",

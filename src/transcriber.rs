@@ -2,12 +2,11 @@ use crate::stats::{SharedStats, StatKind, Timer};
 use std::path::Path;
 pub use transcribe_rs::TranscriptionSegment;
 use transcribe_rs::{
-    TranscriptionEngine,
-    engines::parakeet::{ParakeetEngine, ParakeetModelParams},
+    onnx::parakeet::ParakeetModel, onnx::Quantization, SpeechModel, TranscribeOptions,
 };
 
 pub struct Transcriber {
-    engine: ParakeetEngine,
+    engine: ParakeetModel,
     stats: Option<SharedStats>,
 }
 
@@ -22,7 +21,6 @@ impl Transcriber {
         model_path: impl AsRef<Path>,
         stats: Option<SharedStats>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let mut engine = ParakeetEngine::new();
         println!("Loading model... (CoreML accelerated on Apple Silicon)");
 
         #[cfg(all(feature = "supertonic", target_arch = "aarch64", target_os = "macos"))]
@@ -30,8 +28,7 @@ impl Transcriber {
             println!("Enabling CoreML execution provider for transcription...");
         }
 
-        engine
-            .load_model_with_params(model_path.as_ref(), ParakeetModelParams::int8())
+        let engine = ParakeetModel::load(model_path.as_ref(), &Quantization::Int8)
             .map_err(|e| e.to_string())?;
         println!("Model loaded.");
         Ok(Self { engine, stats })
@@ -53,7 +50,7 @@ impl Transcriber {
             .map(|s| Timer::new(s, StatKind::Transcription, samples.len()));
         let result = self
             .engine
-            .transcribe_samples(samples.to_vec(), None)
+            .transcribe(samples, &TranscribeOptions::default())
             .map_err(|e| e.to_string())?;
         let text = result.text.trim().to_string();
         if let Some(t) = timer {
@@ -70,7 +67,7 @@ impl Transcriber {
     {
         let result = self
             .engine
-            .transcribe_samples(samples.to_vec(), None)
+            .transcribe(samples, &TranscribeOptions::default())
             .map_err(|e| e.to_string())?;
         Ok((result.text.trim().to_string(), result.segments))
     }

@@ -21,8 +21,8 @@ flume = "0.11"
 futures-util = "0.3"
 tokio = { version = "1.48.0", features = ["rt-multi-thread", "macros", "sync"] }
 tokio-stream = "0.1.17"
-transcribe-rs = { version = "0.2.1", features = ["parakeet"], git = "https://github.com/cjpais/transcribe-rs", branch = "main" }
-vad-rs = { git = "https://github.com/cjpais/vad-rs", version = "0.1.5", default-features = false }
+transcribe-rs = { version = "0.3", features = ["onnx"], git = "https://github.com/cjpais/transcribe-rs", branch = "main" }
+vad-rs = { git = "https://github.com/cjpais/vad-rs", version = "0.1.6", default-features = false }
 hf-hub = { version = "0.4", optional = true }
 unicode-width = "0.2.2"
 screencapturekit = { version = "1", features = ["macos_13_0"], optional = true }
@@ -38,8 +38,8 @@ tar = { version = "0.4", optional = true }
 kokoros = { git = "https://github.com/lucasjinreal/Kokoros", version = "0.1.0", optional = true }
 
 # Supertonic dependencies (optional)
-ndarray = { version = "0.16", features = ["rayon"], optional = true }
-ort = { version = "2.0.0-rc.10", optional = true }
+ndarray = { version = "0.17", features = ["rayon"], optional = true }
+ort = { version = "2.0.0-rc.12", optional = true }
 rand = { version = "0.8", optional = true }
 rand_distr = { version = "0.4", optional = true }
 regex = { version = "1.10", optional = true }
@@ -50,7 +50,7 @@ encoding_rs = { version = "0.8", optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 llama-cpp-2 = { version = "0.1", features = ["metal"], optional = true }
 kalosm-llama = { version = "0.4", features = ["metal"], optional = true }
-ort = { version = "2.0.0-rc.10", features = ["coreml"], optional = true }
+ort = { version = "2.0.0-rc.12", features = ["coreml"], optional = true }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 llama-cpp-2 = { version = "0.1", optional = true }

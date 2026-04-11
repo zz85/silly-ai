@@ -17,12 +17,9 @@ class Silly < Formula
   license "MIT"
 
   on_macos do
-    if Hardware::CPU.arm?
+    on_arm do
       url "https://github.com/zz85/silly-ai/releases/download/v#{version}/silly-darwin-aarch64.tar.gz"
       sha256 "PLACEHOLDER_SHA256_DARWIN_AARCH64"
-    elsif Hardware::CPU.intel?
-      url "https://github.com/zz85/silly-ai/releases/download/v#{version}/silly-darwin-x86_64.tar.gz"
-      sha256 "PLACEHOLDER_SHA256_DARWIN_X86_64"
     end
   end
 

@@ -44,6 +44,14 @@ detect_platform() {
         exit 1
     fi
 
+    # macOS x86_64 (Intel) prebuilt binaries are not available
+    if [ "$os" = "darwin" ] && [ "$arch" = "x86_64" ]; then
+        echo "Error: Intel Mac prebuilt binaries are not available."
+        echo "Apple Silicon (M1+) is required for prebuilt binaries."
+        echo "Please build from source: cargo install --git https://github.com/$REPO"
+        exit 1
+    fi
+
     PLATFORM="${os}-${arch}"
 }
 

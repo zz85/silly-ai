@@ -1,5 +1,6 @@
-use crate::capture::{TARGET_RATE, capture_mic, capture_system};
-use crate::segmenter::{AudioSegment, SegmenterConfig, run_segmenter};
+use crate::capture::{capture_mic, capture_system, TARGET_RATE};
+use crate::model_manager;
+use crate::segmenter::{run_segmenter, AudioSegment, SegmenterConfig};
 use crate::transcriber::Transcriber;
 use crate::vad::VadEngine;
 use flume::{Receiver, Sender};
@@ -7,13 +8,10 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::num::NonZero;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use vorbis_rs::VorbisEncoderBuilder;
-
-const VAD_MODEL_PATH: &str = "models/silero_vad_v4.onnx";
-const PARAKEET_MODEL_PATH: &str = "models/parakeet-tdt-0.6b-v3-int8";
 
 #[derive(Clone, Debug)]
 pub struct Transcript {
@@ -196,10 +194,12 @@ pub fn run_pipeline_with_options(
 
     // Load models first (before spawning threads)
     println!("Loading VAD...");
-    let vad = VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE)?;
+    let vad_path = model_manager::resolve_model_path(model_manager::VAD_MODEL);
+    let vad = VadEngine::silero(&vad_path.to_string_lossy(), TARGET_RATE)?;
 
     println!("Loading transcriber...");
-    let transcriber = Transcriber::new(PARAKEET_MODEL_PATH)?;
+    let parakeet_path = model_manager::resolve_model_path(model_manager::PARAKEET_DIR);
+    let transcriber = Transcriber::new(&parakeet_path.to_string_lossy())?;
 
     // Channels
     let (audio_tx, audio_rx) = flume::bounded::<Vec<f32>>(100);
@@ -459,12 +459,16 @@ pub fn run_multi_source(
 
     // Load models (need 2 VADs, 2 transcribers)
     println!("Loading VAD models...");
-    let vad1 = VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE)?;
-    let vad2 = VadEngine::silero(VAD_MODEL_PATH, TARGET_RATE)?;
+    let vad_path = model_manager::resolve_model_path(model_manager::VAD_MODEL);
+    let vad_str = vad_path.to_string_lossy();
+    let vad1 = VadEngine::silero(&vad_str, TARGET_RATE)?;
+    let vad2 = VadEngine::silero(&vad_str, TARGET_RATE)?;
 
     println!("Loading transcriber models...");
-    let transcriber1 = Transcriber::new(PARAKEET_MODEL_PATH)?;
-    let transcriber2 = Transcriber::new(PARAKEET_MODEL_PATH)?;
+    let parakeet_path = model_manager::resolve_model_path(model_manager::PARAKEET_DIR);
+    let parakeet_str = parakeet_path.to_string_lossy();
+    let transcriber1 = Transcriber::new(&parakeet_str)?;
+    let transcriber2 = Transcriber::new(&parakeet_str)?;
 
     // Shared transcript channel (both pipelines write here)
     let (transcript_tx, transcript_rx) = flume::bounded::<Transcript>(20);

@@ -1,11 +1,10 @@
-use crate::capture::{TARGET_RATE, resample};
-pub use crate::pipeline::{AudioSource, run_multi_source, run_pipeline_with_options};
+use crate::capture::{resample, TARGET_RATE};
+use crate::model_manager;
+pub use crate::pipeline::{run_multi_source, run_pipeline_with_options, AudioSource};
 use crate::transcriber::Transcriber;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-
-const PARAKEET_MODEL_PATH: &str = "models/parakeet-tdt-0.6b-v3-int8";
 
 pub fn list_apps() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let apps = crate::capture::list_apps()?;
@@ -46,8 +45,8 @@ fn pick_source_with_apps(
     })
 }
 
-pub fn pick_sources_multi()
--> Result<(AudioSource, AudioSource), Box<dyn std::error::Error + Send + Sync>> {
+pub fn pick_sources_multi(
+) -> Result<(AudioSource, AudioSource), Box<dyn std::error::Error + Send + Sync>> {
     let apps = crate::capture::list_apps()?;
 
     println!("\nSelect TWO audio sources for multi-source transcription.\n");
@@ -119,7 +118,8 @@ pub fn transcribe_wav(path: PathBuf) -> Result<(), Box<dyn std::error::Error + S
     };
 
     println!("Loading transcription model...");
-    let mut transcriber = Transcriber::new(PARAKEET_MODEL_PATH)?;
+    let parakeet_path = model_manager::resolve_model_path(model_manager::PARAKEET_DIR);
+    let mut transcriber = Transcriber::new(&parakeet_path.to_string_lossy())?;
 
     println!("Transcribing...\n");
     let start = std::time::Instant::now();

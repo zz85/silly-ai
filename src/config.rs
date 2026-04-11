@@ -486,16 +486,16 @@ impl Default for TtsConfig {
 }
 
 fn default_kokoro_model() -> String {
-    "models/kokoro-v1.0.onnx".into()
+    "kokoro-v1.0.onnx".into()
 }
 fn default_kokoro_voices() -> String {
-    "models/voices-v1.0.bin".into()
+    "voices-v1.0.bin".into()
 }
 fn default_supertonic_onnx_dir() -> String {
-    "models/supertonic/onnx".into()
+    "supertonic/onnx".into()
 }
 fn default_supertonic_voice_style() -> String {
-    "models/supertonic/voice_styles/M1.json".into()
+    "supertonic/voice_styles/M1.json".into()
 }
 fn default_tts_speed() -> f32 {
     1.1

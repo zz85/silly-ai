@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Silly AI installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/zz85/silly-cli/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/zz85/silly-ai/main/install.sh | bash
 
-REPO="zz85/silly-cli"
+REPO="zz85/silly-ai"
 BINARY="silly"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 

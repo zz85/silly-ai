@@ -1,7 +1,7 @@
 # Homebrew formula for Silly AI
 #
 # Install directly from this repo:
-#   brew install zz85/silly-cli/silly
+#   brew install zz85/silly-ai/silly
 #
 # Or via a dedicated tap (if zz85/homebrew-tap exists):
 #   brew tap zz85/tap
@@ -12,23 +12,23 @@
 
 class Silly < Formula
   desc "Local AI voice assistant with speech-to-text, LLM, and text-to-speech"
-  homepage "https://github.com/zz85/silly-cli"
+  homepage "https://github.com/zz85/silly-ai"
   version "0.2.1"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/zz85/silly-cli/releases/download/v#{version}/silly-darwin-aarch64.tar.gz"
+      url "https://github.com/zz85/silly-ai/releases/download/v#{version}/silly-darwin-aarch64.tar.gz"
       sha256 "PLACEHOLDER_SHA256_DARWIN_AARCH64"
     elsif Hardware::CPU.intel?
-      url "https://github.com/zz85/silly-cli/releases/download/v#{version}/silly-darwin-x86_64.tar.gz"
+      url "https://github.com/zz85/silly-ai/releases/download/v#{version}/silly-darwin-x86_64.tar.gz"
       sha256 "PLACEHOLDER_SHA256_DARWIN_X86_64"
     end
   end
 
   on_linux do
     if Hardware::CPU.intel?
-      url "https://github.com/zz85/silly-cli/releases/download/v#{version}/silly-linux-x86_64.tar.gz"
+      url "https://github.com/zz85/silly-ai/releases/download/v#{version}/silly-linux-x86_64.tar.gz"
       sha256 "PLACEHOLDER_SHA256_LINUX_X86_64"
     end
   end

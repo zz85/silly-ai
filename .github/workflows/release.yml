@@ -32,6 +32,11 @@ on:
 #           runner: ubuntu-24.04-arm64
 #           name: linux-aarch64
 #           deps: libasound2-dev pkg-config
+#
+# Note on Linux static linking:
+#   Full musl static binaries aren't practical because ort-sys ships glibc-linked
+#   ONNX Runtime prebuilts and cpal requires libasound (ALSA). Instead we use
+#   cargo-zigbuild to target glibc 2.17 (CentOS 7 era) for maximum portability.
 
 permissions:
   contents: write
@@ -51,34 +56,53 @@ jobs:
             runner: macos-14
             name: darwin-aarch64
 
-          - target: x86_64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-gnu.2.17
             runner: ubuntu-latest
             name: linux-x86_64
             deps: libasound2-dev pkg-config
+            zigbuild: true
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.target == 'x86_64-unknown-linux-gnu.2.17' && 'x86_64-unknown-linux-gnu' || matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.name }}
 
       - name: Install system dependencies
         if: matrix.deps
         run: sudo apt-get update && sudo apt-get install -y ${{ matrix.deps }}
 
-      - name: Build
+      - name: Install cargo-zigbuild
+        if: matrix.zigbuild
+        run: |
+          pip3 install ziglang
+          cargo install cargo-zigbuild
+
+      - name: Build (zigbuild)
+        if: matrix.zigbuild
+        run: cargo zigbuild --release --target ${{ matrix.target }}
+
+      - name: Build (native)
+        if: ${{ !matrix.zigbuild }}
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Strip binary
-        run: strip target/${{ matrix.target }}/release/silly
+        run: |
+          TARGET_DIR="${{ matrix.target }}"
+          # zigbuild targets like x86_64-unknown-linux-gnu.2.17 output to the base triple dir
+          TARGET_DIR="${TARGET_DIR%.2.17}"
+          strip target/${TARGET_DIR}/release/silly
 
       - name: Package
-        run: tar -czf silly-${{ matrix.name }}.tar.gz -C target/${{ matrix.target }}/release silly
+        run: |
+          TARGET_DIR="${{ matrix.target }}"
+          TARGET_DIR="${TARGET_DIR%.2.17}"
+          tar -czf silly-${{ matrix.name }}.tar.gz -C target/${TARGET_DIR}/release silly
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

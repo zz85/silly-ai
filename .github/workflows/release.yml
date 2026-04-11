@@ -33,10 +33,11 @@ on:
 #           name: linux-aarch64
 #           deps: libasound2-dev pkg-config
 #
-# Note on Linux static linking:
-#   Full musl static binaries aren't practical because ort-sys ships glibc-linked
-#   ONNX Runtime prebuilts and cpal requires libasound (ALSA). Instead we use
-#   cargo-zigbuild to target glibc 2.17 (CentOS 7 era) for maximum portability.
+# Note on Linux glibc compatibility:
+#   Linux binaries are built on ubuntu-latest (glibc 2.35). This covers all
+#   currently supported distros (Ubuntu 22.04+, Debian 12+, Fedora 37+).
+#   +crt-static was attempted but ALSA (libasound) has no static library.
+#   For older systems, build from source.
 
 permissions:
   contents: write
@@ -56,18 +57,17 @@ jobs:
             runner: macos-14
             name: darwin-aarch64
 
-          - target: x86_64-unknown-linux-gnu.2.17
+          - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
             name: linux-x86_64
-            deps: libasound2-dev pkg-config
-            zigbuild: true
+            deps: libasound2-dev pkg-config libssl-dev
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target == 'x86_64-unknown-linux-gnu.2.17' && 'x86_64-unknown-linux-gnu' || matrix.target }}
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -77,32 +77,17 @@ jobs:
         if: matrix.deps
         run: sudo apt-get update && sudo apt-get install -y ${{ matrix.deps }}
 
-      - name: Install cargo-zigbuild
-        if: matrix.zigbuild
-        run: |
-          pip3 install ziglang
-          cargo install cargo-zigbuild
-
-      - name: Build (zigbuild)
-        if: matrix.zigbuild
-        run: cargo zigbuild --release --target ${{ matrix.target }}
-
-      - name: Build (native)
-        if: ${{ !matrix.zigbuild }}
+      - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Strip binary
-        run: |
-          TARGET_DIR="${{ matrix.target }}"
-          # zigbuild targets like x86_64-unknown-linux-gnu.2.17 output to the base triple dir
-          TARGET_DIR="${TARGET_DIR%.2.17}"
-          strip target/${TARGET_DIR}/release/silly
+        run: strip target/${{ matrix.target }}/release/silly
 
       - name: Package
-        run: |
-          TARGET_DIR="${{ matrix.target }}"
-          TARGET_DIR="${TARGET_DIR%.2.17}"
-          tar -czf silly-${{ matrix.name }}.tar.gz -C target/${TARGET_DIR}/release silly
+        run: tar -czf silly-${{ matrix.name }}.tar.gz -C target/${{ matrix.target }}/release silly
+
+      - name: Package
+        run: tar -czf silly-${{ matrix.name }}.tar.gz -C target/${{ matrix.target }}/release silly
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

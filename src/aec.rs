@@ -43,7 +43,10 @@ impl DebugWavWriter {
         Self::write_header(&mut writer, 0)?;
         writer.flush()?;
         eprintln!("Debug WAV: writing to {}", path);
-        Ok(Self { writer, num_samples: 0 })
+        Ok(Self {
+            writer,
+            num_samples: 0,
+        })
     }
 
     fn write_header(w: &mut BufWriter<File>, num_samples: u32) -> std::io::Result<()> {
@@ -109,7 +112,9 @@ pub struct AecProcessor {
 }
 
 impl AecProcessor {
-    pub fn new(render_rx: Receiver<RenderFrame>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(
+        render_rx: Receiver<RenderFrame>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let pipeline = VoipAec3::builder(AEC_SAMPLE_RATE, CHANNELS, CHANNELS)
             .enable_high_pass(true)
             .build()?;
@@ -136,8 +141,9 @@ impl AecProcessor {
             match self.render_rx.try_recv() {
                 Ok(frame) => {
                     // Resample to AEC rate
-                    let samples = resample(&frame.samples, frame.sample_rate, AEC_SAMPLE_RATE as u32);
-                    
+                    let samples =
+                        resample(&frame.samples, frame.sample_rate, AEC_SAMPLE_RATE as u32);
+
                     if let Some(ref mut w) = self.debug_render {
                         w.write_samples(&samples);
                     }

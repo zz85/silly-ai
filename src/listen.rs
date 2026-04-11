@@ -1,6 +1,6 @@
-use crate::capture::{resample, TARGET_RATE};
+use crate::capture::{TARGET_RATE, resample};
 use crate::model_manager;
-pub use crate::pipeline::{run_multi_source, run_pipeline_with_options, AudioSource};
+pub use crate::pipeline::{AudioSource, run_multi_source, run_pipeline_with_options};
 use crate::transcriber::Transcriber;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -45,8 +45,8 @@ fn pick_source_with_apps(
     })
 }
 
-pub fn pick_sources_multi(
-) -> Result<(AudioSource, AudioSource), Box<dyn std::error::Error + Send + Sync>> {
+pub fn pick_sources_multi()
+-> Result<(AudioSource, AudioSource), Box<dyn std::error::Error + Send + Sync>> {
     let apps = crate::capture::list_apps()?;
 
     println!("\nSelect TWO audio sources for multi-source transcription.\n");

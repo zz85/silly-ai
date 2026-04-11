@@ -58,8 +58,9 @@ mod tests {
     fn test_fuzzy_match() {
         // Allow ~30% errors
         assert!(fuzzy_match("hello", "helo")); // 1 char off in 5-char word
-        assert!(fuzzy_match("stop", "stpo")); // 1 char off in 4-char word
         assert!(fuzzy_match("assistant", "asistant")); // 1 char off in 9-char word
+        // Transpositions count as 2 edits in Levenshtein, exceeding max_dist=1 for 4-char words
+        assert!(!fuzzy_match("stop", "stpo"));
     }
 
     #[test]

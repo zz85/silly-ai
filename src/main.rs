@@ -1,6 +1,6 @@
-mod audio;
 #[cfg(feature = "aec")]
 mod aec;
+mod audio;
 #[cfg(feature = "listen")]
 mod capture;
 mod chat;
@@ -15,6 +15,7 @@ mod model_manager;
 #[cfg(feature = "listen")]
 mod pipeline;
 mod render;
+mod rephrase;
 mod repl;
 #[cfg(feature = "listen")]
 mod segmenter;
@@ -24,7 +25,6 @@ mod stats;
 mod status_bar;
 #[cfg(feature = "listen")]
 mod summarize;
-mod rephrase;
 #[cfg(feature = "supertonic")]
 mod supertonic;
 mod test_ui;
@@ -300,7 +300,13 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
                 typing::CommandParser::print_help();
                 return Ok(());
             }
-            return run_typing_mode(input_method.clone(), !no_feedback, *verbose, *command_pause_ms).await;
+            return run_typing_mode(
+                input_method.clone(),
+                !no_feedback,
+                *verbose,
+                *command_pause_ms,
+            )
+            .await;
         }
         None => {}
     }
@@ -309,8 +315,8 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     let config = Config::load();
 
     // Ensure required models are downloaded
-    let _model_dir = model_manager::ensure_models(&config)
-        .map_err(|e| format!("Model setup failed: {}", e))?;
+    let _model_dir =
+        model_manager::ensure_models(&config).map_err(|e| format!("Model setup failed: {}", e))?;
 
     // Resolve model paths
     let vad_model_path = model_manager::resolve_model_path(model_manager::VAD_MODEL);
@@ -350,7 +356,14 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
             // Ensure runtime state has AEC enabled (--debug-aec implies AEC on)
             runtime_state.aec_enabled.store(true, Ordering::SeqCst);
             let (tx, rx) = mpsc::channel::<aec::RenderFrame>();
-            eprintln!("AEC: Enabled{}", if cli.debug_aec.is_some() { " (debug mode)" } else { "" });
+            eprintln!(
+                "AEC: Enabled{}",
+                if cli.debug_aec.is_some() {
+                    " (debug mode)"
+                } else {
+                    ""
+                }
+            );
             (Some(tx), Some(rx), cli.debug_aec.clone())
         } else {
             (None, None, None)
@@ -446,21 +459,19 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
 
         #[cfg(feature = "aec")]
         {
-            let aec = aec_render_rx.and_then(|rx| {
-                match aec::AecProcessor::new(rx) {
-                    Ok(proc) => {
-                        eprintln!("AEC: Processor initialized");
-                        Some(if let Some(ref prefix) = aec_debug_prefix {
-                            eprintln!("AEC: Debug output to {}_*.wav", prefix);
-                            proc.with_debug(prefix)
-                        } else {
-                            proc
-                        })
-                    }
-                    Err(e) => {
-                        eprintln!("AEC: Failed to create processor: {}", e);
-                        None
-                    }
+            let aec = aec_render_rx.and_then(|rx| match aec::AecProcessor::new(rx) {
+                Ok(proc) => {
+                    eprintln!("AEC: Processor initialized");
+                    Some(if let Some(ref prefix) = aec_debug_prefix {
+                        eprintln!("AEC: Debug output to {}_*.wav", prefix);
+                        proc.with_debug(prefix)
+                    } else {
+                        proc
+                    })
+                }
+                Err(e) => {
+                    eprintln!("AEC: Failed to create processor: {}", e);
+                    None
                 }
             });
             audio::run_vad_processor_with_state(
@@ -488,14 +499,13 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
     // Preview transcription thread
     let parakeet_path_preview = parakeet_model_path.to_string_lossy().to_string();
     let preview_handle = thread::spawn(move || {
-        let mut transcriber =
-            match transcriber::Transcriber::new(&parakeet_path_preview) {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("Preview transcriber failed: {}", e);
-                    return;
-                }
-            };
+        let mut transcriber = match transcriber::Transcriber::new(&parakeet_path_preview) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Preview transcriber failed: {}", e);
+                return;
+            }
+        };
 
         while let Ok(samples) = preview_rx.recv() {
             if samples.len() >= 8000 {
@@ -554,7 +564,8 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
             {
                 eprintln!("Falling back to Supertonic TTS");
                 let onnx_path = model_manager::resolve_model_path("supertonic/onnx");
-                let voice_path = model_manager::resolve_model_path("supertonic/voice_styles/M1.json");
+                let voice_path =
+                    model_manager::resolve_model_path("supertonic/voice_styles/M1.json");
                 let engine = tts::SupertonicEngine::new(
                     &onnx_path.to_string_lossy(),
                     &voice_path.to_string_lossy(),
@@ -581,11 +592,12 @@ async fn async_main_with_cli(cli: Cli) -> Result<(), Box<dyn Error + Send + Sync
             let onnx_resolved = resolve_tts_path(&onnx_dir);
             let voice_resolved = resolve_tts_path(&voice_style);
             eprintln!("TTS: Supertonic (speed: {}, GPU: {})", speed, use_gpu_tts);
-            let engine = tts::SupertonicEngine::new(&onnx_resolved, &voice_resolved, speed, use_gpu_tts)
-                .map_err(|e| {
-                    eprintln!("Failed to load Supertonic TTS: {}", e);
-                    "Supertonic TTS initialization failed"
-                })?;
+            let engine =
+                tts::SupertonicEngine::new(&onnx_resolved, &voice_resolved, speed, use_gpu_tts)
+                    .map_err(|e| {
+                        eprintln!("Failed to load Supertonic TTS: {}", e);
+                        "Supertonic TTS initialization failed"
+                    })?;
             tts::Tts::with_stats(Box::new(engine), stats_tts)
         }
         #[cfg(not(feature = "supertonic"))]
@@ -1361,7 +1373,9 @@ async fn run_transcribe_mode() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mic_muted = Arc::new(AtomicBool::new(false));
     let mic_muted_vad = Arc::clone(&mic_muted);
 
-    let vad_path = model_manager::resolve_model_path(model_manager::VAD_MODEL).to_string_lossy().to_string();
+    let vad_path = model_manager::resolve_model_path(model_manager::VAD_MODEL)
+        .to_string_lossy()
+        .to_string();
     thread::spawn(move || {
         let vad = if std::path::Path::new(&vad_path).exists() {
             VadEngine::silero(&vad_path, TARGET_RATE).ok()
@@ -1379,13 +1393,14 @@ async fn run_transcribe_mode() -> Result<(), Box<dyn Error + Send + Sync>> {
         );
     });
 
-    let parakeet_path = model_manager::resolve_model_path(model_manager::PARAKEET_DIR).to_string_lossy().to_string();
+    let parakeet_path = model_manager::resolve_model_path(model_manager::PARAKEET_DIR)
+        .to_string_lossy()
+        .to_string();
     thread::spawn(move || {
-        let mut transcriber =
-            match transcriber::Transcriber::new(&parakeet_path) {
-                Ok(t) => t,
-                Err(_) => return,
-            };
+        let mut transcriber = match transcriber::Transcriber::new(&parakeet_path) {
+            Ok(t) => t,
+            Err(_) => return,
+        };
         while let Ok(samples) = final_rx.recv() {
             if let Ok(text) = transcriber.transcribe(&samples) {
                 if !text.is_empty() {
@@ -1462,7 +1477,9 @@ async fn run_typing_mode(
     let mic_muted_vad = Arc::clone(&mic_muted);
 
     // VAD processor thread
-    let vad_path = model_manager::resolve_model_path(model_manager::VAD_MODEL).to_string_lossy().to_string();
+    let vad_path = model_manager::resolve_model_path(model_manager::VAD_MODEL)
+        .to_string_lossy()
+        .to_string();
     thread::spawn(move || {
         let vad = if std::path::Path::new(&vad_path).exists() {
             VadEngine::silero(&vad_path, TARGET_RATE).ok()
@@ -1484,16 +1501,17 @@ async fn run_typing_mode(
     let running = Arc::new(AtomicBool::new(true));
     let running_transcribe = Arc::clone(&running);
 
-    let parakeet_path = model_manager::resolve_model_path(model_manager::PARAKEET_DIR).to_string_lossy().to_string();
+    let parakeet_path = model_manager::resolve_model_path(model_manager::PARAKEET_DIR)
+        .to_string_lossy()
+        .to_string();
     thread::spawn(move || {
-        let mut transcriber =
-            match transcriber::Transcriber::new(&parakeet_path) {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("Failed to initialize transcriber: {}", e);
-                    return;
-                }
-            };
+        let mut transcriber = match transcriber::Transcriber::new(&parakeet_path) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Failed to initialize transcriber: {}", e);
+                return;
+            }
+        };
 
         while running_transcribe.load(Ordering::SeqCst) {
             match final_rx.recv_timeout(std::time::Duration::from_millis(100)) {

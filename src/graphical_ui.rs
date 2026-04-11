@@ -11,7 +11,7 @@ use crossterm::style::Color;
 use crossterm::terminal::{self, ClearType};
 use crossterm::{cursor, execute};
 use std::fs::OpenOptions;
-use std::io::{self, stdout, Write};
+use std::io::{self, Write, stdout};
 use std::thread;
 use std::time::{Duration, Instant};
 

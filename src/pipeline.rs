@@ -1,6 +1,6 @@
-use crate::capture::{capture_mic, capture_system, TARGET_RATE};
+use crate::capture::{TARGET_RATE, capture_mic, capture_system};
 use crate::model_manager;
-use crate::segmenter::{run_segmenter, AudioSegment, SegmenterConfig};
+use crate::segmenter::{AudioSegment, SegmenterConfig, run_segmenter};
 use crate::transcriber::Transcriber;
 use crate::vad::VadEngine;
 use flume::{Receiver, Sender};
@@ -8,8 +8,8 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::num::NonZero;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use vorbis_rs::VorbisEncoderBuilder;
 

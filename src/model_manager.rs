@@ -13,8 +13,7 @@ use std::path::Path;
 
 // VAD
 #[cfg(feature = "model-download")]
-const VAD_URL: &str =
-    "https://github.com/cjpais/Handy/raw/refs/heads/main/src-tauri/resources/models/silero_vad_v4.onnx";
+const VAD_URL: &str = "https://github.com/cjpais/Handy/raw/refs/heads/main/src-tauri/resources/models/silero_vad_v4.onnx";
 
 // Parakeet STT (tar.gz archive)
 #[cfg(feature = "model-download")]
@@ -50,11 +49,9 @@ const SUPERTONIC_VOICE_FILES: &[&str] = &[
 
 // Kokoro TTS
 #[cfg(all(feature = "model-download", feature = "kokoro"))]
-const KOKORO_MODEL_URL: &str =
-    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx";
+const KOKORO_MODEL_URL: &str = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx";
 #[cfg(all(feature = "model-download", feature = "kokoro"))]
-const KOKORO_VOICES_URL: &str =
-    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin";
+const KOKORO_VOICES_URL: &str = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin";
 
 // ============================================================================
 // Public model-relative paths (used by consumers)
@@ -285,15 +282,14 @@ mod downloader {
         }
     }
 
+    type DownloadFn = Box<dyn Fn(&Path) -> Result<(), Box<dyn std::error::Error>>>;
+
     /// Ensure all required models are present. Downloads missing ones.
     ///
     /// Returns the base model directory path.
     pub fn ensure_models(config: &Config) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let base = download_dir();
-        let mut needed: Vec<(
-            &str,
-            Box<dyn Fn(&Path) -> Result<(), Box<dyn std::error::Error>>>,
-        )> = Vec::new();
+        let mut needed: Vec<(&str, DownloadFn)> = Vec::new();
 
         // --- VAD ---
         if !model_exists(VAD_MODEL) {

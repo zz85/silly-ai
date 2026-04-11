@@ -19,6 +19,6 @@ mod input;
 mod processor;
 
 pub use commands::CommandParser;
-pub use hotkey::{start_hotkey_listener, HotkeyConfig, HotkeyEvent};
+pub use hotkey::{HotkeyConfig, HotkeyEvent, start_hotkey_listener};
 pub use input::InputMethod;
 pub use processor::{ProcessResult, TypingProcessor};

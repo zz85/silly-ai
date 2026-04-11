@@ -1,7 +1,7 @@
 use crate::config::{Config, LlmConfig};
 use crate::llm::{LlmBackend, Message, Role};
 use std::fs;
-use std::io::{self, stdout, Read, Write};
+use std::io::{self, Read, Write, stdout};
 use std::path::PathBuf;
 
 const REPHRASE_SYSTEM: &str = "\

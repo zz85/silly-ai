@@ -345,9 +345,29 @@ impl Default for LlmConfig {
                 model: default_ollama_model(),
             }
         }
-        #[cfg(not(any(feature = "llama-cpp", feature = "ollama")))]
+        #[cfg(all(
+            feature = "openai-compat",
+            not(feature = "llama-cpp"),
+            not(feature = "ollama")
+        ))]
         {
-            panic!("No LLM backend enabled. Build with --features llama-cpp or --features ollama");
+            LlmConfig::OpenAiCompat {
+                base_url: String::new(),
+                preset: Some("lm_studio".into()),
+                model: String::new(),
+                api_key: None,
+                temperature: None,
+                top_p: None,
+                max_tokens: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+            }
+        }
+        #[cfg(not(any(feature = "llama-cpp", feature = "ollama", feature = "openai-compat")))]
+        {
+            panic!(
+                "No LLM backend enabled. Build with --features llama-cpp, --features ollama, or --features openai-compat"
+            );
         }
     }
 }

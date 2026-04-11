@@ -2,7 +2,7 @@ use crate::stats::{SharedStats, StatKind, Timer};
 use std::path::Path;
 pub use transcribe_rs::TranscriptionSegment;
 use transcribe_rs::{
-    onnx::parakeet::ParakeetModel, onnx::Quantization, SpeechModel, TranscribeOptions,
+    SpeechModel, TranscribeOptions, onnx::Quantization, onnx::parakeet::ParakeetModel,
 };
 
 pub struct Transcriber {

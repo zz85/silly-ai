@@ -6,8 +6,8 @@
 #![allow(dead_code)] // Many fields/methods will be used in future phases
 
 use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use crate::config::Config;
 

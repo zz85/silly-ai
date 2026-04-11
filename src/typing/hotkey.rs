@@ -4,10 +4,10 @@
 //! - Double-tap Command key: Toggle on/off
 //! - Ctrl+Space: Push-to-talk (hold to talk, release to stop)
 
-use rdev::{listen, Event, EventType, Key};
+use rdev::{Event, EventType, Key, listen};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 

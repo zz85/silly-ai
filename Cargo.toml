@@ -1,6 +1,6 @@
 [package]
 name = "silly"
-version = "0.1.0"
+version = "0.2.1"
 edition = "2024"
 
 [dependencies]
@@ -39,7 +39,7 @@ kokoros = { git = "https://github.com/lucasjinreal/Kokoros", version = "0.1.0", 
 
 # Supertonic dependencies (optional)
 ndarray = { version = "0.16", features = ["rayon"], optional = true }
-ort = { version = "2.0.0-rc.10", features = ["coreml"], optional = true }
+ort = { version = "2.0.0-rc.10", optional = true }
 rand = { version = "0.8", optional = true }
 rand_distr = { version = "0.4", optional = true }
 regex = { version = "1.10", optional = true }
@@ -50,6 +50,7 @@ encoding_rs = { version = "0.8", optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 llama-cpp-2 = { version = "0.1", features = ["metal"], optional = true }
 kalosm-llama = { version = "0.4", features = ["metal"], optional = true }
+ort = { version = "2.0.0-rc.10", features = ["coreml"], optional = true }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 llama-cpp-2 = { version = "0.1", optional = true }

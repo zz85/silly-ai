@@ -2,6 +2,7 @@
 // Minimal subset for TTS inference
 
 use ndarray::{Array, Array3};
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 use ort::execution_providers::CoreMLExecutionProvider;
 use ort::{session::Session, value::Value};
 use rand_distr::{Distribution, Normal};

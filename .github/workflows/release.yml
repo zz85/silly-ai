@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Future targets (not yet implemented):
+#
+# - linux-aarch64: ARM64 Linux builds
+#
+#   Option B: Use the `cross` tool (Docker-based cross-compilation with pre-built sysroots)
+#     - Install: cargo install cross --git https://github.com/cross-rs/cross
+#     - Build:   cross build --release --target aarch64-unknown-linux-gnu
+#     - Handles sysroot, pkg-config, libasound2, and linker automatically via Docker
+#     - Add to matrix:
+#         - target: aarch64-unknown-linux-gnu
+#           runner: ubuntu-latest
+#           name: linux-aarch64
+#           use_cross: true
+#
+#   Option C: Use GitHub ARM runners (native compilation, simplest)
+#     - Runner: ubuntu-24.04-arm64 (currently in public beta, may require enrollment)
+#     - Same steps as linux-x86_64, just different runner
+#     - Add to matrix:
+#         - target: aarch64-unknown-linux-gnu
+#           runner: ubuntu-24.04-arm64
+#           name: linux-aarch64
+#           deps: libasound2-dev pkg-config
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-release:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            name: darwin-aarch64
+
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            name: darwin-x86_64
+
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            name: linux-x86_64
+            deps: libasound2-dev pkg-config
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install system dependencies
+        if: matrix.deps
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.deps }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary
+        run: strip target/${{ matrix.target }}/release/silly
+
+      - name: Package
+        run: tar -czf silly-${{ matrix.name }}.tar.gz -C target/${{ matrix.target }}/release silly
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: silly-${{ matrix.name }}
+          path: silly-${{ matrix.name }}.tar.gz
+
+  create-release:
+    name: Create Release
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" \
+            --title "Release $TAG" \
+            --generate-notes \
+            artifacts/silly-darwin-aarch64/silly-darwin-aarch64.tar.gz \
+            artifacts/silly-darwin-x86_64/silly-darwin-x86_64.tar.gz \
+            artifacts/silly-linux-x86_64/silly-linux-x86_64.tar.gz

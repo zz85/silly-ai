@@ -13,7 +13,7 @@
 class Silly < Formula
   desc "Local AI voice assistant with speech-to-text, LLM, and text-to-speech"
   homepage "https://github.com/zz85/silly-ai"
-  version "0.2.1"
+  version "0.3.1"
   license "MIT"
 
   on_macos do

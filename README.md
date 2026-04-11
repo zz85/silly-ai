@@ -85,51 +85,38 @@ When crosstalk is enabled, the system continues processing audio while TTS is pl
 - **Barge-in**: Your speech stops TTS and processes your new input
 - **Stop command**: Say "stop" to halt TTS without triggering a new response
 
+## Installation
+
+### Quick install (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zz85/silly-ai/main/install.sh | bash
+```
+
+This detects your platform (macOS/Linux, x86_64/ARM) and installs the `silly` binary to `~/.local/bin/`. On first run, required AI models (~500MB) are downloaded automatically to `~/.local/share/silly/models/`.
+
+### Homebrew (macOS)
+
+```bash
+brew install zz85/silly-ai/silly
+```
+
+### Build from source
+
+```bash
+git clone https://github.com/zz85/silly-ai.git
+cd silly-ai
+cargo build --release
+./target/release/silly
+```
+
 ## Setup
 
-### 1. Download the Parakeet model
+Models are **downloaded automatically** on first run. No manual setup is required for VAD, speech-to-text, or TTS models.
 
-```bash
-mkdir -p models && cd models
-curl -LO https://blob.handy.computer/parakeet-v3-int8.tar.gz
-tar -xzf parakeet-v3-int8.tar.gz
-rm parakeet-v3-int8.tar.gz
-cd ..
-```
+If you prefer to manage models manually, or need to customize paths, see the sections below.
 
-### 2. Download VAD model
-
-```bash
-cd models
-curl -L -o silero_vad_v4.onnx https://github.com/cjpais/Handy/raw/refs/heads/main/src-tauri/resources/models/silero_vad_v4.onnx
-cd ..
-```
-
-### 3. Download Supertonic TTS models (default)
-
-```bash
-brew install git-lfs && git lfs install
-cd models && mkdir -p supertonic && cd supertonic
-git clone --depth 1 https://huggingface.co/Supertone/supertonic assets
-cd assets && git lfs pull && cd ../..
-```
-
-### 4. (Optional) Download Kokoro TTS model and voices
-
-#### system dependencies (macOS)
-
-```bash
-brew install cmake  # Required for espeak-rs-sys
-```
-
-```bash
-cd models
-curl -L "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx" -o kokoro-v1.0.onnx
-curl -L "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin" -o voices-v1.0.bin
-cd ..
-```
-
-### 5. Configure your LLM backend
+### Configure your LLM backend
 
 Create or edit `config.toml`:
 
@@ -161,14 +148,7 @@ model = "mistral:7b-instruct"
 
 Start Ollama server: `ollama serve`
 
-### 6. Build and run
-
-```bash
-cargo build --release
-./target/release/silly
-```
-
-### 7. Build variants
+### Build variants
 
 ```bash
 # Default (OpenAI-compatible API + Supertonic TTS with CoreML)
